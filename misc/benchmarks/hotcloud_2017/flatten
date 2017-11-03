@@ -1,0 +1,32 @@
+#!/usr/bin/gawk -f
+
+BEGIN {
+  print "test arg1 language ms mbs"
+}
+
+/^[^ ]/ {
+  word=$1
+  sub(/\(/, " ", word)
+  sub(/\)/, " ", word)
+  split(word, words)
+  test=words[1]
+  arg1=words[2]
+
+  if (arg1 == "") {
+    arg1 = "0"
+  }
+}
+
+/^ Language/ {
+  language=$2;
+}
+
+/^ Runtime/ {
+  ms=$2;
+}
+
+/^ Throughput/ {
+  mbs=$2;
+
+  print test " " arg1 " " language " " ms " " mbs
+}

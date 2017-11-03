@@ -1,0 +1,2 @@
+function null_func() {
+}
