@@ -41,11 +41,12 @@ class ContextSwitchBench {
     /**
      * Constructor for ContextSwitchBench.
      */
-    ContextSwitchBench(vector<int> coreList, int numCores, int myCoreId,
-            string machineType="laptop-broadwell", int numActiveCores=1,
-            int numSamplesPerCore=1e6)
+    ContextSwitchBench(vector<int> coreList, int numCores, int numSockets,
+            int myCoreId, string machineType="laptop-broadwell",
+            int numActiveCores=1, int numSamplesPerCore=1e6)
         : coreList(coreList)
         , numCores(numCores)
+        , numSockets(numSockets)
         , myCoreId(myCoreId)
         , numActiveCores(numActiveCores)
         , numSamplesPerCore(numSamplesPerCore)
@@ -67,7 +68,7 @@ class ContextSwitchBench {
     }
 
     void run();
-    static vector<int> getHWCores(int numHWThreads);
+    static vector<int> getHWCores(int numHWThreads, int numCoresPerSocket);
     static int pinThreadToCore(int coreId);
 
     /**
@@ -104,6 +105,10 @@ class ContextSwitchBench {
     // The number of physical cores on this machine. Required as part of the
     // output file.
     int numCores;
+
+    // The number of physical sockets on this machine. Required as part of the
+    // output file.
+    int numSockets;
 
     // The logical core the parent process is pinned to. Child processes will
     // not be pinned to this core.

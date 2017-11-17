@@ -34,8 +34,10 @@ main(int argc, char** argv)
     int optIndex = 0;
     int activeCores = 0;
     int numHWThreads = 0;
+    int numSockets = 1;
+    int numCoresPerSocket = 0;
     int myCoreId = 0;
-    string machineType = "desktop";
+    string machineType = "laptop-broadwell";
 
     // Supported command line arguments
     static struct option long_options[] = {
@@ -43,15 +45,19 @@ main(int argc, char** argv)
         {"activeCores", required_argument, nullptr, 'a'},
         // The number of hardware threads available on the machine.
         {"numHWThreads", required_argument, nullptr, 'n'},
-        // The hardware thread to pin the parent benchmark process on.
+        // The hardware core to pin the parent benchmark process on.
         {"myCoreId", required_argument, nullptr, 'c'},
         // The machine being used for the experiment.
         {"machineType", required_argument, nullptr, 't'},
+        // The number of sockets available on the machine.
+        {"numSockets", required_argument, nullptr, 's'},
+        // The number of hardware cores per socket.
+        {"numCoresPerSocket", required_argument, nullptr, 'p'},
         {nullptr, 0, nullptr, 0}
     };
 
     // Read in command line arguments (if any).
-    while ((argCode = getopt_long(argc, argv, "a:n:c:t:", long_options,
+    while ((argCode = getopt_long(argc, argv, "a:n:c:t:s:p:", long_options,
             &optIndex)) != -1) {
         switch (argCode) {
         case 'a':
@@ -68,6 +74,14 @@ main(int argc, char** argv)
 
         case 't':
             machineType = string(optarg);
+            break;
+
+        case 's':
+            numSockets = atoi(optarg);
+            break;
+
+        case 'p':
+            numCoresPerSocket = atoi(optarg);
             break;
 
         default:
@@ -88,8 +102,15 @@ main(int argc, char** argv)
         return (-EINVAL);
     }
 
+    if (numSockets > 1 && numCoresPerSocket <= 0) {
+        printf("Please provide a positive non-zero value for");
+        printf(" numCoresPerSocket.\nExiting.\n");
+        return (-EINVAL);
+    }
+
     // Identify cores for pinning.
-    vector<int> coreList = ContextSwitchBench::getHWCores(numHWThreads);
+    vector<int> coreList = ContextSwitchBench::getHWCores(numHWThreads,
+            numCoresPerSocket);
 
     if (activeCores > coreList.size() - 1) {
         printf("activeCores exceeds the total number of available hw cores.\n");
@@ -99,11 +120,12 @@ main(int argc, char** argv)
     }
 
     // Pin this thread to prevent it from interfering with the measurements.
-    if (ContextSwitchBench::pinThreadToCore(myCoreId) < 0) {
+    if (ContextSwitchBench::pinThreadToCore(coreList[myCoreId]) < 0) {
         printf("Failed to pin parent benchmark process.\nExiting.\n");
         return (-EINVAL);
     } else {
-        printf("Parent benchmark process pinned to core %d.\n", myCoreId);
+        printf("Parent benchmark process pinned to hw thread %d.\n",
+                coreList[myCoreId]);
     }
 
     // Initialize cycle counters.
@@ -111,13 +133,13 @@ main(int argc, char** argv)
 
     // Run the benchmark.
     if (activeCores > 0) {
-        ContextSwitchBench bench(coreList, coreList.size(), myCoreId,
-                machineType, activeCores);
+        ContextSwitchBench bench(coreList, coreList.size(), numSockets,
+                myCoreId, machineType, activeCores);
         bench.run();
     } else {
         for (int i = 1; i < coreList.size(); i++) {
-            ContextSwitchBench bench(coreList, coreList.size(), myCoreId,
-                    machineType, i);
+            ContextSwitchBench bench(coreList, coreList.size(), numSockets,
+                    myCoreId, machineType, i);
             bench.run();
         }
     }
@@ -149,7 +171,8 @@ ContextSwitchBench::run()
         }
 
         createProcessPair(coreList[core], i);
-        printf("Created process pair %d.\n", i);
+        printf("Created process pair %d. Pinned to hw thread %d.\n", i,
+                coreList[core]);
     }
 
     // Wait for the child processes to terminate.
@@ -174,32 +197,47 @@ ContextSwitchBench::run()
  * \param numHWThreads
  *     The number of hardware threads in the system.
  *
+ * \param numCoresPerSocket
+ *     The number of hardware cores per physical socket in the system.
+ *
  * \return coreList
  *     A list mapping each physical core to exactly one of it's hardware
  *     threads.
  */
 vector<int>
-ContextSwitchBench::getHWCores(int numHWThreads)
+ContextSwitchBench::getHWCores(int numHWThreads, int numCoresPerSocket)
 {
     vector<int> coreList(numHWThreads, -1);
     string filePrefix = "/sys/devices/system/cpu/cpu";
-    string fileSuffix = "/topology/core_id";
+    string coreFileSuffix = "/topology/core_id";
+    string sockFileSuffix = "/topology/physical_package_id";
 
     // For each hardware thread in the system, identify the core it sits on.
     // If the core has not been seen previously, update coreList[core] with
     // the hardware thread id.
     for (int i = 0; i < numHWThreads; i++) {
-        string coreIdFile = filePrefix + to_string(i) + fileSuffix;
-        ifstream inFile(coreIdFile);
-        if (inFile.is_open()) {
+        string coreIdFile = filePrefix + to_string(i) + coreFileSuffix;
+        string sockIdFile = filePrefix + to_string(i) + sockFileSuffix;
+        ifstream inCoreFile(coreIdFile);
+        ifstream inSockFile(sockIdFile);
+        if (inCoreFile.is_open()) {
             string coreId;
-            getline(inFile, coreId);
+            getline(inCoreFile, coreId);
 
-            if (coreList[stoi(coreId)] == -1) {
-                coreList[stoi(coreId)] = i;
+            if(!inSockFile.is_open()) {
+                continue;
             }
 
-            inFile.close();
+            string sockId;
+            getline(inSockFile, sockId);
+
+            if (coreList[stoi(coreId) + (stoi(sockId) * numCoresPerSocket)] ==
+                -1) {
+                coreList[stoi(coreId) + (stoi(sockId) * numCoresPerSocket)] = i;
+            }
+
+            inCoreFile.close();
+            inSockFile.close();
         }
     }
 
@@ -267,8 +305,10 @@ ContextSwitchBench::dumpHeader(FILE *file)
     fprintf(file, "# ActiveCores: The number of cores running the ");
     fprintf(file, "benchmark.\n");
     fprintf(file, "# Cores: The number of hardware cores on the machine.\n");
+    fprintf(file, "# Sockets: The number of hardware sockets on the machine.\n");
 
-    fprintf(file, "ExptId TS Cycles CyclesPerSec Machine ActiveCores Cores\n");
+    fprintf(file, "ExptId TS Cycles CyclesPerSec Machine ActiveCores Cores");
+    fprintf(file, " Sockets\n");
 }
 
 /**
@@ -286,14 +326,15 @@ ContextSwitchBench::dumpSamples(vector<Sample>& samples, FILE* file)
     dumpHeader(file);
 
     for (auto& sample : samples) {
-        fprintf(file, "%lu %lu %lu %f %s %d %d\n",
+        fprintf(file, "%lu %lu %lu %f %s %d %d %d\n",
             exptId.tv_sec,
             sample.startTS,
             sample.endTS - sample.startTS,
             Cycles::perSecond(),
             machineType.c_str(),
             numActiveCores,
-            numCores);
+            numCores,
+            numSockets);
     }
 }
 
