@@ -93,7 +93,7 @@ main(int argc, char** argv)
 
     if (activeCores > coreList.size() - 1) {
         printf("activeCores exceeds the total number of available hw cores.\n");
-        printf("Please provide a value lesser than %d.\n", coreList.size());
+        printf("Please provide a value lesser than %lu.\n", coreList.size());
         printf("Exiting.\n");
         return (-EINVAL);
     }
