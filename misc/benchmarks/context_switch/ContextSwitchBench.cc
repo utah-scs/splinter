@@ -323,8 +323,6 @@ ContextSwitchBench::dumpHeader(FILE *file)
 void
 ContextSwitchBench::dumpSamples(vector<Sample>& samples, FILE* file)
 {
-    dumpHeader(file);
-
     for (auto& sample : samples) {
         fprintf(file, "%lu %lu %lu %f %s %d %d %d\n",
             exptId.tv_sec,
@@ -361,8 +359,9 @@ ContextSwitchBench::processEntry(int hwThread, int pairId, int idInPair)
     if (idInPair == 0) { // Master process that takes measurements.
         vector<Sample> samples(numSamplesPerCore);
         FILE* outputFile;
-        string outputFileName = "samples.pair" + to_string(pairId) +
-                "." + to_string(numActiveCores) + "_active_cores.data";
+        string outputFileName = "samples." + machineType + ".pair" +
+                to_string(pairId) + "." + to_string(numActiveCores) +
+                "_active_cores.data";
 
         // Warmup of a 1000 samples.
         for (int i = 0; i < 1000; i++) {
