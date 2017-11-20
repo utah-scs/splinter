@@ -11,3 +11,4 @@ Cargo.lock
 
 # Ignore data files
 *.data
+*.data.gz
