@@ -98,7 +98,8 @@ def consolidateOutput(machineType):
              '# ActiveCores: The number of cores running the benchmark.\n' + \
              '# Cores: The number of hardware cores on the machine.\n' + \
              '# Sockets: The number of hardware sockets on the machine.\n' + \
-             'ExptId TS Cycles CyclesPerSec Machine ActiveCores Cores Sockets\n'
+             '# ExptId TS Cycles CyclesPerSec Machine ActiveCores Cores' + \
+             ' Sockets\n'
 
     with gzip.open(filePrefix + '.data.gz', 'a') as outputFile:
         # First, write a header.
@@ -122,6 +123,8 @@ if __name__ == "__main__":
                         help='The hw thread to pin the managing processes to.')
     parser.add_argument('--activeCores', type=int, default=1,
                         help='The number of cores to collect measurements on.')
+    parser.add_argument('--numRuns', type=int, default=1,
+                        help='The number of experimental runs to perform.')
     args = parser.parse_args()
 
     # Get this machines processor configuration.
@@ -130,10 +133,12 @@ if __name__ == "__main__":
     # Compile the benchmark.
     compileBenchmark()
 
-    # Run the benchmark.
-    runBenchmark(args, sockets, coresPerSocket, hwThreads)
+    # Do multiple runs of the benchmark.
+    for runNum in range(0, args.numRuns):
+        # Run the benchmark.
+        runBenchmark(args, sockets, coresPerSocket, hwThreads)
 
-    # Consolidate output.
-    consolidateOutput(args.machineType)
+        # Consolidate output.
+        consolidateOutput(args.machineType)
 
     sys.exit(0)
