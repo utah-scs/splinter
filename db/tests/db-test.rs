@@ -1,30 +1,33 @@
 extern crate db;
 
+use std::thread;
+use std::sync::{Arc, Barrier};
 use std::time::Instant;
 use db::DB;
 
-//fn parallel_bench<F>(n_threads: usize, f: F)
-//    where F: FnOnce() -> () + Clone + Send
-//{
-//    let mut threads = Vec::with_capacity(n_threads);
-//    let barrier = Arc::new(Barrier::new(n_threads));
-//
-//    for _ in 0..n_threads {
-//        let b = barrier.clone();
-//    }
-//
-//    for thread in threads {
-//        thread.join().expect("Thread join failed in parallel_bench test.");
-//    }
-//}
-//
-//#[test]
-//fn db_parallel_get() {
-//    parallel_bench(4,
-//                  move || {
-//                       println!("Alive!");
-//                   });
-//}
+fn parallel_bench(n_threads: usize, f: fn (Arc<Barrier>)) -> ()
+{
+    let mut threads = Vec::with_capacity(n_threads);
+    let barrier = Arc::new(Barrier::new(n_threads));
+
+    for _ in 0..n_threads {
+        let b = barrier.clone();
+        threads.push(thread::spawn(move || { f(b);}));
+    }
+
+    for thread in threads {
+        thread.join().expect("Thread join failed in parallel_bench test.");
+    }
+}
+
+#[test]
+fn db_parallel_get() {
+    parallel_bench(4, |barrier| {
+        println!("Setup!");
+        barrier.wait();
+        println!("Alive!");
+    });
+}
 
 #[test]
 fn db_get() {
