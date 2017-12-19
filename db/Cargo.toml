@@ -5,3 +5,5 @@ authors = ["Ryan Stutsman <stutsman@cs.utah.edu>"]
 
 [dependencies]
 log = "0.3"
+rand = "0.3"
+spin = "0.4"
