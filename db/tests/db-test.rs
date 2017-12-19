@@ -122,8 +122,8 @@ fn parallel_bench_db(n_threads: usize) -> (Duration, u32) {
 
 fn parallel_bench_prng(n_threads: usize) -> (Duration, u32) {
     parallel_bench(n_threads,
-        |db| {},
-        |barrier, db| {
+        |_db| {},
+        |barrier, _db| {
             barrier.wait();
 
             let start = Instant::now();

@@ -3,8 +3,6 @@ extern crate log;
 extern crate db;
 
 use std::time::Instant;
-use std::mem::size_of;
-use std::rc::Rc;
 
 fn main() {
     let mut db = db::DB::default();
