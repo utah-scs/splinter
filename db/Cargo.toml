@@ -1,9 +1,15 @@
 [package]
 name = "db"
 version = "0.1.0"
-authors = ["Ryan Stutsman <stutsman@cs.utah.edu>"]
+authors = ["Chinmay Kulkarni <kulkarni@cs.utah.edu>",
+           "Ryan Stutsman <stutsman@cs.utah.edu>"]
+license = "MIT"
 
 [dependencies]
 log = "0.3"
 rand = "0.3"
+
+# Either spin of parking_lot for for RwLock. They seem to be a toss up
+# in performance with spin seeming to be the simpler crate.
 spin = "0.4"
+#parking_lot = "0.5"
