@@ -24,7 +24,6 @@ use std::thread;
 //
 //use std::sync::{Arc, Barrier, Mutex}; // Use regular Mutex.
 use std::sync::{Arc, Barrier};
-use spin::{Mutex}; // Use spin lock.
 use std::time::{Duration, Instant};
 use rand::{Rng};
 
@@ -33,7 +32,15 @@ use db::DB;
 const DEBUG_PRINT : bool = false;
 
 const N_ITERS : u32 = (1u32 << 24);
-const N_THREADS : usize = 4;
+const N_THREADS : usize = 8;
+
+// false: all gets in measurement phase; true alternate gets/puts
+const READ_ONLY : bool = false;
+
+// 128 B
+const VALUE : &str =
+    concat!("1000000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000");
 
 /// Converts `d` to floating point duration in seconds.
 fn to_seconds(d: &Duration) -> f64 {
@@ -78,7 +85,7 @@ fn parallel_bench_db(n_threads: usize) -> (Duration, u32) {
                 println!("Setting up db...");
             }
 
-            let value = "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".as_bytes();
+            let value = VALUE.as_bytes();
 
             let start = Instant::now();
             for i in 0..N_ITERS {
@@ -96,18 +103,23 @@ fn parallel_bench_db(n_threads: usize) -> (Duration, u32) {
             }
         },
         |barrier, db| {
+            let value = VALUE.as_bytes();
+
             barrier.wait();
 
             let start = Instant::now();
             let mut s = 0u64;
-            for _ in 0..N_ITERS {
+            for i in 0..N_ITERS {
                 let v = rand::thread_rng().gen::<u32>() & (N_ITERS - 1);
                 let key : &[u8] = unsafe {
                     std::slice::from_raw_parts(&v as *const u32 as *const _,
                                                std::mem::size_of::<u32>())
                 };
-                let mut db = db.lock();
-                s += db.get(key).unwrap()[0] as u64;
+                if READ_ONLY || (i & 1 == 0) {
+                    s += db.get(key).unwrap()[0] as u64;
+                } else {
+                    db.put(key, value);
+                }
             }
             let get_time = start.elapsed();
 
@@ -145,13 +157,13 @@ fn parallel_bench_prng(n_threads: usize) -> (Duration, u32) {
 
 fn parallel_bench(n_threads: usize,
                   setup: fn (&mut DB) -> (),
-                  run: fn (Arc<Barrier>, Arc<Mutex<DB>>) -> (Duration, u32))
+                  run: fn (Arc<Barrier>, Arc<DB>) -> (Duration, u32))
     -> (Duration, u32)
 {
     let mut db = DB::default();
     setup(&mut db);
 
-    let db = Arc::new(Mutex::new(db));
+    let db = Arc::new(db);
 
     let mut threads = Vec::with_capacity(n_threads);
     let barrier = Arc::new(Barrier::new(n_threads));
