@@ -27,7 +27,7 @@ use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 use rand::{Rng};
 
-use db::Table;
+use db::table::Table;
 
 const DEBUG_PRINT : bool = false;
 

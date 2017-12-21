@@ -24,7 +24,7 @@ impl User {
     }
 }
 
-struct Master {
+pub struct Master {
     // TODO(stutsman) Need some form of interior mutability here.
     users: HashMap<UserId, User>,
 }
@@ -42,12 +42,21 @@ impl<'a> GetRequest<'a> {
 }
 
 impl Master {
-    fn new() {
+    pub fn new() -> Master {
         let mut user = User::new(0);
         user.create_table(0);
+
+        let mut master = Master{
+            users: HashMap::new(),
+        };
+
+        master.users.insert(user.id, user);
+
+        master
     }
 
     fn get(&self, key: &[u8]) -> Option<Response> {
+        debug!("Servicing get({:?})", key);
         if let Some(ref user) = self.users.get(&0u32) {
             if let Some(ref table) = user.tables.get(&0u32) {
                 if let Some(_value) = table.get(key) {
@@ -62,11 +71,10 @@ impl Master {
             None // Create user not found response.
         }
     }
-
 }
 
 impl Service for Master {
-    fn dispatch(&self, request: Vec<u8>) -> Option<Response> {
+    fn dispatch(&self, request: &BS) -> Option<Response> {
         match parse_opcode(&request) {
             Some(OP_GET) => {
                 let args = GetRequest::parse(&request);

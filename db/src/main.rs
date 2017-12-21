@@ -1,41 +1,25 @@
-#[macro_use]
-extern crate log;
+#[macro_use] extern crate log;
+extern crate env_logger;
+
 extern crate db;
 
-use std::time::Instant;
+use db::Service; // TODO(stutsman) Seems like something is screwed up in lib.rs if we require this.
 
 fn main() {
-    let db = db::Table::default();
+    env_logger::init().unwrap();
+    info!("Starting Sandstorm");
 
-    let mut key = Vec::new();
-    key.extend_from_slice("longkey_".as_bytes());
-    let value = "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".as_bytes();
+    let master = db::Master::new();
 
-    let n_iters : u32 = 1_000_000;
+    let mut request = db::BS::new();
 
-    let start = Instant::now();
-    for i in 0..n_iters {
-        key[7] = i as u8 & 0x7f;
-        db.put(key.as_slice(), value);
+    for _ in 0..20 {
+        db::fill_request(&mut request);
+
+        // Right now services borrow the request. It could make more sense for ownership to be
+        // transferred later if some request/responses outlast the stack (e.g. via futures) and we
+        // are still worried about copy-out costs. This seems a bit unlikely, though.
+        master.dispatch(&request);
     }
-    let put_time = start.elapsed();
-
-    let start = Instant::now();
-    let mut s = 0u64;
-    for i in 0..n_iters {
-        key[7] = i as u8 & 0x7f;
-        let b = db.get(key.as_slice()).unwrap()[0] as u64;
-        s += b;
-        /*
-        println!("get('{:?}') = {:?}",
-            str::from_utf8(&key).unwrap(),
-            str::from_utf8(v).unwrap());
-        */
-    }
-    let get_time = start.elapsed();
-    info!("Total: {:?}", put_time + get_time);
-    info!("Per Put: {:?}", put_time/(n_iters as u32));
-    info!("Per Get: {:?}", get_time/(n_iters as u32));
-    info!("Print some stuff to avoid compiler opts: {:?}", s);
 }
 
