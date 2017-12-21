@@ -13,13 +13,21 @@ fn main() {
 
     let mut request = db::BS::new();
 
-    for _ in 0..20 {
-        db::fill_request(&mut request);
+    db::fill_put_request(&mut request);
+    let response = db::create_response();
+    master.dispatch(&request, response);
+    request.clear();
 
+    db::fill_get_request(&mut request);
+
+    for _ in 0..20 {
         // Right now services borrow the request. It could make more sense for ownership to be
         // transferred later if some request/responses outlast the stack (e.g. via futures) and we
         // are still worried about copy-out costs. This seems a bit unlikely, though.
-        master.dispatch(&request);
+        let response = db::create_response();
+        if let Some(response) = master.dispatch(&request, response) {
+            debug!("Got response {:?}", response);
+        }
     }
 }
 

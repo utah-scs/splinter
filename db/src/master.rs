@@ -41,6 +41,20 @@ impl<'a> GetRequest<'a> {
     }
 }
 
+struct PutRequest<'a> {
+    key: &'a [u8],
+    value: &'a [u8],
+}
+
+impl<'a> PutRequest<'a> {
+    fn parse(request: &Request) -> PutRequest {
+        PutRequest{
+            key: request,
+            value: request,
+        }
+    }
+}
+
 impl Master {
     pub fn new() -> Master {
         let mut user = User::new(0);
@@ -55,12 +69,15 @@ impl Master {
         master
     }
 
-    fn get(&self, key: &[u8]) -> Option<Response> {
+    fn get(&self, key: &[u8], mut response: Response) -> Option<Response> {
         debug!("Servicing get({:?})", key);
         if let Some(ref user) = self.users.get(&0u32) {
             if let Some(ref table) = user.tables.get(&0u32) {
-                if let Some(_value) = table.get(key) {
-                    None // Create response with value in it.
+                if let Some(value) = table.get(key) {
+                    debug!("Fetching key {:?}", key);
+                    // TODO(stutsman) fill the response directly in table get.
+                    response.extend(value.into_iter());
+                    Some(response)
                 } else {
                     None // Key not found response.
                 }
@@ -71,14 +88,33 @@ impl Master {
             None // Create user not found response.
         }
     }
+
+    fn put(&self, key: &[u8], value: &[u8], mut response: Response) -> Option<Response> {
+        debug!("Servicing put({:?})", key);
+        if let Some(ref user) = self.users.get(&0u32) {
+            if let Some(ref table) = user.tables.get(&0u32) {
+                debug!("Storing under key {:?}", key);
+                table.put("\x01".as_bytes(), value); // TODO(stutsman) Temp hack to make gets find something.
+                Some(response)
+            } else {
+                None // Create table not found response.
+            }
+        } else {
+            None // Create user not found response.
+        }
+    }
 }
 
 impl Service for Master {
-    fn dispatch(&self, request: &BS) -> Option<Response> {
+    fn dispatch(&self, request: &Request, response: Response) -> Option<Response> {
         match parse_opcode(&request) {
             Some(OP_GET) => {
                 let args = GetRequest::parse(&request);
-                self.get(args.key)
+                self.get(args.key, response)
+            }
+            Some(OP_PUT) => {
+                let args = PutRequest::parse(&request);
+                self.put(args.key, args.value, response)
             }
             Some(opcode) => {
                 warn!("Master got unexpected opcode {}", opcode);
