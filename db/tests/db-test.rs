@@ -27,7 +27,7 @@ use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 use rand::{Rng};
 
-use db::DB;
+use db::Table;
 
 const DEBUG_PRINT : bool = false;
 
@@ -156,11 +156,11 @@ fn parallel_bench_prng(n_threads: usize) -> (Duration, u32) {
 }
 
 fn parallel_bench(n_threads: usize,
-                  setup: fn (&mut DB) -> (),
-                  run: fn (Arc<Barrier>, Arc<DB>) -> (Duration, u32))
+                  setup: fn (&mut Table) -> (),
+                  run: fn (Arc<Barrier>, Arc<Table>) -> (Duration, u32))
     -> (Duration, u32)
 {
-    let mut db = DB::default();
+    let mut db = Table::default();
     setup(&mut db);
 
     let db = Arc::new(db);

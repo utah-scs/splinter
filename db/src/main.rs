@@ -5,7 +5,7 @@ extern crate db;
 use std::time::Instant;
 
 fn main() {
-    let db = db::DB::default();
+    let db = db::Table::default();
 
     let mut key = Vec::new();
     key.extend_from_slice("longkey_".as_bytes());
