@@ -309,9 +309,9 @@ impl<T: EndOffset, M: Sized + Send> Packet<T, M> {
             let size = header.offset();
             let added = (*self.mbuf).add_data_end(size);
 
-            let header = self.payload();
+            // let header = self.payload();
 
-            let hdr = header as *mut T2;
+            let hdr = header as *const T2;
             let offset = self.offset() + self.payload_offset();
             if added >= size {
                 let dst = if len != offset {
@@ -325,7 +325,7 @@ impl<T: EndOffset, M: Sized + Send> Packet<T, M> {
                     self.payload() as *mut T2
                 };
                 ptr::copy_nonoverlapping(hdr, dst, 1);
-                Some(create_packet(self.get_mbuf_ref(), hdr, offset))
+                Some(create_packet(self.get_mbuf_ref(), dst, offset))
             } else {
                 None
             }
