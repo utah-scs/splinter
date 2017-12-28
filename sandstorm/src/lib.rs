@@ -15,7 +15,9 @@ impl MockDB {
         MockDB{messages: RefCell::new(Vec::new())}
     }
 
-    pub fn assert_messages(&self, messages: &[&str]) {
+    pub fn assert_messages<S>(&self, messages: &[S])
+        where S: std::fmt::Debug + PartialEq<String>
+    {
         let found = self.messages.borrow();
         assert_eq!(messages, found.as_slice());
     }

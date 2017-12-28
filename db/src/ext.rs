@@ -2,6 +2,7 @@ extern crate sandstorm;
 extern crate libloading as lib;
 
 use std::sync::{Arc, RwLock};
+
 use std::collections::HashMap;
 
 use super::common::*;
@@ -37,12 +38,12 @@ impl ExtensionManager {
         ExtensionManager{extensions: RwLock::new(HashMap::new())}
     }
 
-    pub fn load_test_modules(&self) {
-        let exts = vec![("../ext/tao/target/debug/libtao.so", "tao")];
+    pub fn load_test_modules(&self, n: usize) {
+        let exts : Vec<_> = (0..n).map(|i| ("../ext/tao/target/debug/libtao.so", format!("tao{}", i))).collect();
 
         for (path, name) in exts {
             println!("{}", path);
-            self.load(path, 0, name);
+            self.load(path, 0, &name);
         }
     }
 
@@ -52,7 +53,6 @@ impl ExtensionManager {
         exts.insert((user_id, String::from(proc_name)), ext);
     }
 
-    // TODO(stutsman) Use interior mutability here.
     pub fn call(&self, db: &sandstorm::DB, user_id: UserId, proc_name: &str) {
         let exts = self.extensions.read().unwrap();
         // TODO(stutsman) Pointless malloc here for string.
@@ -70,9 +70,21 @@ mod tests {
         let db = sandstorm::MockDB::new();
         let m = ExtensionManager::new();
 
-        m.load_test_modules();
-        m.call(&db, 0, "tao");
+        let n = 10000;
 
-        db.assert_messages(&vec!["TAO Initialized! 0"]);
+        m.load_test_modules(n);
+
+        let expected : Vec<String> = (0..n).map(|i| format!("TAO Initialized! {}", i)).collect();
+
+        let proc_names : Vec<String> = (0..n).map(|i| format!("tao{}", i)).collect();
+
+        {
+            let _ = util::Bench::start(Some("Call all exts"));
+            for p in proc_names {
+                m.call(&db, 0, &p);
+            }
+        }
+
+        db.assert_messages(expected.as_slice());
     }
 }
