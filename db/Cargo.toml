@@ -12,6 +12,7 @@ libloading = "0.3"
 log = "0.3"
 env_logger = "0.3"
 rand = "0.3"
+time = "0.1"
 
 # Either spin of parking_lot for for RwLock. They seem to be a toss up
 # in performance with spin seeming to be the simpler crate.

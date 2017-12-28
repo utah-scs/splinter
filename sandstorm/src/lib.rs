@@ -21,6 +21,11 @@ impl MockDB {
         let found = self.messages.borrow();
         assert_eq!(messages, found.as_slice());
     }
+
+    pub fn clear_messages(&self) {
+        let mut messages = self.messages.borrow_mut();
+        messages.clear();
+    }
 }
 
 impl DB for MockDB {
@@ -28,6 +33,24 @@ impl DB for MockDB {
         let mut messages = self.messages.borrow_mut();
         messages.push(String::from(message));
     }
+}
+
+pub struct NullDB {}
+
+impl NullDB {
+    pub fn new() -> NullDB {
+        NullDB{}
+    }
+
+    pub fn assert_messages<S>(&self, messages: &[S])
+        where S: std::fmt::Debug + PartialEq<String>
+    {}
+
+    pub fn clear_messages(&self) {}
+}
+
+impl DB for NullDB {
+    fn debug_log(&self, message: &str) {}
 }
 
 #[cfg(test)]

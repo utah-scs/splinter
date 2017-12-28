@@ -111,8 +111,8 @@ impl Master {
     }
 
     pub fn test_exts(&self) {
-        self.extensions.load_test_modules(1);
-        self.extensions.call(self, 0, "tao0");
+        self.extensions.load_one_test_module();
+        self.extensions.call(self, 0, "tao");
     }
 }
 
