@@ -29,5 +29,7 @@ fn main() {
             debug!("Got response {:?}", response);
         }
     }
+
+    master.test_exts();
 }
 

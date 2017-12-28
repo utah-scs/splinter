@@ -1,8 +1,12 @@
+extern crate sandstorm;
+
 use std::collections::HashMap;
+
 use super::common::*;
 use super::rpc::*;
 use super::table::*;
 use super::service::*;
+use super::ext::*;
 
 struct User {
     // TODO(stutsman) Need some form of interior mutability here.
@@ -27,6 +31,7 @@ impl User {
 pub struct Master {
     // TODO(stutsman) Need some form of interior mutability here.
     users: HashMap<UserId, User>,
+    extensions: ExtensionManager,
 }
 
 struct GetRequest<'a> {
@@ -62,6 +67,7 @@ impl Master {
 
         let mut master = Master{
             users: HashMap::new(),
+            extensions: ExtensionManager::new(),
         };
 
         master.users.insert(user.id, user);
@@ -103,6 +109,11 @@ impl Master {
             None // Create user not found response.
         }
     }
+
+    pub fn test_exts(&self) {
+        self.extensions.load_test_modules();
+        self.extensions.call(self, 0, "tao");
+    }
 }
 
 impl Service for Master {
@@ -125,6 +136,14 @@ impl Service for Master {
                 None
             }
         }
+    }
+}
+
+impl sandstorm::DB for Master {
+    // TODO(stutsman): Clearly the DB needs a way to find the calling extension information. We can
+    // force them to hand it to us, or we can track it in e.g. TLS.
+    fn debug_log(&self, message: &str) {
+        info!("EXT {}", message);
     }
 }
 

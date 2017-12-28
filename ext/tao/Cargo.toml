@@ -1,0 +1,10 @@
+[package]
+name = "tao"
+version = "0.1.0"
+authors = ["Ryan Stutsman <stutsman@cs.utah.edu>"]
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+sandstorm = { path = "../../sandstorm" }

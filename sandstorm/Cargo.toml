@@ -1,0 +1,6 @@
+[package]
+name = "sandstorm"
+version = "0.1.0"
+authors = ["Ryan Stutsman <stutsman@cs.utah.edu>"]
+
+[dependencies]
