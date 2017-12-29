@@ -148,8 +148,8 @@ int init_pmd_port(int port, int rxqs, int txqs, int rxq_core[], int txq_core[], 
         return ret; /* Don't need to clean up here */
     }
 
-    /* Set to promiscuous mode */
-    rte_eth_promiscuous_enable(port);
+    /* Disable promiscuous mode */
+    rte_eth_promiscuous_disable(port);
 
     for (i = 0; i < rxqs; i++) {
         int sid = rte_lcore_to_socket_id(rxq_core[i]);

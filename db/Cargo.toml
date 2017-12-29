@@ -1,7 +1,7 @@
 [package]
 name = "db"
 version = "0.1.0"
-authors = ["Chinmay Kulkarni <kulkarni@cs.utah.edu>",
+authors = ["Chinmay Kulkarni <chnm.kulkarni@gmail.com>",
            "Ryan Stutsman <stutsman@cs.utah.edu>"]
 license = "MIT"
 
@@ -13,6 +13,7 @@ log = "0.3"
 env_logger = "0.3"
 rand = "0.3"
 time = "0.1"
+e2d2 = { path = "../net/framework" }
 
 # Either spin of parking_lot for for RwLock. They seem to be a toss up
 # in performance with spin seeming to be the simpler crate.
