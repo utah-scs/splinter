@@ -16,18 +16,21 @@ pub mod util {
             Bench{ start: time::PreciseTime::now(), name }
         }
 
-        pub fn run<F>(name: &str, f: F)
+        pub fn run<F>(f: F) -> time::Duration
             where F: FnOnce()
         {
-            let _ = Self::start(Some(name));
-            f()
+            let b = Self::start(None);
+            f();
+            b.start.to(time::PreciseTime::now())
         }
     }
 
     impl<'a> Drop for Bench<'a> {
         fn drop(&mut self) {
             let time = self.start.to(time::PreciseTime::now());
-            println!("{} took {} us", self.name.unwrap_or("<bench>"), time.num_microseconds().unwrap());
+            if let Some(name) = self.name {
+                println!("{} took {} us", name, time.num_microseconds().unwrap());
+            }
         }
     }
 }

@@ -9,7 +9,7 @@ fn main() {
     env_logger::init().unwrap();
     info!("Starting Sandstorm");
 
-    let master = db::Master::new();
+    let mut master = db::Master::new();
 
     let mut request = db::BS::new();
 

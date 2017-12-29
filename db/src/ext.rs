@@ -1,7 +1,9 @@
 extern crate sandstorm;
 extern crate libloading as lib;
+extern crate spin;
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
+use self::spin::{RwLock};
 use std::io::Result;
 
 use std::collections::HashMap;
@@ -9,29 +11,33 @@ use std::collections::HashMap;
 use super::common::*;
 
 type Procedure<'lib> = lib::Symbol<'lib, unsafe extern fn(&sandstorm::DB)>;
+type ProcedureRaw = lib::os::unix::Symbol<unsafe extern fn(&sandstorm::DB)>;
 
 struct Extension {
     library: lib::Library,
-    //procedure: Option<Procedure<'lib>>,
+    procedure: ProcedureRaw,
 }
 
 impl Extension {
     fn load(ext_path: &str) -> Result<Extension> {
         let lib = lib::Library::new(ext_path)?;
-        Ok(Extension{library: lib})
+        let init: ProcedureRaw;
+        unsafe {
+            let wrapped : Procedure = lib.get(b"init").unwrap();
+            init = wrapped.into_raw();
+        }
+        Ok(Extension{library: lib, procedure: init})
     }
 
     fn call(&self, db: &sandstorm::DB) {
-        let init: Procedure;
         unsafe {
-            init = self.library.get(b"init").unwrap();
-            init(db);
+            (self.procedure)(db);
         }
     }
 }
 
 pub struct ExtensionManager {
-    extensions: RwLock<HashMap<(UserId, String), Arc<Extension>>>,
+    extensions: RwLock<HashMap<String, Arc<Extension>>>,
 }
 
 impl ExtensionManager {
@@ -51,21 +57,21 @@ impl ExtensionManager {
                                             format!("tao{}", i))).collect();
 
         for (path, name) in exts {
-            self.load(&path, 0, &name);
+            self.load(&path, 0, &name).unwrap();
         }
     }
 
-    pub fn load(&self, ext_path: &str, user_id: UserId, proc_name: &str) -> Result<()> {
+    pub fn load(&self, ext_path: &str, _: UserId, proc_name: &str) -> Result<()> {
         let ext = Arc::new(Extension::load(ext_path)?);
-        let mut exts = self.extensions.write().unwrap();
-        exts.insert((user_id, String::from(proc_name)), ext);
+        let mut exts = self.extensions.write();
+        exts.insert(String::from(proc_name), ext);
         Ok(())
     }
 
-    pub fn call(&self, db: &sandstorm::DB, user_id: UserId, proc_name: &str) {
-        let exts = self.extensions.read().unwrap();
-        // TODO(stutsman) Pointless malloc here for string.
-        let ext = exts.get(&(user_id, String::from(proc_name))).unwrap();
+    pub fn call(&self, db: &sandstorm::DB, _: UserId, proc_name: &str) {
+        let exts = self.extensions.read();
+        let ext = exts.get(proc_name).unwrap().clone();
+        drop(exts);
         ext.call(db)
     }
 }
@@ -89,7 +95,7 @@ mod tests {
             m.load_many_test_modules(n);
         }
 
-        let expected : Vec<String> = (0..n).map(|i| format!("TAO Initialized! 0")).collect();
+        let expected : Vec<String> = (0..n).map(|_| format!("TAO Initialized! 0")).collect();
 
         let proc_names : Vec<String> = (0..n).map(|i| format!("tao{}", i)).collect();
 
@@ -103,15 +109,19 @@ mod tests {
         db.assert_messages(expected.as_slice());
         db.clear_messages();
 
-        let expected : Vec<String> = (0..n).map(|i| format!("TAO Initialized! 1")).collect();
-        {
-            let _x  = util::Bench::start(Some("Call all exts again"));
-            for _ in 0..1000 {
+        let expected : Vec<String> = (0..n).map(|_| format!("TAO Initialized! 1")).collect();
+
+        let mut c = 0;
+        let duration = util::Bench::run(|| {
+            for _ in 0..100000 {
                 for p in proc_names.iter() {
                     m.call(&db, 0, &p);
+                    c = c + 1;
                 }
             }
-        }
+        });
+        println!("Time per call {} ns", duration.num_nanoseconds().unwrap() / c);
+
         db.assert_messages(expected.as_slice());
     }
 }

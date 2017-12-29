@@ -10,12 +10,13 @@ static mut N: u32 = 0;
 
 #[no_mangle]
 pub fn init(db: &sandstorm::DB) {
-  let m;
-  unsafe {
-    m = N;
-    N +=1;
-  }
-  db.debug_log(&format!("TAO Initialized! {}", m));
+  //let m;
+  //unsafe {
+  //  m = N;
+  //  N +=1;
+  //}
+  //db.debug_log(&format!("TAO Initialized! {}", m));
+  db.debug_log("TAO Initialized");
 }
 
 #[cfg(test)]
