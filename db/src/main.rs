@@ -37,6 +37,13 @@ use e2d2::config::{ NetbricksConfiguration, PortConfiguration };
 
 use server_dispatch::ServerDispatch;
 
+// XXX: Required to get microbenchmarks working.
+mod client;
+use client::*;
+use common::*;
+use service::*;
+use master::*;
+
 /// This function sets up a Sandstorm server's dispatch thread on top
 /// of Netbricks.
 fn setup_server<T, S>(ports: Vec<T>, scheduler: &mut S)
@@ -161,37 +168,39 @@ fn main() {
             setup_server(ports, scheduler)
             ));
 
+    /*
     // Run the server.
     net_context.execute();
 
     loop {
         ;
     }
+    */
 
     // Stop the server.
     net_context.stop();
 
-    /*
-    let mut request = db::BS::new();
+    let mut master = Master::new();
 
-    db::fill_put_request(&mut request);
-    let response = db::create_response();
+    let mut request = BS::new();
+
+    fill_put_request(&mut request);
+    let response = create_response();
     master.dispatch(&request, response);
     request.clear();
 
-    db::fill_get_request(&mut request);
+    fill_get_request(&mut request);
 
     for _ in 0..20 {
         // Right now services borrow the request. It could make more sense for
         // ownership to be transferred later if some request/responses outlast
         // the stack (e.g. via futures) and we are still worried about copy-out
         // costs. This seems a bit unlikely, though.
-        let response = db::create_response();
+        let response = create_response();
         if let Some(response) = master.dispatch(&request, response) {
             debug!("Got response {:?}", response);
         }
     }
 
     master.test_exts();
-    */
 }

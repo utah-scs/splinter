@@ -1,4 +1,4 @@
-extern crate db;
+extern crate db_lib;
 extern crate rand;
 extern crate spin;
 
@@ -27,7 +27,7 @@ use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 use rand::{Rng};
 
-use db::table::Table;
+use db_lib::table::Table;
 
 const DEBUG_PRINT : bool = false;
 

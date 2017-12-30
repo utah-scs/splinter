@@ -5,6 +5,14 @@ authors = ["Chinmay Kulkarni <chnm.kulkarni@gmail.com>",
            "Ryan Stutsman <stutsman@cs.utah.edu>"]
 license = "MIT"
 
+[lib]
+name = "db_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "db_main"
+path = "src/main.rs"
+
 [dependencies]
 sandstorm = { path = "../sandstorm" }
 libloading = "0.3"
