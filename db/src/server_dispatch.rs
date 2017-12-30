@@ -85,7 +85,7 @@ where
         let tx_batch_size: u8 = 32;
 
         ServerDispatch {
-            master_service: Arc::new(Master::new()),
+            master_service: Master::new(),
             network_port: net_port.clone(),
             network_eth_type: ether_type,
             network_ip_addr: ip_addr,
