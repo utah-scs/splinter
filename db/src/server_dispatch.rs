@@ -13,13 +13,16 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::sync::Arc;
 use std::fmt::Display;
 use std::str::FromStr;
 use std::net::Ipv4Addr;
 use std::option::Option;
 
+use super::common;
+use super::wireformat;
 use super::master::Master;
+use super::service::Service;
+use super::rpc::parse_rpc_service;
 
 use super::e2d2::headers::*;
 use super::e2d2::interface::*;
@@ -41,17 +44,7 @@ where
     /// transmits RPC requests and responses on.
     network_port: T,
 
-    /// The type of Ethernet frames this dispatcher handles. Frames of any
-    /// other type are discarded if received.
-    network_eth_type: u16,
-
-    /// The Ip address of the server. Any packet with a mismatched destination
-    /// Ip address will be dropped by the dispatcher.
     network_ip_addr: u32,
-
-    /// The UDP port this dispatcher listens on. Any packet with a mismatched
-    /// destination UDP port will be dropped by the dispatcher.
-    network_udp_port: u16,
 
     /// The maximum number of packets that the dispatcher can receive from the
     /// network interface in a single burst.
@@ -60,6 +53,12 @@ where
     /// The maximum number of packets that the dispatched can transmit on the
     /// network interface in a single burst.
     max_tx_packets: u8,
+
+    resp_udp_header: UdpHeader,
+
+    resp_ip_header: IpHeader,
+
+    resp_mac_header: MacHeader,
 }
 
 impl<T> ServerDispatch<T>
@@ -77,21 +76,60 @@ where
     /// - `return`: A dispatcher of type ServerDispatch capable of receiving
     ///             RPCs, and responding to them.
     pub fn new(net_port: T) -> ServerDispatch<T> {
-        let ether_type: u16 = 0x0800;
-        let ip_addr = u32::from(Ipv4Addr::from_str("192.168.0.2")
-                                    .expect("Failed to create server IP."));
-        let udp_port: u16 = 0;
         let rx_batch_size: u8 = 32;
         let tx_batch_size: u8 = 32;
+
+        // Create a common udp header for response packets.
+        let udp_src_port: u16 = common::SERVER_UDP_PORT;
+        let udp_dst_port: u16 = common::CLIENT_UDP_PORT;
+        let udp_length: u16 = common::PACKET_UDP_LEN;
+        let udp_checksum: u16 = common::PACKET_UDP_CHECKSUM;
+
+        let mut udp_header: UdpHeader = UdpHeader::new();
+        udp_header.set_src_port(udp_src_port);
+        udp_header.set_dst_port(udp_dst_port);
+        udp_header.set_length(udp_length);
+        udp_header.set_checksum(udp_checksum);
+
+        // Create a common ip header for response packets.
+        let ip_src_addr: u32 =
+            u32::from(Ipv4Addr::from_str(common::SERVER_IP_ADDRESS)
+                    .expect("Failed to create server IP address."));
+        let ip_dst_addr: u32 =
+            u32::from(Ipv4Addr::from_str(common::CLIENT_IP_ADDRESS)
+                    .expect("Failed to create client IP address."));
+        let ip_ttl: u8 = common::PACKET_IP_TTL;
+        let ip_version: u8 = common::PACKET_IP_VER;
+        let ip_ihl: u8 = common::PACKET_IP_IHL;
+        let ip_length: u16 = common::PACKET_IP_LEN;
+
+        let mut ip_header: IpHeader = IpHeader::new();
+        ip_header.set_src(ip_src_addr);
+        ip_header.set_dst(ip_dst_addr);
+        ip_header.set_ttl(ip_ttl);
+        ip_header.set_version(ip_version);
+        ip_header.set_ihl(ip_ihl);
+        ip_header.set_length(ip_length);
+
+        // Create a common mac header for response packets.
+        let mac_src_addr: MacAddress = common::SERVER_MAC_ADDRESS;
+        let mac_dst_addr: MacAddress = common::CLIENT_MAC_ADDRESS;
+        let mac_etype: u16 = common::PACKET_ETYPE;
+
+        let mut mac_header: MacHeader = MacHeader::new();
+        mac_header.src = mac_src_addr;
+        mac_header.dst = mac_dst_addr;
+        mac_header.set_etype(mac_etype);
 
         ServerDispatch {
             master_service: Master::new(),
             network_port: net_port.clone(),
-            network_eth_type: ether_type,
-            network_ip_addr: ip_addr,
-            network_udp_port: udp_port,
+            network_ip_addr: ip_src_addr,
             max_rx_packets: rx_batch_size,
             max_tx_packets: tx_batch_size,
+            resp_udp_header: udp_header,
+            resp_ip_header: ip_header,
+            resp_mac_header: mac_header,
         }
     }
 
@@ -207,7 +245,7 @@ where
             {
                 let mac_header: &MacHeader = packet.get_header();
 
-                valid = self.network_eth_type.eq(&mac_header.etype());
+                valid = common::PACKET_ETYPE.eq(&mac_header.etype());
             }
 
             match valid {
@@ -231,7 +269,7 @@ where
     ///     - It is not an IPv4 packet,
     ///     - The TTL field on it is 0,
     ///     - It's destination IP address does not match that of the server,
-    ///     - It's IP header and payload is less than 20 Bytes long.
+    ///     - It's IP header and payload are not long enough.
     ///
     /// - `packets`: A vector of packets with their MAC headers parsed off
     ///              (type Packet<MacHeader, EmptyMetadata>).
@@ -261,14 +299,15 @@ where
             // valid if:
             //      - It is an IPv4 packet,
             //      - It's TTL (time to live) is greater than zero,
-            //      - It is at least 20 Bytes long,
+            //      - It is not long enough,
             //      - It's destination Ip address matches that of the server.
             {
+                const MIN_LENGTH_IP: u16 = common::PACKET_IP_LEN + 2;
                 let ip_header: &IpHeader = packet.get_header();
 
                 valid = (ip_header.version() == 4) &&
                         (ip_header.ttl() > 0) &&
-                        (ip_header.length() >= 20) &&
+                        (ip_header.length() >= MIN_LENGTH_IP) &&
                         (ip_header.dst() == self.network_ip_addr);
             }
 
@@ -291,7 +330,7 @@ where
     ///
     /// A packet is dropped by this method if:
     ///     - It's destination UDP port does not match that of the server,
-    ///     - It's UDP header plus payload is less than 8 Bytes long.
+    ///     - It's UDP header plus payload is not long enough.
     ///
     /// - `packets`: A vector of packets with their IP headers parsed.
     ///
@@ -317,13 +356,14 @@ where
 
             // This block borrows the UDP header from the parsed packet, and
             // checks if it is valid. A packet is considered valid if:
-            //      - It is atleast 8 Bytes long,
+            //      - It is not long enough,
             //      - It's destination port matches that of the server.
             {
+                const MIN_LENGTH_UDP: u16 = common::PACKET_UDP_LEN + 2;
                 let udp_header: &UdpHeader = packet.get_header();
 
-                valid = (udp_header.length() >= 8) &&
-                        (udp_header.dst_port() == self.network_udp_port);
+                valid = (udp_header.length() >= MIN_LENGTH_UDP) &&
+                        (udp_header.dst_port() == common::SERVER_UDP_PORT);
             }
 
             match valid {
@@ -339,6 +379,72 @@ where
         return parsed_packets;
     }
 
+    /// This method dispatches requests to the appropriate service. A response
+    /// packet is pre-allocated by this method and handed in along with the
+    /// request. Once the service returns, this method frees the request packet.
+    ///
+    /// - `requests`: A vector of packets parsed upto and including their UDP
+    ///               headers that will be dispatched to the appropriate
+    ///               service.
+    ///
+    /// - `return`: A vector of packets containing the responses to the requests
+    ///             that were passed in to this method.
+    fn dispatch_requests(&self,
+                         mut requests: Vec<Packet<UdpHeader, EmptyMetadata>>) ->
+        Vec<Packet<UdpHeader, EmptyMetadata>>
+    {
+        // This vector will hold the set of packets that were successfully
+        // dispatched to a service.
+        let mut dispatched_requests =
+            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(
+                self.max_rx_packets as usize);
+        // This vector will hold the set of responses that need to be sent
+        // back to the client.
+        let mut response_packets =
+            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(
+                self.max_rx_packets as usize);
+
+        while let Some(mut request) = requests.pop() {
+            // Allocate a packet for the response upfront.
+            let response: Packet<NullHeader, EmptyMetadata> =
+                new_packet()
+                    .expect("ERROR: Failed to allocate packet for response!");
+
+            // Populate MAC, IP, and UDP headers on the packet.
+            let response: Packet<MacHeader, EmptyMetadata> =
+                response.push_header(&self.resp_mac_header)
+                            .expect("ERROR: Failed to add response MAC header");
+            let response: Packet<IpHeader, EmptyMetadata> =
+                response.push_header(&self.resp_ip_header)
+                            .expect("ERROR: Failed to add response IP header");
+            let mut response: Packet<UdpHeader, EmptyMetadata> =
+                response.push_header(&self.resp_udp_header)
+                            .expect("ERROR: Failed to add response UDP header");
+
+            // Handoff the request to the appropriate service.
+            match parse_rpc_service(&request) {
+                wireformat::Service::MasterService => {
+                    let result =
+                        self.master_service.dispatch(request, response);
+                    request = result.0;
+                    response = result.1;
+                }
+
+                wireformat::Service::InvalidService => {
+                    error!("Server received packet for invalid service!");
+                }
+            }
+
+            response_packets.push(response);
+            dispatched_requests.push(request);
+        }
+
+        // Free the set of dispatched packets.
+        self.free_packets(dispatched_requests);
+
+        return response_packets;
+    }
+
     /// This method polls the dispatchers network port for any received packets.
     #[inline]
     fn poll(&self) {
@@ -349,7 +455,10 @@ where
                 let mut packets = self.parse_ip_headers(packets);
                 let mut packets = self.parse_udp_headers(packets);
 
-                self.free_packets(packets);
+                // Dispatch these packets to the appropriate service.
+                let response_packets = self.dispatch_requests(packets);
+
+                self.free_packets(response_packets);
                 return;
             }
 

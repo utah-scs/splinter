@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-extern crate e2d2;
-
 use std::mem::size_of;
 
 use e2d2::headers::{ EndOffset, UdpHeader };
@@ -30,11 +28,14 @@ use e2d2::headers::{ EndOffset, UdpHeader };
 /// The first field on the header of every rpc request identifies the service
 /// that it should be dispatched to.
 #[repr(u8)]
-enum Service {
+pub enum Service {
     // The most common of all services provided by a sandstorm server. This
     // service implements the primary interface to the database consisting of
     // operations such as get() and put().
     MasterService = 0x01,
+
+    // Any value beyond this represents an invalid service.
+    InvalidService = 0x02,
 }
 
 /// This enum represents the different operations that can be invoked by a
@@ -46,9 +47,12 @@ enum Service {
 /// The second field on the header of every rpc request identifies the
 /// operation it should perform within the Sandstorm server.
 #[repr(u8)]
-enum OpCode {
+pub enum OpCode {
     // A simple operation that looks up the hash table for a given key.
     SandstormGetRpc = 0x01,
+
+    // Any value beyond this represents an invalid rpc.
+    InvalidOperation = 0x02,
 }
 
 /// This type represents the header on a typical remote procedure call (RPC)
@@ -56,7 +60,7 @@ enum OpCode {
 /// operation, the header also identifies the tenant that sent the request for
 /// the purpose of security and accounting.
 #[repr(C, packed)]
-struct RpcRequestHeader {
+pub struct RpcRequestHeader {
     // The service within a server that the request must be dispatched to
     // (ex: MasterService).
     service: Service,
@@ -66,7 +70,7 @@ struct RpcRequestHeader {
     opcode: OpCode,
 
     // An identifier for the tenant that sent this RPC request.
-    tenant: u32,
+    pub tenant: u32,
 }
 
 impl RpcRequestHeader {
@@ -97,15 +101,15 @@ impl RpcRequestHeader {
 #[repr(C, packed)]
 pub struct GetRequest {
     // The generic RPC header identifying the request as a get() RPC.
-    rpc_header: RpcRequestHeader,
+    pub rpc_header: RpcRequestHeader,
 
     // The identifier for the data table the key belongs to. Required
     // for the hash table lookup performed at the server.
-    table_id: u64,
+    pub table_id: u64,
 
     // The length of the key being looked up. This field allows the key
     // to be unpacked from the request at the server.
-    key_length: u16,
+    pub key_length: u16,
 }
 
 impl GetRequest {
@@ -186,7 +190,7 @@ impl EndOffset for GetRequest {
     ///
     /// \return
     ///     Always true.
-    fn check_correct(&self, _prev: &PreviousHeader) -> bool {
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
         true
     }
 }

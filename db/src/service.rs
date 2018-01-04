@@ -1,14 +1,39 @@
-use super::rpc::*;
+/* Copyright (c) 2018 University of Utah
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
 
+use e2d2::interface::Packet;
+use e2d2::headers::UdpHeader;
+use e2d2::common::EmptyMetadata;
+
+/// When implemented, this trait allows for a "service" (ex: Master service,
+/// or Backup service) to receive RPC requests from ServerDispatch.
 pub trait Service {
-    /// Processing a message targeted toward this service.
-    /// Parses `request`, determines `Opcode`, and calls the appropriate RPC handler.
-    /// 
-    /// - `request`: borrowed referenced to message byte string.
-    /// - `response`: response byte string. Ownership is given so the RPC handler can transfer
-    ///               ownership to the transport layer later. It is created ahead of the call to
-    ///               dispatch since it may be comprised of special memory (e.g. registered
-    ///               packet buffers). As a convenience dispatch can just return `response` and
-    ///               the caller will schedule it for transmit.
-    fn dispatch(&self, request: &Request, response: Response) -> Option<Response>;
+    /// This function will be invoked by ServerDispatch (which polls the
+    /// network interface for incoming requests) to hand off a packet
+    /// corresponding to an RPC request.
+    ///
+    /// - `request`: A packet corresponding to an RPC request which should
+    ///              have been parsed upto (and including) it's UDP header.
+    /// - `respons`: A pre-allocated packet with headers upto UDP for the
+    ///              response to the RPC.
+    ///
+    /// - `return`: A tupule consisting off the original request packet and
+    ///             the response packet populated with the response, both
+    ///             deparsed to their UDP headers.
+    fn dispatch(&self,
+                request: Packet<UdpHeader, EmptyMetadata>,
+                respons: Packet<UdpHeader, EmptyMetadata>) ->
+        (Packet<UdpHeader, EmptyMetadata>, Packet<UdpHeader, EmptyMetadata>);
 }
