@@ -4,14 +4,14 @@ use std::collections::HashMap;
 
 use super::ext::*;
 use super::table::*;
-use super::service::Service;
-use super::rpc::parse_rpc_opcode;
-use super::wireformat::{ OpCode, GetRequest };
+use super::service::{ Service };
+use super::rpc::{ parse_rpc_opcode };
 use super::common::{ UserId, TableId, PACKET_UDP_LEN };
+use super::wireformat::{ OpCode, RpcStatus, GetRequest, GetResponse };
 
-use e2d2::interface::Packet;
-use e2d2::headers::UdpHeader;
-use e2d2::common::EmptyMetadata;
+use e2d2::interface::{ Packet };
+use e2d2::headers::{ UdpHeader };
+use e2d2::common::{ EmptyMetadata };
 
 struct User {
     // TODO(stutsman) Need some form of interior mutability here.
@@ -28,9 +28,11 @@ impl User {
     }
 
     fn create_table(&mut self, table_id: u64) {
+        // Create one hash table for the user and populate it one
+        // key-value pair.
         let table = Table::default();
         let key: &[u8] = &[1; 30];
-        let val: &[u8] = &[ 91 ];
+        let val: &[u8] = &[91; 100];
         table.put(key, val);
         self.tables.insert(table_id, table);
     }
@@ -57,59 +59,82 @@ impl Master {
         master
     }
 
-    /// This method handles a Get RPC request.
+    /// This method handles the Get() RPC request. A hash table lookup is
+    /// performed on a supplied tenant id, table id, and key. If successfull,
+    /// the result of the lookup is written into a response packet, and the
+    /// response header is updated. In the case of a failure, the response
+    /// header is updated with a status indicating the reason for the failure.
     ///
-    /// - `request`: The packet corresponding to the RPC request parsed
-    ///              upto and including it's GetRequest header.
-    /// - `response`: The packet corresponding to this RPC request's response.
-    ///
-    /// - `return`: A packet with the response to the passed in request.
-    fn get(&self,
+    /// - `req_hdr`: A reference to the request header of the RPC.
+    /// - `request`: A reference to the entire request packet.
+    /// - `respons`: A mutable reference to the entire response packet.
+    fn get(&self, req_hdr: &GetRequest,
            request: &Packet<GetRequest, EmptyMetadata>,
-           response: Packet<UdpHeader, EmptyMetadata>) ->
-        Packet<UdpHeader, EmptyMetadata>
-    {
-        let req_hdr: &GetRequest = request.get_header();
+           respons: &mut Packet<GetResponse, EmptyMetadata>) {
+        // Read fields of the request header.
+        let tenant_id: UserId = req_hdr.common_header.tenant as UserId;
+        let table_id: TableId = req_hdr.table_id as TableId;
+        let key_length: u16 = req_hdr.key_length;
 
-        // Check if the tenant exists.
-        let tenant_id: &u32 = &req_hdr.rpc_header.tenant;
-        match self.users.get(tenant_id) {
-            Some(tenant) => {
-                // Check if the table exists
-                let table_id: &u64 = &req_hdr.table_id;
-                match tenant.tables.get(table_id) {
-                    Some(table) => {
-                        // Check if the key exists.
-                        let key: &[u8] = request.get_payload();
-                        match table.get(key) {
-                            Some(value) => {
-                                println!("Value: {}", value[0]);
-                                return response;
-                            }
+        // Get a reference to the key.
+        let key: &[u8] = &request.get_payload()[0..key_length as usize];
 
-                            None => {
-                                warn!("Object not found!");
-                                return response;
-                            }
-                        }
-                    }
+        let mut status: RpcStatus = RpcStatus::StatusOk;
 
-                    None => {
-                        warn!("Received Get request on invalid table {}!",
-                              table_id);
-                        return response;
-                    }
-                }
+        let outcome =
+                // Check if the tenant exists.
+            self.users.get(&tenant_id)
+                // If the tenant exists, check if it has a table with the
+                // given id. If it does not exist, update the status to
+                // reflect that.
+                .map_or_else(|| {
+                                status = RpcStatus::StatusTenantDoesNotExist;
+                                None
+                             }, | user | { user.tables.get(&table_id) })
+                // If the table exists, lookup the provided key. If it does
+                // not exist, update the status to reflect that.
+                .map_or_else(|| {
+                                status = RpcStatus::StatusTableDoesNotExist;
+                                None
+                             }, | table | { table.get(key) })
+                // If the lookup succeeded, write the value to the
+                // response payload. If it didn't, update the status to reflect
+                // that.
+                .map_or_else(|| {
+                                status = RpcStatus::StatusObjectDoesNotExist;
+                                None
+                             }, | value | {
+                                 respons.add_to_payload_tail(value.len(),
+                                                            &value)
+                                        .ok()
+                             })
+                // If the value could not be written to the response payload,
+                // update the status to reflect that.
+                .map_or_else(|| {
+                                status = RpcStatus::StatusInternalError;
+                                error!("Could not write to response payload.");
+                                None
+                             }, | _ | { Some(()) });
+
+        match outcome {
+            // The RPC completed successfully. Update the response header with
+            // the status and value length.
+            Some(()) => {
+                let val_len = respons.get_payload().len() as u32;
+
+                let resp_hdr: &mut GetResponse = respons.get_mut_header();
+                resp_hdr.value_length = val_len;
+                resp_hdr.common_header.status = status;
             }
 
+            // The RPC failed. Update the response header with the status.
             None => {
-                warn!("Received Get request from invalid tenant {}!",
-                      tenant_id);
-                return response;
+                let resp_hdr: &mut GetResponse = respons.get_mut_header();
+                resp_hdr.common_header.status = status;
             }
         }
 
-        return response;
+        return;
     }
 
     pub fn test_exts(&mut self) {
@@ -142,19 +167,29 @@ impl Service for Master {
                 let request: Packet<GetRequest, EmptyMetadata> =
                     request.parse_header::<GetRequest>();
 
-                let respons: Packet<UdpHeader, EmptyMetadata> =
-                    self.get(&request, respons);
+                // Create an response header for the request.
+                let response_header = GetResponse::new();
+                let mut respons: Packet<GetResponse, EmptyMetadata> =
+                    respons.push_header(&response_header)
+                        .expect("ERROR: Failed to setup Get() response header");
 
+                // Handle the RPC request.
+                self.get(request.get_header(), &request, &mut respons);
+
+                // Deparse request and response headers so that packets can
+                // be handed back to ServerDispatch.
                 let request: Packet<UdpHeader, EmptyMetadata> =
                     request.deparse_header(PACKET_UDP_LEN as usize);
-                // TODO: deparse respons to UDP header.
+                let respons: Packet<UdpHeader, EmptyMetadata> =
+                    respons.deparse_header(PACKET_UDP_LEN as usize);
 
                 return (request, respons);
             }
 
             OpCode::InvalidOperation => {
                 // TODO: Set error message on the response packet,
-                // deparse respons to UDP header.
+                // deparse respons to UDP header. At present, the
+                // response packet will have an empty response header.
                 return (request, respons);
             }
         }

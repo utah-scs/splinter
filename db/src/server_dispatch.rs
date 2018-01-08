@@ -15,8 +15,11 @@
 
 use std::fmt::Display;
 use std::str::FromStr;
+use std::mem::size_of;
 use std::net::Ipv4Addr;
 use std::option::Option;
+
+use time::{ precise_time_ns };
 
 use super::common;
 use super::wireformat;
@@ -30,8 +33,9 @@ use super::e2d2::scheduler::Executable;
 use super::e2d2::common::EmptyMetadata;
 
 /// This type represents a requests-dispatcher in Sandstorm. When added to a
-/// Netbricks scheduler, this dispatcher polls a network port for RPCs, and
-/// dispatches them to workers.
+/// Netbricks scheduler, this dispatcher polls a network port for RPCs,
+/// dispatches them to a service, and sends out responses on the same network
+/// port.
 pub struct ServerDispatch<T>
 where
     T: PacketRx + PacketTx + Display + Clone + 'static,
@@ -44,6 +48,9 @@ where
     /// transmits RPC requests and responses on.
     network_port: T,
 
+    /// The IP address of the server. This is required to ensure that the
+    /// server does not process packets that were destined to a different
+    /// machine.
     network_ip_addr: u32,
 
     /// The maximum number of packets that the dispatcher can receive from the
@@ -54,11 +61,28 @@ where
     /// network interface in a single burst.
     max_tx_packets: u8,
 
+    /// The UDP header that will be appended to every response packet (cached
+    /// here to avoid wasting time creating a new one for every response
+    /// packet).
     resp_udp_header: UdpHeader,
 
+    /// The IP header that will be appended to every response packet (cached
+    /// here to avoid creating a new one for every response packet).
     resp_ip_header: IpHeader,
 
+    /// The MAC header that will be appended to every response packet (cached
+    /// here to avoid creating a new one for every response packet).
     resp_mac_header: MacHeader,
+
+    /// The number of response packets that were sent out by the dispatcher in
+    /// the last measurement interval.
+    responses_sent: u64,
+
+    /// An indicator of the start of the current measurement interval.
+    measurement_start_ns: u64,
+
+    /// An indicator of the stop of the previous measurement interval.
+    measurement_stop_ns: u64,
 }
 
 impl<T> ServerDispatch<T>
@@ -68,7 +92,8 @@ where
     /// This function creates and returns a requests-dispatcher which can be
     /// added to a Netbricks scheduler. This dispatcher will receive IPv4
     /// Ethernet frames from a network port with a destination IP address of
-    /// 192.168.0.2 and UDP port of 0.
+    /// 192.168.0.2 and UDP port of 0. Responses will be sent out to IP address
+    /// 192.168.0.1 and UDP port 0.
     ///
     /// - `net_port`: A network port/interface on which packets will be
     ///               received and transmitted.
@@ -82,7 +107,11 @@ where
         // Create a common udp header for response packets.
         let udp_src_port: u16 = common::SERVER_UDP_PORT;
         let udp_dst_port: u16 = common::CLIENT_UDP_PORT;
-        let udp_length: u16 = common::PACKET_UDP_LEN;
+        // Currently assuming that all incoming requests are Get() operations
+        // for 100 Byte values.
+        let udp_length: u16 = common::PACKET_UDP_LEN +
+                              size_of::<wireformat::GetResponse>() as u16 +
+                              100;
         let udp_checksum: u16 = common::PACKET_UDP_CHECKSUM;
 
         let mut udp_header: UdpHeader = UdpHeader::new();
@@ -101,7 +130,11 @@ where
         let ip_ttl: u8 = common::PACKET_IP_TTL;
         let ip_version: u8 = common::PACKET_IP_VER;
         let ip_ihl: u8 = common::PACKET_IP_IHL;
-        let ip_length: u16 = common::PACKET_IP_LEN;
+        // Currently assuming that all incoming requests are Get() operations
+        // for 100 Byte values.
+        let ip_length: u16 = common::PACKET_IP_LEN +
+                             size_of::<wireformat::GetResponse>() as u16 +
+                             100;
 
         let mut ip_header: IpHeader = IpHeader::new();
         ip_header.set_src(ip_src_addr);
@@ -130,6 +163,9 @@ where
             resp_udp_header: udp_header,
             resp_ip_header: ip_header,
             resp_mac_header: mac_header,
+            responses_sent: 0,
+            measurement_start_ns: precise_time_ns(),
+            measurement_stop_ns: 0,
         }
     }
 
@@ -192,6 +228,54 @@ where
                     return None;
                 }
             }
+        }
+    }
+
+    /// This method takes as input a vector of packets and tries to send them
+    /// out a network interface.
+    ///
+    /// - `packets`: A vector of packets to be sent out the network, parsed
+    ///              upto their UDP headers.
+    fn try_send_packets(&mut self,
+                        mut packets: Vec<Packet<UdpHeader, EmptyMetadata>>) {
+        // This unsafe block is required to extract the underlying Mbuf's from
+        // the passed in batch of packets, and send them out the network port.
+        unsafe {
+            let mut mbufs = vec![];
+            let num_packets = packets.len();
+
+            // Extract Mbuf's from the batch of packets.
+            while let Some(packet) = packets.pop() {
+                mbufs.push(packet.get_mbuf());
+            }
+
+            // Send out the above MBuf's.
+            match self.network_port.send(&mut mbufs) {
+                Ok(sent) => {
+                    if sent < num_packets as u32 {
+                        warn!("Was able to send only {} of {} packets.", sent,
+                              num_packets);
+                    }
+
+                    self.responses_sent += mbufs.len() as u64;
+                }
+
+                Err(ref err) => {
+                    error!("Error on packet send: {}", err);
+                }
+            }
+        }
+
+        // For every million packets sent out by the dispatcher, print out the
+        // amount of time in nano seconds it took to do so.
+        if self.responses_sent == 1000000 {
+            self.measurement_stop_ns = precise_time_ns();
+
+            info!("Took {} nano seconds for a Million packets!",
+                  self.measurement_stop_ns - self.measurement_start_ns);
+
+            self.measurement_start_ns = self.measurement_stop_ns;
+            self.responses_sent = 0;
         }
     }
 
@@ -410,7 +494,7 @@ where
                 new_packet()
                     .expect("ERROR: Failed to allocate packet for response!");
 
-            // Populate MAC, IP, and UDP headers on the packet.
+            // Populate MAC, IP, and UDP headers on the response packet.
             let response: Packet<MacHeader, EmptyMetadata> =
                 response.push_header(&self.resp_mac_header)
                             .expect("ERROR: Failed to add response MAC header");
@@ -445,9 +529,11 @@ where
         return response_packets;
     }
 
-    /// This method polls the dispatchers network port for any received packets.
+    /// This method polls the dispatchers network port for any received packets,
+    /// dispatches them to the appropriate service, and sends out responses over
+    /// the network port.
     #[inline]
-    fn poll(&self) {
+    fn poll(&mut self) {
         match self.try_receive_packets() {
             Some(packets) => {
                 // Perform basic network processing on the received packets.
@@ -456,9 +542,11 @@ where
                 let mut packets = self.parse_udp_headers(packets);
 
                 // Dispatch these packets to the appropriate service.
-                let response_packets = self.dispatch_requests(packets);
+                let mut response_packets = self.dispatch_requests(packets);
 
-                self.free_packets(response_packets);
+                // Send response packets out.
+                self.try_send_packets(response_packets);
+
                 return;
             }
 

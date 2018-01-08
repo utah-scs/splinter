@@ -14,6 +14,7 @@
  */
 
 extern crate e2d2;
+extern crate time;
 extern crate env_logger;
 #[macro_use] extern crate log;
 
