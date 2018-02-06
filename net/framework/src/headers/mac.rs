@@ -67,7 +67,7 @@ impl Hash for MacAddress {
 }
 
 /// A packet's MAC header.
-#[derive(Debug, Default)]
+#[derive(Default)]
 #[repr(C, packed)]
 pub struct MacHeader {
     pub dst: MacAddress,

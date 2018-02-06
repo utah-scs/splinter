@@ -17,7 +17,7 @@ pub fn tcp_nf<T: 'static + Batch<Header = NullHeader>>(parent: T) -> Composition
         .parse::<IpHeader>()
         .map(box |pkt| {
             let hdr = pkt.get_header();
-            let flow = hdr.flow().unwrap();
+            // let flow = hdr.flow().unwrap();
             let payload = pkt.get_payload();
             println!("hdr {} ihl {} offset {}", hdr, hdr.ihl(), hdr.offset());
             println!(
@@ -27,7 +27,7 @@ pub fn tcp_nf<T: 'static + Batch<Header = NullHeader>>(parent: T) -> Composition
                 payload[2],
                 payload[3]
             );
-            println!("Src {} dst {}", flow.src_port, flow.dst_port);
+            // println!("Src {} dst {}", flow.src_port, flow.dst_port);
         })
         .parse::<UdpHeader>()
         .map(box |pkt| {

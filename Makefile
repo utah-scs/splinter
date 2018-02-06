@@ -1,5 +1,5 @@
 all: netbricks
-	(cd db; cargo build)
+	(cd db; cargo build --release)
 	(cd ext/tao; cargo build)
 
 .PHONY: so-test
@@ -17,4 +17,6 @@ run:
 	(cd db; RUST_LOG=db cargo run -- --nocapture)
 
 netbricks:
-	(cd net/; ./build.sh)
+	(cd net/native; make)
+	mkdir -p net/target/native
+	cp net/native/libzcsi.so net/target/native/libzcsi.so

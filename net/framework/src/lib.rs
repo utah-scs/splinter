@@ -11,6 +11,7 @@
 #![feature(const_fn)]
 // Used for cache alignment.
 #![feature(allocator_api)]
+#![feature(ptr_internals)]
 
 #![allow(unused_features)]
 #![feature(integer_atomics)]
