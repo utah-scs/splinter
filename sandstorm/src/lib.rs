@@ -42,7 +42,7 @@ impl NullDB {
         NullDB{}
     }
 
-    pub fn assert_messages<S>(&self, messages: &[S])
+    pub fn assert_messages<S>(&self, _messages: &[S])
         where S: std::fmt::Debug + PartialEq<String>
     {}
 
@@ -50,7 +50,7 @@ impl NullDB {
 }
 
 impl DB for NullDB {
-    fn debug_log(&self, message: &str) {}
+    fn debug_log(&self, _message: &str) {}
 }
 
 #[cfg(test)]

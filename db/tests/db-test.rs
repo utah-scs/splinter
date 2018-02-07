@@ -1,6 +1,7 @@
 extern crate db_lib;
 extern crate rand;
 extern crate spin;
+extern crate bytes;
 
 // Things to improve:
 //  - Run for a duration instead of iters.
@@ -28,6 +29,7 @@ use std::time::{Duration, Instant};
 use rand::{Rng};
 
 use db_lib::table::Table;
+use bytes::{ BytesMut, BufMut };
 
 const DEBUG_PRINT : bool = false;
 
@@ -93,7 +95,15 @@ fn parallel_bench_db(n_threads: usize) -> (Duration, u32) {
                     std::slice::from_raw_parts(&i as *const u32 as *const _,
                                                std::mem::size_of::<u32>())
                 };
-                db.put(key, value);
+
+                let mut object = BytesMut::with_capacity(key.len() +
+                                                         value.len());
+                object.put_slice(key);
+                object.put_slice(value);
+                let mut object = object.freeze();
+
+                let key = object.split_to(key.len());
+                db.put(key, object);
             }
             let put_time = start.elapsed();
 
@@ -118,7 +128,14 @@ fn parallel_bench_db(n_threads: usize) -> (Duration, u32) {
                 if READ_ONLY || (i & 1 == 0) {
                     s += db.get(key).unwrap()[0] as u64;
                 } else {
-                    db.put(key, value);
+                    let mut object = BytesMut::with_capacity(key.len() +
+                                                             value.len());
+                    object.put_slice(key);
+                    object.put_slice(value);
+                    let mut object = object.freeze();
+
+                    let key = object.split_to(key.len());
+                    db.put(key, object);
                 }
             }
             let get_time = start.elapsed();

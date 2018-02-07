@@ -22,6 +22,7 @@ env_logger = "0.3"
 rand = "0.3"
 time = "0.1"
 e2d2 = { path = "../net/framework" }
+bytes = "0.4"
 
 # Either spin of parking_lot for for RwLock. They seem to be a toss up
 # in performance with spin seeming to be the simpler crate.

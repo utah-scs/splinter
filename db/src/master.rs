@@ -12,6 +12,7 @@ use super::wireformat::{ OpCode, RpcStatus, GetRequest, GetResponse };
 use e2d2::interface::{ Packet };
 use e2d2::headers::{ UdpHeader };
 use e2d2::common::{ EmptyMetadata };
+use bytes::{ Bytes, BytesMut, BufMut };
 
 struct User {
     // TODO(stutsman) Need some form of interior mutability here.
@@ -31,9 +32,16 @@ impl User {
         // Create one hash table for the user and populate it one
         // key-value pair.
         let table = Table::default();
-        let key: &[u8] = &[1; 30];
-        let val: &[u8] = &[91; 100];
-        table.put(key, val);
+
+        // Write the key-value pair to a single contiguous buffer.
+        let mut value = BytesMut::with_capacity(130);
+        value.put_slice(&[1; 30]);
+        value.put_slice(&[91; 100]);
+        let mut value: Bytes = value.freeze();
+
+        // Populate the table with this key-value pair.
+        let key: Bytes = value.split_to(30);
+        table.put(key, value);
         self.tables.insert(table_id, table);
     }
 }

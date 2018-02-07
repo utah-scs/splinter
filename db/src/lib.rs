@@ -1,4 +1,6 @@
 extern crate e2d2;
+extern crate spin;
+extern crate bytes;
 extern crate env_logger;
 
 mod rpc;

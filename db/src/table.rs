@@ -1,48 +1,50 @@
-// std::sync::RwLock seems to lose to spin and parking_lot, but it's a toss
-// up between them for the most part.
-extern crate spin;
-use self::spin::{RwLock};
-//extern crate parking_lot;
-//use parking_lot::{RwLock};
+/* Copyright (c) 2018 University of Utah
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
 
 use std::collections::HashMap;
 
-use super::common::*;
+use spin::{ RwLock };
+use bytes::{ Bytes };
 
-// Must be a power of two.
+// The number of buckets in the hash table. Must be a power of two.
 const N_BUCKETS : usize = 32;
 
-#[derive(Debug,Default)]
+#[derive(Debug, Default)]
 pub struct Table {
-    maps: [RwLock<HashMap<BS, BS>>; N_BUCKETS],
+    maps: [RwLock<HashMap<Bytes, Bytes>>; N_BUCKETS],
 }
 
 impl Table {
-    pub fn get<'b>(&self, key: &'b [u8]) -> Option<Vec<u8>> {
-        let bucket = (key[0] & (N_BUCKETS - 1) as u8) as usize;
-        let b = self.maps[bucket].read();
-        b.get(key).map(|v| v.clone())
+    pub fn get(&self, key: &[u8]) -> Option<Bytes> {
+        // First, identify the bucket the key falls into.
+        let bucket: usize = key[0] as usize & (N_BUCKETS - 1);
+        let map = self.maps[bucket].read();
+
+        // Perform the lookup, and return.
+        return map.get(key).and_then(| value | { Some(value.clone()) });
     }
 
-    pub fn put(&self, key: &[u8], value: &[u8]) {
-        let bucket = (key[0] & (N_BUCKETS - 1) as u8) as usize;
-        let ins;
-        {
-            if let Some(v) = self.maps[bucket].write().get_mut(key) {
-                v.clear();
-                v.extend_from_slice(value);
-                ins = false;
-            } else {
-                ins = true;
-            }
-        }
-        if ins {
-            let mut v = Vec::new();
-            v.extend_from_slice(value);
-            // Danger about not holding lock whole time here. Need to repeat lookup for
-            // linearizable behavior (or hold lock at the top).
-            self.maps[bucket].write().insert(key.to_vec(), v);
-        }
+    pub fn put(&self, key: Bytes, value: Bytes) {
+        // First, identify the bucket the key falls into.
+        let bucket: usize = key.slice(0, 1)[0] as usize & (N_BUCKETS - 1);
+        let mut map = self.maps[bucket].write();
+
+        // Next, remove the key from the hash map.
+        let _ = map.remove(&key);
+
+        // Perform the insert.
+        let _ = map.insert(key, value);
     }
 }
-
