@@ -18,6 +18,13 @@ import os
 import sys
 import subprocess
 
+"""This function compiles DPDK using Netbricks scripts on CloudLab's d430.
+"""
+def setupDpdk():
+    print "=============== Compiling DPDK ========================"
+    subprocess.check_call("./net/3rdparty/get-dpdk.sh", shell=True)
+    return
+
 """This function updates Rust to the nightly build.
 """
 def setRustNightly():
@@ -45,5 +52,8 @@ if __name__ == "__main__":
         installRust()
         # Future invocations need not install stable rust again.
         subprocess.check_call("touch .installed_rust", shell=True)
+
+    # Next, setup DPDK.
+    setupDpdk()
 
     sys.exit(0)
