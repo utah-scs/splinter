@@ -1,7 +1,0 @@
-[package]
-name = "client"
-version = "0.1.0"
-authors = ["Chinmay Kulkarni <chnm.kulkarni@gmail.com>"]
-
-[dependencies]
-e2d2 = { path = "../net/framework" }

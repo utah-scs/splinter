@@ -1,30 +1,29 @@
 [package]
-name = "db"
+name    = "db"
 version = "0.1.0"
 authors = ["Chinmay Kulkarni <chnm.kulkarni@gmail.com>",
            "Ryan Stutsman <stutsman@cs.utah.edu>"]
 license = "MIT"
 
 [lib]
-name = "db_lib"
+name = "db"
 path = "src/lib.rs"
 
 [[bin]]
-name = "db_main"
-path = "src/main.rs"
+name = "server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
 
 [dependencies]
-sandstorm = { path = "../sandstorm" }
-libloading = "0.3"
-
-log = "0.3"
+log        = "0.3"
+rand       = "0.3"
+time       = "0.1"
+spin       = "0.4" # Consider using parking lot?
+bytes      = "0.4"
 env_logger = "0.3"
-rand = "0.3"
-time = "0.1"
-e2d2 = { path = "../net/framework" }
-bytes = "0.4"
-
-# Either spin of parking_lot for for RwLock. They seem to be a toss up
-# in performance with spin seeming to be the simpler crate.
-spin = "0.4"
-#parking_lot = "0.5"
+libloading = "0.3"
+sandstorm  = {path = "../sandstorm"}
+e2d2       = {path = "../net/framework"}

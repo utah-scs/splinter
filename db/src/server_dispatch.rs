@@ -306,6 +306,7 @@ where
     ///
     /// - `return`: A vector of valid packets with their MAC headers parsed.
     ///             The packets are of type Packet<MacHeader, EmptyMetadata>.
+    #[allow(unused_assignments)]
     fn parse_mac_headers(&self,
                          mut packets: Vec<Packet<NullHeader, EmptyMetadata>>) ->
         Vec<Packet<MacHeader, EmptyMetadata>>
@@ -361,6 +362,7 @@ where
     /// - `return`: A vector of packets with their IP headers parsed, and
     ///             wrapped up in Netbrick's Packet<MacHeader, EmptyMetadata>
     ///             type.
+    #[allow(unused_assignments)]
     fn parse_ip_headers(&self,
                         mut packets: Vec<Packet<MacHeader, EmptyMetadata>>) ->
         Vec<Packet<IpHeader, EmptyMetadata>>
@@ -421,6 +423,7 @@ where
     /// - `return`: A vector of packets with their UDP headers parsed. These
     ///             packets are wrapped in Netbrick's
     ///             Packet<UdpHeader, EmptyMetadata> type.
+    #[allow(unused_assignments)]
     fn parse_udp_headers(&self,
                          mut packets: Vec<Packet<IpHeader, EmptyMetadata>>) ->
         Vec<Packet<UdpHeader, EmptyMetadata>>

@@ -13,33 +13,21 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-extern crate e2d2;
-extern crate time;
-extern crate spin;
-extern crate bytes;
-extern crate env_logger;
-#[macro_use] extern crate log;
+#![feature(use_extern_macros)]
 
-mod common;
-mod rpc;
-mod service;
-mod master;
-mod server_dispatch;
-mod wireformat;
-mod ext;
-
-// Public module for testing the hash table.
-pub mod table;
+extern crate db;
 
 use std::sync::Arc;
 use std::fmt::Display;
 
-use e2d2::scheduler::*;
-use e2d2::interface::*;
-use e2d2::scheduler::NetBricksContext as NetbricksContext;
-use e2d2::config::{ NetbricksConfiguration, PortConfiguration };
+use db::log::*;
 
-use server_dispatch::ServerDispatch;
+use db::e2d2::scheduler::*;
+use db::e2d2::interface::*;
+use db::e2d2::scheduler::NetBricksContext as NetbricksContext;
+use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
+
+use db::server_dispatch::ServerDispatch;
 
 /// This function sets up a Sandstorm server's dispatch thread on top
 /// of Netbricks.
@@ -81,7 +69,7 @@ where
 /// checksum offload will be disabled on this port.
 fn get_default_netbricks_config() -> NetbricksConfiguration {
     // General arguments supplied to netbricks.
-    let net_config_name = String::from("sandstorm_client_net");
+    let net_config_name = String::from("server");
     let dpdk_secondary: bool = false;
     let net_primary_core: i32 = 0;
     let net_cores: Vec<i32> = vec![1];
@@ -136,7 +124,7 @@ fn config_and_init_netbricks() -> NetbricksContext {
     let net_config: NetbricksConfiguration = get_default_netbricks_config();
 
     // Initialize Netbricks and return a handle.
-    match e2d2::scheduler::initialize_system(&net_config) {
+    match initialize_system(&net_config) {
         Ok(net_context) => {
             return net_context;
         }
@@ -151,7 +139,7 @@ fn config_and_init_netbricks() -> NetbricksContext {
 
 fn main() {
     // Basic setup and initialization.
-    env_logger::init()
+    db::env_logger::init()
                 .expect("ERROR: failed to initialize logger!");
     info!("Starting up Sandstorm server.");
 

@@ -13,9 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-extern crate e2d2;
-
-mod wireformat;
+extern crate db;
 
 use std::sync::Arc;
 use std::fmt::Display;
@@ -23,14 +21,14 @@ use std::str::FromStr;
 use std::mem::size_of;
 use std::net::Ipv4Addr;
 
-use e2d2::scheduler::*;
-use e2d2::scheduler::NetBricksContext as NetbricksContext;
-use e2d2::interface::*;
-use e2d2::headers::*;
-use e2d2::config::{ NetbricksConfiguration, PortConfiguration };
-use e2d2::common::EmptyMetadata;
+use db::e2d2::scheduler::*;
+use db::e2d2::scheduler::NetBricksContext as NetbricksContext;
+use db::e2d2::interface::*;
+use db::e2d2::headers::*;
+use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
+use db::e2d2::common::EmptyMetadata;
 
-use self::wireformat::GetRequest;
+use db::wireformat::GetRequest;
 
 /// This type implements a simple request generator for Sandstorm.
 /// When the generate_request() method on this type is called, an RPC request
@@ -284,7 +282,7 @@ where
 /// checksum offload will be disabled on this port.
 fn get_default_netbricks_config() -> NetbricksConfiguration {
     // General arguments supplied to netbricks.
-    let net_config_name = String::from("sandstorm_client_net");
+    let net_config_name = String::from("client");
     let dpdk_secondary: bool = false;
     let net_primary_core: i32 = 0;
     let net_cores: Vec<i32> = vec![1];
@@ -339,7 +337,7 @@ fn config_and_init_netbricks() -> NetbricksContext {
     let net_config: NetbricksConfiguration = get_default_netbricks_config();
 
     // Initialize Netbricks and return a handle.
-    match e2d2::scheduler::initialize_system(&net_config) {
+    match initialize_system(&net_config) {
         Ok(net_context) => {
             return net_context;
         }
