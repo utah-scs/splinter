@@ -4,15 +4,15 @@ use std::collections::HashMap;
 
 use super::ext::*;
 use super::table::*;
-use super::service::{ Service };
-use super::rpc::{ parse_rpc_opcode };
-use super::common::{ UserId, TableId, PACKET_UDP_LEN };
-use super::wireformat::{ OpCode, RpcStatus, GetRequest, GetResponse };
+use super::wireformat::*;
+use super::service::Service;
+use super::rpc::parse_rpc_opcode;
+use super::common::{UserId, TableId, PACKET_UDP_LEN};
 
-use e2d2::interface::{ Packet };
-use e2d2::headers::{ UdpHeader };
-use e2d2::common::{ EmptyMetadata };
-use bytes::{ Bytes, BytesMut, BufMut };
+use e2d2::interface::Packet;
+use e2d2::headers::UdpHeader;
+use e2d2::common::EmptyMetadata;
+use bytes::{Bytes, BytesMut, BufMut};
 
 struct User {
     // TODO(stutsman) Need some form of interior mutability here.
@@ -175,7 +175,7 @@ impl Service for Master {
                 let request: Packet<GetRequest, EmptyMetadata> =
                     request.parse_header::<GetRequest>();
 
-                // Create an response header for the request.
+                // Create a response header for the request.
                 let response_header = GetResponse::new();
                 let mut respons: Packet<GetResponse, EmptyMetadata> =
                     respons.push_header(&response_header)
@@ -183,6 +183,28 @@ impl Service for Master {
 
                 // Handle the RPC request.
                 self.get(request.get_header(), &request, &mut respons);
+
+                // Deparse request and response headers so that packets can
+                // be handed back to ServerDispatch.
+                let request: Packet<UdpHeader, EmptyMetadata> =
+                    request.deparse_header(PACKET_UDP_LEN as usize);
+                let respons: Packet<UdpHeader, EmptyMetadata> =
+                    respons.deparse_header(PACKET_UDP_LEN as usize);
+
+                return (request, respons);
+            }
+
+            OpCode::SandstormInvokeRpc => {
+                let request: Packet<InvokeRequest, EmptyMetadata> =
+                    request.parse_header::<InvokeRequest>();
+
+                // Create a response header for the request.
+                let response_header = InvokeResponse::new();
+                let mut respons: Packet<InvokeResponse, EmptyMetadata> =
+                    respons.push_header(&response_header)
+                        .expect("ERROR: Failed to setup Get() response header");
+
+                // TODO: Implement and call corresponding RPC handler.
 
                 // Deparse request and response headers so that packets can
                 // be handed back to ServerDispatch.

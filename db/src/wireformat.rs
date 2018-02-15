@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 University of Utah
+/* Copyright (c) 2018 University of Utah
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -15,7 +15,7 @@
 
 use std::mem::size_of;
 
-use e2d2::headers::{ EndOffset, UdpHeader };
+use e2d2::headers::{EndOffset, UdpHeader};
 
 /// This enum represents the different sets of services that a Sandstorm server
 /// can provide, and helps identify the service an incoming remote procedure
@@ -49,10 +49,13 @@ pub enum Service {
 #[repr(u8)]
 pub enum OpCode {
     /// A simple operation that looks up the hash table for a given key.
-    SandstormGetRpc  = 0x01,
+    SandstormGetRpc    = 0x01,
+
+    /// This operation invokes a procedure inside the database at runtime.
+    SandstormInvokeRpc = 0x02,
 
     /// Any value beyond this represents an invalid rpc.
-    InvalidOperation = 0x02,
+    InvalidOperation   = 0x03,
 }
 
 /// This enum represents the status of a completed RPC. A status of 'StatusOk'
@@ -89,17 +92,23 @@ pub enum RpcStatus {
 /// (RPC) received at a Sandstorm server. In addition to identifying a service
 /// and operation, the header also identifies the tenant that sent the request
 /// for the purpose of security and accounting.
+///
+/// Every RPC request should consist of a member of this type.
+///
+/// This type cannot be parsed or deparsed like the UdpHeader for example.
+/// This is intentional, and makes it easier to construct RPC requests because
+/// there is only one unique type (like GetRequest) identifying the request.
 #[repr(C, packed)]
 pub struct RpcRequestHeader {
-    // The service within a server that the request must be dispatched to
-    // (ex: MasterService).
-    service: Service,
+    /// The service within a server that the request must be dispatched to
+    /// (ex: MasterService).
+    pub service: Service,
 
-    // The opcode identifying the operation to perform within the server. This
-    // operation must be provided by the above service.
-    opcode: OpCode,
+    /// The opcode identifying the operation to perform within the server. This
+    /// operation must be provided by the above service.
+    pub opcode: OpCode,
 
-    // An identifier for the tenant that sent this RPC request.
+    /// An identifier for the tenant that sent this RPC request.
     pub tenant: u32,
 }
 
@@ -130,9 +139,15 @@ impl RpcRequestHeader {
 /// This type represents the header on a typical RPC response received by a
 /// client. This header indicates as to whether the RPC succeeded or failed
 /// at the server.
+///
+/// Every RPC response should consist of a member of this type.
+///
+/// This type cannot be parsed or deparsed like the UdpHeader for example.
+/// This is intentional, and makes it easier to construct RPC responses because
+/// there is only one unique type (like GetResponse) identifying the response.
 #[repr(C, packed)]
 pub struct RpcResponseHeader {
-    // The status of the RPC indicating whether it completed successfully.
+    /// The status of the RPC indicating whether it completed successfully.
     pub status: RpcStatus,
 }
 
@@ -152,15 +167,15 @@ impl RpcResponseHeader {
 /// This type represents the header for a get() RPC request.
 #[repr(C, packed)]
 pub struct GetRequest {
-    // The generic RPC header identifying the request as a get() RPC.
+    /// The generic RPC header identifying the request as a get() RPC.
     pub common_header: RpcRequestHeader,
 
-    // The identifier for the data table the key belongs to. Required
-    // for the hash table lookup performed at the server.
+    /// The identifier for the data table the key belongs to. Required
+    /// for the hash table lookup performed at the server.
     pub table_id: u64,
 
-    // The length of the key being looked up. This field allows the key
-    // to be unpacked from the request at the server.
+    /// The length of the key being looked up. This field allows the key
+    /// to be unpacked from the request at the server.
     pub key_length: u16,
 }
 
@@ -194,54 +209,54 @@ impl GetRequest {
 // packet. The methods on this trait are primarily used by Netbricks
 // to track where the headers end and payload begins on a packet.
 impl EndOffset for GetRequest {
-    /// A GetRequest RPC header should always be preceeded by a transport
-    /// layer UDP header.
+    // A GetRequest RPC header should always be preceeded by a transport
+    // layer UDP header.
     type PreviousHeader = UdpHeader;
 
-    /// This method returns the position at which the GetRequest header
-    /// ends relative to the beginning of the header (effectively the
-    /// size of the header).
-    ///
-    /// \return
-    ///     The offset of the payload relative to the GetRequest header.
+    // This method returns the position at which the GetRequest header
+    // ends relative to the beginning of the header (effectively the
+    // size of the header).
+    //
+    // \return
+    //     The offset of the payload relative to the GetRequest header.
     fn offset(&self) -> usize {
         size_of::<GetRequest>()
     }
 
-    /// This method returns the size of the GetRequest RPC header.
-    ///
-    /// \return
-    ///     The size of the GetRequest RPC header.
+    // This method returns the size of the GetRequest RPC header.
+    //
+    // \return
+    //     The size of the GetRequest RPC header.
     fn size() -> usize {
         size_of::<GetRequest>()
     }
 
-    /// This method returns the size of the payload on a packet with
-    /// respect to the GetRequest header.
-    ///
-    /// \param hint
-    ///     'hint' is typically the size of the payload as reported by
-    ///     'PreviousHeader'. For example, if the UDP header reports that the
-    ///     payload is 128 Bytes long, then GetRequest will report the payload
-    ///     to be 128 minus sizeof::<GetRequest>() Bytes long.
-    ///
-    /// \return
-    ///     The payload size relative to the GetRequest header.
+    // This method returns the size of the payload on a packet with
+    // respect to the GetRequest header.
+    //
+    // \param hint
+    //     'hint' is typically the size of the payload as reported by
+    //     'PreviousHeader'. For example, if the UDP header reports that the
+    //     payload is 128 Bytes long, then GetRequest will report the payload
+    //     to be 128 minus sizeof::<GetRequest>() Bytes long.
+    //
+    // \return
+    //     The payload size relative to the GetRequest header.
     fn payload_size(&self, hint: usize) -> usize {
         hint - self.offset()
     }
 
-    /// This method checks if the type on the previous header in the packet
-    /// is correct.
-    ///
-    /// If this method is invoked, the compiler will compile the program only
-    /// if the type on _prev is the same as 'PreviousHeader'.
-    ///
-    /// \param _prev
-    ///     A reference to the previous header on the packet.
-    ///
-    /// \return
-    ///     Always true.
+    // This method checks if the type on the previous header in the packet
+    // is correct.
+    //
+    // If this method is invoked, the compiler will compile the program only
+    // if the type on _prev is the same as 'PreviousHeader'.
+    //
+    // \param _prev
+    //     A reference to the previous header on the packet.
+    //
+    // \return
+    //     Always true.
     fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
         true
     }
@@ -250,12 +265,12 @@ impl EndOffset for GetRequest {
 /// This type represents the header on a response to a get() RPC request.
 #[repr(C, packed)]
 pub struct GetResponse {
-    // The common RPC header required to determine if the RPC completed
-    // successfully.
+    /// The common RPC header required to determine if the RPC completed
+    /// successfully.
     pub common_header: RpcResponseHeader,
 
-    // The length of the value returned in the response if the RPC completed
-    // successfully.
+    /// The length of the value returned in the response if the RPC completed
+    /// successfully.
     pub value_length: u32,
 }
 
@@ -273,56 +288,131 @@ impl GetResponse {
     }
 }
 
-// Implementation of the EndOffset trait for GetResponse.
+// Implementation of the EndOffset trait for GetResponse. Refer to GetRequest's
+// implementation of this trait to understand what the methods and types mean.
 impl EndOffset for GetResponse {
-    /// A GetResponse RPC header should always be preceeded by a transport
-    /// layer UDP header.
     type PreviousHeader = UdpHeader;
 
-    /// This method returns the position at which the GetResponse header
-    /// ends relative to the beginning of the header (effectively the
-    /// size of the header).
-    ///
-    /// \return
-    ///     The offset of the payload relative to the GetResponse header.
     fn offset(&self) -> usize {
         size_of::<GetResponse>()
     }
 
-    /// This method returns the size of the GetResponse RPC header.
-    ///
-    /// \return
-    ///     The size of the GetResponse RPC header.
     fn size() -> usize {
         size_of::<GetResponse>()
     }
 
-    /// This method returns the size of the payload on a packet with
-    /// respect to the GetResponse header.
-    ///
-    /// \param hint
-    ///     'hint' is typically the size of the payload as reported by
-    ///     'PreviousHeader'. For example, if the UDP header reports that the
-    ///     payload is 128 Bytes long, then GetResponse will report the payload
-    ///     to be 128 minus sizeof::<GetResponse>() Bytes long.
-    ///
-    /// \return
-    ///     The payload size relative to the GetRequest header.
     fn payload_size(&self, hint: usize) -> usize {
         hint - self.offset()
     }
 
-    /// This method checks if the type on the previous header in the packet
-    /// is correct.
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This type represents the request header corresponding to an invoke() RPC.
+#[repr(C, packed)]
+pub struct InvokeRequest {
+    /// The common RPC header identifying the opcode, service, and tenant.
+    pub common_header: RpcRequestHeader,
+
+    /// The length of the name of the procedure to be invoked. Required to
+    /// deserialize the procedure's name from the request packet at the server.
+    pub name_length: u32,
+
+    /// The total length of the args to be passed into the procedure. Required
+    /// to deserialize the arguments to the procedure from the request packet
+    /// at the server.
+    pub args_length: u32,
+}
+
+impl InvokeRequest {
+    /// This method returns a header corresponding to an invoke() RPC request.
+    /// The returned header can be appended onto a request packet.
     ///
-    /// If this method is invoked, the compiler will compile the program only
-    /// if the type on _prev is the same as 'PreviousHeader'.
+    /// # Arguments
     ///
-    /// \param _prev
-    ///     A reference to the previous header on the packet.
+    /// * `tenant`:      An identifier for the tenant issuing this RPC.
+    /// * `name_length`: The length of the name of the procedure to be invoked.
+    ///                  Required so that the name can be read from the request
+    ///                  packet by the server.
+    /// * `args_length`: The length of the args to be supplied to the procedure.
+    ///                  Required so that the server can unpack them from a
+    ///                  request packet.
     ///
-    /// \return
-    ///     Always true.
+    /// # Return
+    ///
+    /// An RPC request header of type `InvokeRequest`.
+    pub fn new(tenant: u32, name_length: u32, args_length: u32)
+               -> InvokeRequest {
+        InvokeRequest {
+            common_header: RpcRequestHeader::new(Service::MasterService,
+                                                 OpCode::SandstormInvokeRpc,
+                                                 tenant),
+            name_length: name_length,
+            args_length: args_length,
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for InvokeRequest. Refer to
+// GetRequest's implementation of this trait to understand what the methods
+// and types mean.
+impl EndOffset for InvokeRequest {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<InvokeRequest>()
+    }
+
+    fn size() -> usize {
+        size_of::<InvokeRequest>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This type represents the response header for an invoke() RPC request.
+#[repr(C, packed)]
+pub struct InvokeResponse {
+    /// A common RPC response header containing the status of the RPC.
+    pub common_header: RpcResponseHeader,
+}
+
+impl InvokeResponse {
+    /// This method returns a header that can be appended to the response
+    /// packet for an invoke() RPC request.
+    pub fn new() -> InvokeResponse {
+        InvokeResponse {
+            common_header: RpcResponseHeader::new(),
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for InvokeResponse. Refer to
+// GetRequest's implementation of this trait to understand what the methods
+// and types mean.
+impl EndOffset for InvokeResponse {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<InvokeResponse>()
+    }
+
+    fn size() -> usize {
+        size_of::<InvokeResponse>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
     fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
         true
     }
