@@ -17,11 +17,11 @@
 
 extern crate time;
 extern crate spin;
-extern crate bytes;
 
 #[macro_use]
 pub extern crate log;
 pub extern crate e2d2;
+pub extern crate bytes;
 pub extern crate env_logger;
 
 mod common;

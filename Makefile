@@ -11,7 +11,7 @@ so-test: netbricks
 	(cd db; RUST_BACKTRACE=1 cargo run --release --bin ext_bench)
 
 bench: netbricks
-	(cd db; cargo test --release bench_db_scale -- --nocapture)
+	(cd db; cargo run --release --bin table_bench)
 
 run:
 	(cd db; RUST_LOG=db cargo run -- --nocapture)
