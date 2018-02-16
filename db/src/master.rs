@@ -64,6 +64,10 @@ impl Master {
 
         master.users.insert(user.id, user);
 
+        // Load a get extension for this user.
+        master.extensions.load("../ext/get/target/release/libget.so", 1, "get")
+                            .unwrap();
+
         master
     }
 
