@@ -369,5 +369,5 @@ fn main() {
     }
 
     // Stop the client.
-    net_context.stop();
+    // net_context.stop();
 }

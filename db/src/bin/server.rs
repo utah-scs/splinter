@@ -161,5 +161,5 @@ fn main() {
     }
 
     // Stop the server.
-    net_context.stop();
+    // net_context.stop();
 }
