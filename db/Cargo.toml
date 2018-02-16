@@ -17,6 +17,10 @@ path = "src/bin/server.rs"
 name = "client"
 path = "src/bin/client.rs"
 
+[[bin]]
+name = "ext_bench"
+path = "src/bin/ext_bench.rs"
+
 [dependencies]
 log        = "0.3"
 rand       = "0.3"

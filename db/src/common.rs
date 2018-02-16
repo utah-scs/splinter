@@ -40,35 +40,3 @@ pub const CLIENT_UDP_PORT: u16 = 0;
 pub const CLIENT_IP_ADDRESS: &'static str = "192.168.0.1";
 pub const CLIENT_MAC_ADDRESS: MacAddress =
         MacAddress{ addr: [0x3c, 0xfd, 0xfe, 0x04, 0x93, 0xa2] };
-
-pub mod util {
-    extern crate time;
-
-    pub struct Bench<'a> {
-        start: time::PreciseTime,
-        name: Option<&'a str>,
-    }
-
-    impl<'a> Bench<'a> {
-        pub fn start(name: Option<&'a str>) -> Bench {
-            Bench{ start: time::PreciseTime::now(), name }
-        }
-
-        pub fn run<F>(f: F) -> time::Duration
-            where F: FnOnce()
-        {
-            let b = Self::start(None);
-            f();
-            b.start.to(time::PreciseTime::now())
-        }
-    }
-
-    impl<'a> Drop for Bench<'a> {
-        fn drop(&mut self) {
-            let time = self.start.to(time::PreciseTime::now());
-            if let Some(name) = self.name {
-                println!("{} took {} us", name, time.num_microseconds().unwrap());
-            }
-        }
-    }
-}

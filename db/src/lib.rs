@@ -28,9 +28,9 @@ mod common;
 mod rpc;
 mod service;
 mod master;
-mod ext;
 
-// Public modules for binaries and testing.
+// Public modules for binaries.
+pub mod ext;
 pub mod table;
 pub mod wireformat;
 pub mod server_dispatch;
