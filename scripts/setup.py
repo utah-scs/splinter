@@ -48,12 +48,12 @@ if __name__ == "__main__":
     # then set rustc to the nightly version, else, install it.
     if os.path.isfile(".installed_rust"):
         setRustNightly()
+
+        # Next, setup DPDK.
+        setupDpdk()
     else:
         installRust()
         # Future invocations need not install stable rust again.
         subprocess.check_call("touch .installed_rust", shell=True)
-
-    # Next, setup DPDK.
-    setupDpdk()
 
     sys.exit(0)
