@@ -67,15 +67,17 @@ impl Master {
         master
     }
 
-    /// This method handles the Get() RPC request. A hash table lookup is
-    /// performed on a supplied tenant id, table id, and key. If successfull,
-    /// the result of the lookup is written into a response packet, and the
-    /// response header is updated. In the case of a failure, the response
-    /// header is updated with a status indicating the reason for the failure.
-    ///
-    /// - `req_hdr`: A reference to the request header of the RPC.
-    /// - `request`: A reference to the entire request packet.
-    /// - `respons`: A mutable reference to the entire response packet.
+    // This method handles the Get() RPC request. A hash table lookup is
+    // performed on a supplied tenant id, table id, and key. If successfull,
+    // the result of the lookup is written into a response packet, and the
+    // response header is updated. In the case of a failure, the response
+    // header is updated with a status indicating the reason for the failure.
+    //
+    // # Arguments
+    //
+    // * `req_hdr`: A reference to the request header of the RPC.
+    // * `request`: A reference to the entire request packet.
+    // * `respons`: A mutable reference to the entire response packet.
     fn get(&self, req_hdr: &GetRequest,
            request: &Packet<GetRequest, EmptyMetadata>,
            respons: &mut Packet<GetResponse, EmptyMetadata>) {
@@ -84,8 +86,16 @@ impl Master {
         let table_id: TableId = req_hdr.table_id as TableId;
         let key_length: u16 = req_hdr.key_length;
 
+        // If the payload is not the same size as the key length, return
+        // an error.
+        if request.get_payload().len() != key_length as usize {
+            let resp_hdr: &mut GetResponse = respons.get_mut_header();
+            resp_hdr.common_header.status = RpcStatus::StatusMalformedRequest;
+            return;
+        }
+
         // Get a reference to the key.
-        let key: &[u8] = &request.get_payload()[0..key_length as usize];
+        let (key, _) = request.get_payload().split_at(key_length as usize);
 
         let mut status: RpcStatus = RpcStatus::StatusOk;
 
@@ -145,9 +155,50 @@ impl Master {
         return;
     }
 
-    pub fn test_exts(&mut self) {
-        self.extensions.load_one_test_module();
-        self.extensions.call(self, 0, "tao");
+    fn invoke(&self, req_hdr: &InvokeRequest,
+              request: &Packet<InvokeRequest, EmptyMetadata>,
+              respons: &mut Packet<InvokeResponse, EmptyMetadata>) {
+        // Read fields of the request header.
+        let tenant_id: UserId = req_hdr.common_header.tenant as UserId;
+        let name_length: usize = req_hdr.name_length as usize;
+        let args_length: usize = req_hdr.args_length as usize;
+
+        // If the payload is not the same size as the sum of the name and args
+        // length, return an error.
+        if request.get_payload().len() != name_length + args_length {
+            let resp_hdr: &mut InvokeResponse = respons.get_mut_header();
+            resp_hdr.common_header.status = RpcStatus::StatusMalformedRequest;
+            return;
+        }
+
+        // Read the extension's name from the request payload.
+        let (raw_name, _) = request.get_payload().split_at(name_length);
+        let ext_name: String = String::from_utf8(raw_name.to_vec())
+                                    .expect("ERROR: Failed to get ext name.");
+
+        // Check if the request was issued by a valid tenant.
+        match self.users.get(&tenant_id) {
+            // The tenant exists. Do nothing for now.
+            Some(_) => { ; }
+
+            // The issuing tenant does not exist. Return an error to the client.
+            None => {
+                let resp_hdr: &mut InvokeResponse = respons.get_mut_header();
+                resp_hdr.common_header.status =
+                                            RpcStatus::StatusTenantDoesNotExist;
+                return;
+            }
+        }
+
+        // Run the extension with a null db interface.
+        let db = sandstorm::NullDB::new();
+        self.extensions.call(&db, tenant_id, &ext_name);
+
+        // Populate response header and return.
+        let resp_hdr: &mut InvokeResponse = respons.get_mut_header();
+        resp_hdr.common_header.status = RpcStatus::StatusOk;
+
+        return;
     }
 }
 
@@ -202,9 +253,10 @@ impl Service for Master {
                 let response_header = InvokeResponse::new();
                 let mut respons: Packet<InvokeResponse, EmptyMetadata> =
                     respons.push_header(&response_header)
-                        .expect("ERROR: Failed to setup Get() response header");
+                        .expect("ERROR: Failed to setup invoke() resp header");
 
-                // TODO: Implement and call corresponding RPC handler.
+                // Handle the RPC request.
+                self.invoke(request.get_header(), &request, &mut respons);
 
                 // Deparse request and response headers so that packets can
                 // be handed back to ServerDispatch.

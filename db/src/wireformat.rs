@@ -79,13 +79,18 @@ pub enum RpcStatus {
     /// not be found at the server.
     StatusObjectDoesNotExist = 0x04,
 
+    /// The RPC failed at the server because the request was malformed. For
+    /// example, the size of the payload on a get() request was lesser than
+    /// the supplied key length.
+    StatusMalformedRequest   = 0x05,
+
     /// The RPC failed at the server because of an internal error (ex:
     /// insufficent memory etc).
-    StatusInternalError      = 0x05,
+    StatusInternalError      = 0x06,
 
     /// The RPC failed at the server because it requested for an
     /// invalid/unsupported operation.
-    StatusInvalidOperation   = 0x06,
+    StatusInvalidOperation   = 0x07,
 }
 
 /// This type represents the request header on a typical remote procedure call
