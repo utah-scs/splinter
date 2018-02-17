@@ -161,13 +161,25 @@ where
                        request: Packet<UdpHeader, EmptyMetadata>) ->
         Packet<UdpHeader, EmptyMetadata>
     {
+        // Add the corresponding header, write the payload into the packet,
+        // and deparse the header on the packet to UDP.
         if self.generate_invok {
-            let request = request.push_header(&self.req_inv_header)
-                            .expect("Failed to push RPC header into request!");
+            let mut request = request.push_header(&self.req_inv_header).expect(
+                                    "Failed to push RPC header into request!");
+
+            let name = "get";
+            request.add_to_payload_tail(3, name.as_bytes())
+                    .expect("Failed to write name into invoke() request!");
+
             request.deparse_header(size_of::<UdpHeader>())
         } else {
-            let request = request.push_header(&self.req_rpc_header)
-                            .expect("Failed to push RPC header into request!");
+            let mut request = request.push_header(&self.req_rpc_header).expect(
+                                    "Failed to push RPC header into request!");
+
+            let key: [u8; 30] = [1; 30];
+            request.add_to_payload_tail(30, &key)
+                    .expect("Failed to write key into get() request!");
+
             request.deparse_header(size_of::<UdpHeader>())
         }
     }
@@ -215,18 +227,7 @@ where
         let request = self.push_mac_header(request);
         let request = self.push_ip_header(request);
         let request = self.push_udp_header(request);
-        let mut request = self.push_rpc_header(request);
-
-        // Add in the payload.
-        if self.generate_invok {
-            let name = "get";
-            request.add_to_payload_tail(3, name.as_bytes())
-                    .expect("Failed to name into invoke() request!");
-        } else {
-            let key: [u8; 30] = [1; 30];
-            request.add_to_payload_tail(30, &key)
-                    .expect("Failed to write key into get() request!");
-        }
+        let request = self.push_rpc_header(request);
 
         // Send the request out the network.
         unsafe {

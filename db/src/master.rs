@@ -90,9 +90,8 @@ impl Master {
         let table_id: TableId = req_hdr.table_id as TableId;
         let key_length: u16 = req_hdr.key_length;
 
-        // If the payload is not the same size as the key length, return
-        // an error.
-        if request.get_payload().len() != key_length as usize {
+        // If the payload size is less than the key length, return an error.
+        if request.get_payload().len() < key_length as usize {
             let resp_hdr: &mut GetResponse = respons.get_mut_header();
             resp_hdr.common_header.status = RpcStatus::StatusMalformedRequest;
             return;
@@ -167,9 +166,9 @@ impl Master {
         let name_length: usize = req_hdr.name_length as usize;
         let args_length: usize = req_hdr.args_length as usize;
 
-        // If the payload is not the same size as the sum of the name and args
+        // If the payload size is less than the sum of the name and args
         // length, return an error.
-        if request.get_payload().len() != name_length + args_length {
+        if request.get_payload().len() < name_length + args_length {
             let resp_hdr: &mut InvokeResponse = respons.get_mut_header();
             resp_hdr.common_header.status = RpcStatus::StatusMalformedRequest;
             return;
