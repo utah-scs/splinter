@@ -18,7 +18,9 @@
 
 extern crate sandstorm;
 
+use sandstorm::db::DB;
+
 #[no_mangle]
-pub fn init(_db: &sandstorm::DB) {
+pub fn init(_db: &DB) {
     println!("Called into get() extension.");
 }

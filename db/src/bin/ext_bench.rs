@@ -21,9 +21,11 @@ use db::ext::ExtensionManager;
 
 use time::{Duration, PreciseTime};
 
+use sandstorm::null::NullDB;
+
 fn main() {
     // Create an extension manager and null db interface.
-    let db = sandstorm::NullDB::new();
+    let db = NullDB::new();
     let ext_manager = ExtensionManager::new();
 
     // Number of tiny TAO extensions that will be loaded and called into.

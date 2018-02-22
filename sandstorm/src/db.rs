@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(type_ascription)]
-
-pub mod db;
-pub mod null;
-pub mod mock;
+pub trait DB {
+    fn debug_log(&self, &str);
+}

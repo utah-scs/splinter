@@ -12,7 +12,10 @@ use super::common::{UserId, TableId, PACKET_UDP_LEN};
 use e2d2::interface::Packet;
 use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
+
 use bytes::{Bytes, BytesMut, BufMut};
+
+use self::sandstorm::null::NullDB;
 
 struct User {
     // TODO(stutsman) Need some form of interior mutability here.
@@ -194,7 +197,7 @@ impl Master {
         }
 
         // Run the extension with a null db interface.
-        let db = sandstorm::NullDB::new();
+        let db = NullDB::new();
         self.extensions.call(&db, tenant_id, &ext_name);
 
         // Populate response header and return.
@@ -278,14 +281,5 @@ impl Service for Master {
                 return (request, respons);
             }
         }
-    }
-}
-
-impl sandstorm::DB for Master {
-    // TODO(stutsman): Clearly the DB needs a way to find the calling extension
-    // information. We can force them to hand it to us, or we can track it in
-    // e.g. TLS.
-    fn debug_log(&self, message: &str) {
-        info!("EXT {}", message);
     }
 }

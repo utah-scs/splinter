@@ -1,17 +1,18 @@
 extern crate sandstorm;
 extern crate libloading as lib;
-extern crate spin;
 
 use std::sync::{Arc};
-use self::spin::{RwLock};
 use std::io::Result;
-
 use std::collections::HashMap;
+
+use spin::{RwLock};
 
 use super::common::*;
 
-type Procedure<'lib> = lib::Symbol<'lib, unsafe extern fn(&sandstorm::DB)>;
-type ProcedureRaw = lib::os::unix::Symbol<unsafe extern fn(&sandstorm::DB)>;
+use self::sandstorm::db::DB;
+
+type Procedure<'lib> = lib::Symbol<'lib, unsafe extern fn(&DB)>;
+type ProcedureRaw = lib::os::unix::Symbol<unsafe extern fn(&DB)>;
 
 struct Extension {
     library: lib::Library,
@@ -29,7 +30,7 @@ impl Extension {
         Ok(Extension{library: lib, procedure: init})
     }
 
-    fn call(&self, db: &sandstorm::DB) {
+    fn call(&self, db: &DB) {
         unsafe {
             (self.procedure)(db);
         }
@@ -68,7 +69,7 @@ impl ExtensionManager {
         Ok(())
     }
 
-    pub fn call(&self, db: &sandstorm::DB, _: UserId, proc_name: &str) {
+    pub fn call(&self, db: &DB, _: UserId, proc_name: &str) {
         let exts = self.extensions.read();
         let ext = exts.get(proc_name).unwrap().clone();
         drop(exts);

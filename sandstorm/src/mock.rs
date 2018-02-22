@@ -13,8 +13,37 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(type_ascription)]
+use std::fmt::Debug;
 
-pub mod db;
-pub mod null;
-pub mod mock;
+use super::db::DB;
+
+use std::cell::RefCell;
+
+pub struct MockDB {
+    messages: RefCell<Vec<String>>,
+}
+
+impl MockDB {
+    pub fn new() -> MockDB {
+        MockDB{messages: RefCell::new(Vec::new())}
+    }
+
+    pub fn assert_messages<S>(&self, messages: &[S])
+        where S: Debug + PartialEq<String>
+    {
+        let found = self.messages.borrow();
+        assert_eq!(messages, found.as_slice());
+    }
+
+    pub fn clear_messages(&self) {
+        let mut messages = self.messages.borrow_mut();
+        messages.clear();
+    }
+}
+
+impl DB for MockDB {
+    fn debug_log(&self, message: &str) {
+        let mut messages = self.messages.borrow_mut();
+        messages.push(String::from(message));
+    }
+}

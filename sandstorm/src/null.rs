@@ -13,8 +13,24 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(type_ascription)]
+use std::fmt::Debug;
 
-pub mod db;
-pub mod null;
-pub mod mock;
+use super::db::DB;
+
+pub struct NullDB {}
+
+impl NullDB {
+    pub fn new() -> NullDB {
+        NullDB{}
+    }
+
+    pub fn assert_messages<S>(&self, _messages: &[S])
+        where S: Debug + PartialEq<String>
+    {}
+
+    pub fn clear_messages(&self) {}
+}
+
+impl DB for NullDB {
+    fn debug_log(&self, _message: &str) {}
+}
