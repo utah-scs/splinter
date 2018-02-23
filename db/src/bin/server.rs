@@ -27,7 +27,7 @@ use db::e2d2::interface::*;
 use db::e2d2::scheduler::NetBricksContext as NetbricksContext;
 use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
 
-use db::server_dispatch::ServerDispatch;
+use db::dispatch::ServerDispatch;
 
 /// This function sets up a Sandstorm server's dispatch thread on top
 /// of Netbricks.

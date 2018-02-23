@@ -36,4 +36,4 @@ mod context;
 pub mod ext;
 pub mod table;
 pub mod wireformat;
-pub mod server_dispatch;
+pub mod dispatch;
