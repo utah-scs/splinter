@@ -1,6 +1,7 @@
 [package]
-name = "sandstorm"
+name    = "sandstorm"
 version = "0.1.0"
 authors = ["Ryan Stutsman <stutsman@cs.utah.edu>"]
 
 [dependencies]
+bytes   = "0.4"

@@ -17,6 +17,8 @@
 
 extern crate time;
 extern crate spin;
+extern crate sandstorm;
+extern crate libloading;
 
 #[macro_use]
 pub extern crate log;
@@ -28,6 +30,7 @@ mod common;
 mod rpc;
 mod service;
 mod master;
+mod context;
 
 // Public modules for binaries.
 pub mod ext;

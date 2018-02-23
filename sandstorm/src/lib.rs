@@ -15,6 +15,8 @@
 
 #![feature(type_ascription)]
 
+extern crate bytes;
+
 pub mod db;
 pub mod null;
 pub mod mock;

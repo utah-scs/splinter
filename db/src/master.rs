@@ -1,5 +1,3 @@
-extern crate sandstorm;
-
 use std::collections::HashMap;
 
 use super::ext::*;
@@ -13,9 +11,8 @@ use e2d2::interface::Packet;
 use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
 
+use sandstorm::null::NullDB;
 use bytes::{Bytes, BytesMut, BufMut};
-
-use self::sandstorm::null::NullDB;
 
 struct User {
     // TODO(stutsman) Need some form of interior mutability here.

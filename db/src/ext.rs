@@ -1,15 +1,12 @@
-extern crate sandstorm;
-extern crate libloading as lib;
-
 use std::sync::{Arc};
 use std::io::Result;
 use std::collections::HashMap;
 
-use spin::{RwLock};
-
 use super::common::*;
 
-use self::sandstorm::db::DB;
+use spin::{RwLock};
+use sandstorm::db::DB;
+use libloading as lib;
 
 type Procedure<'lib> = lib::Symbol<'lib, unsafe extern fn(&DB)>;
 type ProcedureRaw = lib::os::unix::Symbol<unsafe extern fn(&DB)>;
