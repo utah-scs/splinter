@@ -16,7 +16,7 @@
 use super::e2d2::headers::MacAddress;
 
 // Type definitions for convenience.
-pub type UserId = u32;
+pub type TenantId = u32;
 pub type TableId = u64;
 
 // The following are constants required to be able to send and receive packets

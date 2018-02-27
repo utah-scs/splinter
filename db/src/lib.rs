@@ -29,6 +29,7 @@ pub extern crate env_logger;
 mod common;
 mod rpc;
 mod service;
+mod tenant;
 mod master;
 mod context;
 

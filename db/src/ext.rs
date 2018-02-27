@@ -59,14 +59,16 @@ impl ExtensionManager {
         }
     }
 
-    pub fn load(&self, ext_path: &str, _: UserId, proc_name: &str) -> Result<()> {
+    pub fn load(&self, ext_path: &str, _: TenantId, proc_name: &str)
+                -> Result<()>
+    {
         let ext = Arc::new(Extension::load(ext_path)?);
         let mut exts = self.extensions.write();
         exts.insert(String::from(proc_name), ext);
         Ok(())
     }
 
-    pub fn call(&self, db: &DB, _: UserId, proc_name: &str) {
+    pub fn call(&self, db: &DB, _: TenantId, proc_name: &str) {
         let exts = self.extensions.read();
         let ext = exts.get(proc_name).unwrap().clone();
         drop(exts);

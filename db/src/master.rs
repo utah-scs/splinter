@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use super::ext::*;
-use super::table::*;
 use super::wireformat::*;
+use super::tenant::Tenant;
 use super::service::Service;
 use super::rpc::parse_rpc_opcode;
-use super::common::{UserId, TableId, PACKET_UDP_LEN};
+use super::common::{TenantId, TableId, PACKET_UDP_LEN};
 
 use e2d2::interface::Packet;
 use e2d2::headers::UdpHeader;
@@ -14,57 +14,34 @@ use e2d2::common::EmptyMetadata;
 use sandstorm::null::NullDB;
 use bytes::{Bytes, BytesMut, BufMut};
 
-struct User {
-    // TODO(stutsman) Need some form of interior mutability here.
-    id: UserId,
-    tables: HashMap<TableId, Table>,
-}
-
-impl User {
-    fn new(id: UserId) -> User {
-        User{
-            id: id,
-            tables: HashMap::new(),
-        }
-    }
-
-    fn create_table(&mut self, table_id: u64) {
-        // Create one hash table for the user and populate it one
-        // key-value pair.
-        let table = Table::default();
-
-        // Write the key-value pair to a single contiguous buffer.
-        let mut value = BytesMut::with_capacity(130);
-        value.put_slice(&[1; 30]);
-        value.put_slice(&[91; 100]);
-        let mut value: Bytes = value.freeze();
-
-        // Populate the table with this key-value pair.
-        let key: Bytes = value.split_to(30);
-        table.put(key, value);
-        self.tables.insert(table_id, table);
-    }
-}
-
 pub struct Master {
-    // TODO(stutsman) Need some form of interior mutability here.
-    users: HashMap<UserId, User>,
+    tenants: HashMap<TenantId, Tenant>,
     extensions: ExtensionManager,
 }
 
 impl Master {
     pub fn new() -> Master {
-        let mut user = User::new(1);
-        user.create_table(1);
+        let mut tenant = Tenant::new(1);
+        tenant.create_table(1);
 
-        let mut master = Master{
-            users: HashMap::new(),
+        let mut value = BytesMut::with_capacity(130);
+        value.put_slice(&[1; 30]);
+        value.put_slice(&[91; 100]);
+        let mut value: Bytes = value.freeze();
+
+        let key: Bytes = value.split_to(30);
+        tenant.tables.get(&1)
+                        .expect("Failed to init test table.")
+                        .put(key, value);
+
+        let mut master = Master {
+            tenants: HashMap::new(),
             extensions: ExtensionManager::new(),
         };
 
-        master.users.insert(user.id, user);
+        master.tenants.insert(tenant.id, tenant);
 
-        // Load a get extension for this user.
+        // Load a get extension for this tenant.
         master.extensions.load("../ext/get/target/release/libget.so", 1, "get")
                             .unwrap();
 
@@ -86,7 +63,7 @@ impl Master {
            request: &Packet<GetRequest, EmptyMetadata>,
            respons: &mut Packet<GetResponse, EmptyMetadata>) {
         // Read fields of the request header.
-        let tenant_id: UserId = req_hdr.common_header.tenant as UserId;
+        let tenant_id: TenantId = req_hdr.common_header.tenant as TenantId;
         let table_id: TableId = req_hdr.table_id as TableId;
         let key_length: u16 = req_hdr.key_length;
 
@@ -104,14 +81,14 @@ impl Master {
 
         let outcome =
                 // Check if the tenant exists.
-            self.users.get(&tenant_id)
+            self.tenants.get(&tenant_id)
                 // If the tenant exists, check if it has a table with the
                 // given id. If it does not exist, update the status to
                 // reflect that.
                 .map_or_else(|| {
                                 status = RpcStatus::StatusTenantDoesNotExist;
                                 None
-                             }, | user | { user.tables.get(&table_id) })
+                             }, | tenant | { tenant.tables.get(&table_id) })
                 // If the table exists, lookup the provided key. If it does
                 // not exist, update the status to reflect that.
                 .map_or_else(|| {
@@ -162,7 +139,7 @@ impl Master {
               request: &Packet<InvokeRequest, EmptyMetadata>,
               respons: &mut Packet<InvokeResponse, EmptyMetadata>) {
         // Read fields of the request header.
-        let tenant_id: UserId = req_hdr.common_header.tenant as UserId;
+        let tenant_id: TenantId = req_hdr.common_header.tenant as TenantId;
         let name_length: usize = req_hdr.name_length as usize;
         let args_length: usize = req_hdr.args_length as usize;
 
@@ -180,7 +157,7 @@ impl Master {
                                     .expect("ERROR: Failed to get ext name.");
 
         // Check if the request was issued by a valid tenant.
-        match self.users.get(&tenant_id) {
+        match self.tenants.get(&tenant_id) {
             // The tenant exists. Do nothing for now.
             Some(_) => { ; }
 
