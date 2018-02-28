@@ -1,9 +1,25 @@
+/* Copyright (c) 2018 University of Utah
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+
 use std::collections::HashMap;
 
 use super::ext::*;
 use super::wireformat::*;
 use super::tenant::Tenant;
 use super::service::Service;
+use super::context::Context;
 use super::rpc::parse_rpc_opcode;
 use super::common::{TenantId, TableId, PACKET_UDP_LEN};
 
@@ -11,7 +27,6 @@ use e2d2::interface::Packet;
 use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
 
-use sandstorm::null::NullDB;
 use bytes::{Bytes, BytesMut, BufMut};
 
 pub struct Master {
@@ -135,25 +150,30 @@ impl Master {
         return;
     }
 
-    fn invoke(&self, req_hdr: &InvokeRequest,
-              request: &Packet<InvokeRequest, EmptyMetadata>,
-              respons: &mut Packet<InvokeResponse, EmptyMetadata>) {
+    fn invoke(&self, request: Packet<InvokeRequest, EmptyMetadata>,
+              mut respons: Packet<InvokeResponse, EmptyMetadata>)
+              -> (Packet<InvokeRequest, EmptyMetadata>,
+                  Packet<InvokeResponse, EmptyMetadata>)
+    {
         // Read fields of the request header.
-        let tenant_id: TenantId = req_hdr.common_header.tenant as TenantId;
-        let name_length: usize = req_hdr.name_length as usize;
-        let args_length: usize = req_hdr.args_length as usize;
+        let tenant_id: TenantId = request.get_header()
+                                            .common_header.tenant as TenantId;
+        let name_length: usize = request.get_header().name_length as usize;
+        let args_length: usize = request.get_header().args_length as usize;
 
         // If the payload size is less than the sum of the name and args
         // length, return an error.
         if request.get_payload().len() < name_length + args_length {
-            let resp_hdr: &mut InvokeResponse = respons.get_mut_header();
-            resp_hdr.common_header.status = RpcStatus::StatusMalformedRequest;
-            return;
+            respons.get_mut_header().common_header.status =
+                                            RpcStatus::StatusMalformedRequest;
+            return (request, respons);
         }
 
         // Read the extension's name from the request payload.
-        let (raw_name, _) = request.get_payload().split_at(name_length);
-        let ext_name: String = String::from_utf8(raw_name.to_vec())
+        let mut raw_name = Vec::new();
+        raw_name.extend_from_slice(request.get_payload()
+                                            .split_at(name_length).0);
+        let ext_name: String = String::from_utf8(raw_name)
                                     .expect("ERROR: Failed to get ext name.");
 
         // Check if the request was issued by a valid tenant.
@@ -163,22 +183,25 @@ impl Master {
 
             // The issuing tenant does not exist. Return an error to the client.
             None => {
-                let resp_hdr: &mut InvokeResponse = respons.get_mut_header();
-                resp_hdr.common_header.status =
+                respons.get_mut_header().common_header.status =
                                             RpcStatus::StatusTenantDoesNotExist;
-                return;
+                return (request, respons);
             }
         }
 
         // Run the extension with a null db interface.
-        let db = NullDB::new();
+        let db = Context::new(request, respons);
         self.extensions.call(&db, tenant_id, &ext_name);
 
-        // Populate response header and return.
-        let resp_hdr: &mut InvokeResponse = respons.get_mut_header();
-        resp_hdr.common_header.status = RpcStatus::StatusOk;
+        // Commit changes made by the procedure, and return.
+        unsafe {
+            let (request, mut respons) = db.commit();
 
-        return;
+            // Populate response header and return.
+            respons.get_mut_header().common_header.status = RpcStatus::StatusOk;
+
+            return (request, respons);
+        }
     }
 }
 
@@ -236,7 +259,7 @@ impl Service for Master {
                         .expect("ERROR: Failed to setup invoke() resp header");
 
                 // Handle the RPC request.
-                self.invoke(request.get_header(), &request, &mut respons);
+                let (request, respons) = self.invoke(request, respons);
 
                 // Deparse request and response headers so that packets can
                 // be handed back to ServerDispatch.

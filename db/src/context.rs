@@ -13,14 +13,16 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::mem::size_of;
 use std::collections::HashMap;
 
 use super::wireformat::{InvokeRequest, InvokeResponse};
 
 use bytes::Bytes;
 use sandstorm::db::DB;
-use e2d2::interface::Packet;
 use e2d2::common::EmptyMetadata;
+use e2d2::headers::{IpHeader, MacHeader, UdpHeader};
+use e2d2::interface::{Packet, packet_from_mbuf_no_increment};
 
 /// This type is passed into the init method of every extension. The methods
 /// on this type form the interface allowing extensions to read and write
@@ -75,6 +77,34 @@ impl Context {
             reads: HashMap::new(),
             writes: HashMap::new(),
         }
+    }
+
+    /// This method commits any changes made by an extension to the database.
+    /// It consumes the context, and returns the request and response
+    /// packets/buffers to the caller.
+    ///
+    /// # Return
+    /// A tupule whose first member is the request packet/buffer for the
+    /// extension, and whose second member is the response packet/buffer
+    /// that can be sent back to the tenant.
+    pub unsafe fn commit(self) -> (Packet<InvokeRequest, EmptyMetadata>,
+                                   Packet<InvokeResponse, EmptyMetadata>)
+    {
+        // Rewrap the request into a new packet.
+        let req = packet_from_mbuf_no_increment::<InvokeRequest>(
+                    self.request.get_mbuf(), size_of::<MacHeader>() +
+                    size_of::<IpHeader>() + size_of::<UdpHeader>() +
+                    size_of::<InvokeRequest>());
+
+        // Rewrap the response into a new packet.
+        let res = packet_from_mbuf_no_increment::<InvokeResponse>(
+                    self.response.get_mbuf(), size_of::<MacHeader>() +
+                    size_of::<IpHeader>() + size_of::<UdpHeader>() +
+                    size_of::<InvokeResponse>());
+
+        // Return the request and response packet. At this point, the context
+        // is dropped, and can never be used again.
+        return (req, res);
     }
 }
 
