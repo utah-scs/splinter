@@ -38,7 +38,7 @@ impl ReadBuf {
     ///
     /// # Return
     /// The `ReadBuf` wrapping the passed in buffer.
-    unsafe pub fn new(buffer: Bytes) -> ReadBuf {
+    pub unsafe fn new(buffer: Bytes) -> ReadBuf {
         ReadBuf {
             inner: buffer,
         }
@@ -68,7 +68,7 @@ impl WriteBuf {
     ///
     /// # Return
     /// The `WriteBuf` wrapping the passed in buffer.
-    unsafe pub fn new(buffer: BytesMut) -> WriteBuf {
+    pub unsafe fn new(buffer: BytesMut) -> WriteBuf {
         WriteBuf {
             inner: buffer,
         }

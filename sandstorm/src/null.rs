@@ -16,6 +16,9 @@
 use std::fmt::Debug;
 
 use super::db::DB;
+use super::buf::ReadBuf;
+
+use bytes::Bytes;
 
 pub struct NullDB {}
 
@@ -32,5 +35,11 @@ impl NullDB {
 }
 
 impl DB for NullDB {
+    fn get(&self, _table: u64, _key: &[u8]) -> ReadBuf {
+        unsafe {
+            ReadBuf::new(Bytes::with_capacity(0))
+        }
+    }
+
     fn debug_log(&self, _message: &str) {}
 }

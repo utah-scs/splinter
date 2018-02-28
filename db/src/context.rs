@@ -20,6 +20,7 @@ use super::wireformat::{InvokeRequest, InvokeResponse};
 
 use bytes::Bytes;
 use sandstorm::db::DB;
+use sandstorm::buf::ReadBuf;
 use e2d2::common::EmptyMetadata;
 use e2d2::headers::{IpHeader, MacHeader, UdpHeader};
 use e2d2::interface::{Packet, packet_from_mbuf_no_increment};
@@ -110,6 +111,12 @@ impl Context {
 
 // The DB trait for Context.
 impl DB for Context {
+    fn get(&self, _table: u64, _key: &[u8]) -> ReadBuf {
+        unsafe {
+            ReadBuf::new(Bytes::with_capacity(0))
+        }
+    }
+
     fn debug_log(&self, _msg: &str) {
         ;
     }

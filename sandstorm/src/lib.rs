@@ -18,5 +18,6 @@
 extern crate bytes;
 
 pub mod db;
+pub mod buf;
 pub mod null;
 pub mod mock;

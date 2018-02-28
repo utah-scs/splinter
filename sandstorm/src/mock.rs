@@ -16,6 +16,9 @@
 use std::fmt::Debug;
 
 use super::db::DB;
+use super::buf::ReadBuf;
+
+use bytes::Bytes;
 
 use std::cell::RefCell;
 
@@ -42,6 +45,16 @@ impl MockDB {
 }
 
 impl DB for MockDB {
+    fn get(&self, table: u64, key: &[u8]) -> ReadBuf {
+        self.debug_log(&format!(
+                            "Extension invoked get() on table {} for key {:?}",
+                            table, key));
+
+        unsafe {
+            ReadBuf::new(Bytes::with_capacity(0))
+        }
+    }
+
     fn debug_log(&self, message: &str) {
         let mut messages = self.messages.borrow_mut();
         messages.push(String::from(message));

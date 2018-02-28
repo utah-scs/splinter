@@ -13,6 +13,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use super::buf::ReadBuf;
+
 pub trait DB {
+    fn get(&self, table: u64, key: &[u8]) -> ReadBuf;
+
     fn debug_log(&self, &str);
 }
