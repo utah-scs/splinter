@@ -175,7 +175,6 @@ where
     /// - `return`: A vector of packets wrapped up in Netbrick's
     ///             Packet<NullHeader, EmptyMetadata> type if there was
     ///             anything received at the network port.
-    ///
     ///             None, if no packets were received or there was an error
     ///             during the receive.
     fn try_receive_packets(&self) ->

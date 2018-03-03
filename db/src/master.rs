@@ -13,6 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::sync::Arc;
 use std::collections::HashMap;
 
 use super::ext::*;
@@ -20,6 +21,7 @@ use super::wireformat::*;
 use super::tenant::Tenant;
 use super::service::Service;
 use super::context::Context;
+use super::alloc::Allocator;
 use super::rpc::parse_rpc_opcode;
 use super::common::{TenantId, TableId, PACKET_UDP_LEN};
 
@@ -27,11 +29,10 @@ use e2d2::interface::Packet;
 use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
 
-use bytes::{Bytes, BytesMut, BufMut};
-
 pub struct Master {
     tenants: HashMap<TenantId, Tenant>,
     extensions: ExtensionManager,
+    heap: Arc<Allocator>,
 }
 
 impl Master {
@@ -39,20 +40,17 @@ impl Master {
         let mut tenant = Tenant::new(1);
         tenant.create_table(1);
 
-        let mut value = BytesMut::with_capacity(130);
-        value.put_slice(&[1; 30]);
-        value.put_slice(&[91; 100]);
-        let mut value: Bytes = value.freeze();
-
-        let key: Bytes = value.split_to(30);
-        tenant.tables.get(&1)
-                        .expect("Failed to init test table.")
-                        .put(key, value);
-
         let mut master = Master {
             tenants: HashMap::new(),
             extensions: ExtensionManager::new(),
+            heap: Arc::new(Allocator::new()),
         };
+
+        let (key, obj) = master.heap.object(1, 1, &[1; 30], &[91, 100])
+                                    .expect("Failed to create dummy object.");
+        tenant.tables.get(&1)
+                        .expect("Failed to init test table.")
+                        .put(key, obj);
 
         master.tenants.insert(tenant.id, tenant);
 

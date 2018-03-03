@@ -32,6 +32,7 @@ mod service;
 mod tenant;
 mod master;
 mod context;
+mod alloc;
 
 // Public modules for binaries.
 pub mod ext;
