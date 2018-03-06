@@ -29,36 +29,69 @@ use e2d2::interface::Packet;
 use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
 
+use spin::{RwLock};
+
 pub struct Master {
-    tenants: HashMap<TenantId, Tenant>,
+    tenants: RwLock<HashMap<TenantId, Arc<Tenant>>>,
     extensions: ExtensionManager,
     heap: Arc<Allocator>,
 }
 
 impl Master {
     pub fn new() -> Master {
-        let mut tenant = Tenant::new(1);
+        let tenant = Tenant::new(1);
         tenant.create_table(1);
 
-        let mut master = Master {
-            tenants: HashMap::new(),
+        let master = Master {
+            tenants: RwLock::new(HashMap::new()),
             extensions: ExtensionManager::new(),
             heap: Arc::new(Allocator::new()),
         };
 
         let (key, obj) = master.heap.object(1, 1, &[1; 30], &[91, 100])
                                     .expect("Failed to create dummy object.");
-        tenant.tables.get(&1)
-                        .expect("Failed to init test table.")
-                        .put(key, obj);
+        tenant.get_table(1)
+                .expect("Failed to init test table.")
+                .put(key, obj);
 
-        master.tenants.insert(tenant.id, tenant);
+        master.insert_tenant(tenant);
 
         // Load a get extension for this tenant.
         master.extensions.load("../ext/get/target/release/libget.so", 1, "get")
                             .unwrap();
 
         master
+    }
+
+    // This method returns a handle to a tenant if it exists.
+    //
+    // # Arguments
+    //
+    // * `tenant_id`: The identifier for the tenant to be returned.
+    //
+    // # Return
+    //
+    // An atomic reference counted handle to the tenant if it exists.
+    fn get_tenant(&self, tenant_id: TenantId) -> Option<Arc<Tenant>> {
+        // Acquire a read lock.
+        let map = self.tenants.read();
+
+        // Lookup, and return the tenant if it exists.
+        map.get(&tenant_id)
+            .and_then(| tenant | { Some(Arc::clone(tenant)) })
+    }
+
+    // This method adds a tenant to Master.
+    //
+    // # Arguments
+    //
+    // * `tenant`: The tenant to be added.
+    fn insert_tenant(&self, tenant: Tenant) {
+        // Acquire a write lock.
+        let mut map = self.tenants.write();
+
+        // Insert the tenant and return.
+        map.insert(tenant.id(), Arc::new(tenant));
     }
 
     // This method handles the Get() RPC request. A hash table lookup is
@@ -94,14 +127,14 @@ impl Master {
 
         let outcome =
                 // Check if the tenant exists.
-            self.tenants.get(&tenant_id)
+            self.get_tenant(tenant_id)
                 // If the tenant exists, check if it has a table with the
                 // given id. If it does not exist, update the status to
                 // reflect that.
                 .map_or_else(|| {
                                 status = RpcStatus::StatusTenantDoesNotExist;
                                 None
-                             }, | tenant | { tenant.tables.get(&table_id) })
+                             }, | tenant | { tenant.get_table(table_id) })
                 // If the table exists, lookup the provided key. If it does
                 // not exist, update the status to reflect that.
                 .map_or_else(|| {
@@ -175,9 +208,25 @@ impl Master {
                                     .expect("ERROR: Failed to get ext name.");
 
         // Check if the request was issued by a valid tenant.
-        match self.tenants.get(&tenant_id) {
+        match self.get_tenant(tenant_id) {
             // The tenant exists. Do nothing for now.
-            Some(_) => { ; }
+            Some(tenant) => {
+                // Run the extension.
+                let db = Context::new(request, respons, tenant,
+                                      Arc::clone(&self.heap));
+                self.extensions.call(&db, tenant_id, &ext_name);
+
+                // Commit changes made by the procedure, and return.
+                unsafe {
+                    let (request, mut respons) = db.commit();
+
+                    // Populate response header and return.
+                    respons.get_mut_header().common_header.status =
+                                                        RpcStatus::StatusOk;
+
+                    return (request, respons);
+                }
+            }
 
             // The issuing tenant does not exist. Return an error to the client.
             None => {
@@ -185,20 +234,6 @@ impl Master {
                                             RpcStatus::StatusTenantDoesNotExist;
                 return (request, respons);
             }
-        }
-
-        // Run the extension with a null db interface.
-        let db = Context::new(request, respons);
-        self.extensions.call(&db, tenant_id, &ext_name);
-
-        // Commit changes made by the procedure, and return.
-        unsafe {
-            let (request, mut respons) = db.commit();
-
-            // Populate response header and return.
-            respons.get_mut_header().common_header.status = RpcStatus::StatusOk;
-
-            return (request, respons);
         }
     }
 }

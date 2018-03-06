@@ -13,9 +13,12 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::sync::Arc;
 use std::mem::size_of;
 use std::collections::HashMap;
 
+use super::tenant::Tenant;
+use super::alloc::Allocator;
 use super::wireformat::{InvokeRequest, InvokeResponse};
 
 use bytes::Bytes;
@@ -51,8 +54,13 @@ pub struct Context {
     // The extension's write set. Required for the same reason as the read set.
     writes: HashMap<Bytes, Bytes>,
 
-    // TODO: Add an Arc to an object manager in here. This is required
-    // for allocations from the table heap, gets, and puts.
+    // The tenant that invoked this extension. Required to access the tenant's
+    // data, and potentially for accounting.
+    tenant: Arc<Tenant>,
+
+    // The allocator that will be used to allow the extension to write data to
+    // one of it's tables.
+    heap: Arc<Allocator>,
 }
 
 // Methods on Context.
@@ -61,15 +69,19 @@ impl Context {
     ///
     /// # Arguments
     ///
-    /// * `req`: The invoke() RPC request packet/buffer consisting of the header
-    ///          and payload.
-    /// * `res`: A pre-allocated RPC response packet/buffer consisting of a
-    ///          response header for the invoke() request.
+    /// * `req`:    The invoke() RPC request packet/buffer consisting of the
+    ///             header and payload.
+    /// * `res`:    A pre-allocated RPC response packet/buffer consisting of a
+    ///             response header for the invoke() request.
+    /// * `tenant`: An `Arc` to the tenant that issued the invoke() request.
+    /// * `alloc`:  An `Arc` to the memory allocator. Required to allow the
+    ///             extension to issue writes to the database.
     ///
     /// # Result
     /// A context that can be used to invoke an extension.
     pub fn new(req: Packet<InvokeRequest, EmptyMetadata>,
-               res: Packet<InvokeResponse, EmptyMetadata>)
+               res: Packet<InvokeResponse, EmptyMetadata>,
+               tenant: Arc<Tenant>, alloc: Arc<Allocator>)
                -> Context
     {
         Context {
@@ -77,6 +89,8 @@ impl Context {
             response: res,
             reads: HashMap::new(),
             writes: HashMap::new(),
+            tenant: tenant,
+            heap: alloc,
         }
     }
 
