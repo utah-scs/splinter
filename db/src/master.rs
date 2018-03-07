@@ -212,8 +212,8 @@ impl Master {
             // The tenant exists. Do nothing for now.
             Some(tenant) => {
                 // Run the extension.
-                let db = Context::new(request, respons, tenant,
-                                      Arc::clone(&self.heap));
+                let db = Context::new(request, name_length, args_length,
+                                      respons, tenant, Arc::clone(&self.heap));
                 self.extensions.call(&db, tenant_id, &ext_name);
 
                 // Commit changes made by the procedure, and return.

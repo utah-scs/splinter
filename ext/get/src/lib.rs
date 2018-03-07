@@ -21,6 +21,23 @@ extern crate sandstorm;
 use sandstorm::db::DB;
 
 #[no_mangle]
-pub fn init(_db: &DB) {
-    println!("Called into get() extension.");
+pub fn init(db: &DB) {
+    let arg = db.args();
+
+    let (table, key) = arg.split_at(8);
+    let table: u64 = *table.get(0).unwrap() as u64 +
+                        (*table.get(1).unwrap() as u64) * 2^8 +
+                        (*table.get(2).unwrap() as u64) * 2^16 +
+                        (*table.get(3).unwrap() as u64) * 2^24 +
+                        (*table.get(4).unwrap() as u64) * 2^32 +
+                        (*table.get(5).unwrap() as u64) * 2^40 +
+                        (*table.get(6).unwrap() as u64) * 2^48 +
+                        (*table.get(7).unwrap() as u64) * 2^56;
+
+    let val = db.get(table, key)
+                .unwrap();
+
+    db.resp(val.read());
+
+    println!("Table: {}, Key: {:?}, Value: {:?}", table, key, val.read());
 }

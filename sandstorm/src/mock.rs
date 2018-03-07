@@ -24,11 +24,15 @@ use std::cell::RefCell;
 
 pub struct MockDB {
     messages: RefCell<Vec<String>>,
+    args: [u8; 30],
 }
 
 impl MockDB {
     pub fn new() -> MockDB {
-        MockDB{messages: RefCell::new(Vec::new())}
+        MockDB{
+            messages: RefCell::new(Vec::new()),
+            args: [97; 30],
+        }
     }
 
     pub fn assert_messages<S>(&self, messages: &[S])
@@ -45,15 +49,21 @@ impl MockDB {
 }
 
 impl DB for MockDB {
-    fn get(&self, table: u64, key: &[u8]) -> ReadBuf {
+    fn get(&self, table: u64, key: &[u8]) -> Option<ReadBuf> {
         self.debug_log(&format!(
                             "Extension invoked get() on table {} for key {:?}",
                             table, key));
 
         unsafe {
-            ReadBuf::new(Bytes::with_capacity(0))
+            Some(ReadBuf::new(Bytes::with_capacity(0)))
         }
     }
+
+    fn args(&self) -> &[u8] {
+        return &(self.args);
+    }
+
+    fn resp(&self, data: &[u8]) {}
 
     fn debug_log(&self, message: &str) {
         let mut messages = self.messages.borrow_mut();

@@ -21,13 +21,11 @@ use bytes::{BufMut, Bytes, BytesMut, LittleEndian};
 /// allocates and initializes objects that can then be inserted into a
 /// particular tenant's hash table. Each allocated object has the following
 /// layout in memory (Metadata is written in little-endian):
-///
 ///      ______________________________________________________________________
 ///     |           |           |            |             |                   |
 ///     | Tenant-ID | Table-ID  | Key-Length |     Key     |       Value       |
 ///     |___________|___________|____________|_____________|___________________|
 ///        4 Bytes     8 Bytes     2 Bytes      Var Length       Var Length
-///
 pub struct Allocator {}
 
 // Implementation of methods on Allocator.
@@ -165,6 +163,39 @@ impl Allocator {
         return Some(object);
     }
 
+    /// This method takes in a previously allocated object, and returns a handle
+    /// to it's key, and a handle to it's value.
+    ///
+    /// # Arguments
+    ///
+    /// * `object`: A previously allocated object.
+    ///
+    /// # Return
+    /// A tupule consisting of two `Bytes`. The first is a handle to the passed
+    /// in object's key, and the second is a handle to it's value.
+    pub fn resolve(&self, object: Bytes) -> Option<(Bytes, Bytes)> {
+        // Read the two bytes corresponding to the key length from the object.
+        let meta = self.meta_size();
+        let (left, right) = (object.get(meta - 2), object.get(meta - 1));
+
+        match (left, right) {
+            // The above read was successfull. Compute the key length assuming
+            // little endian, and return Bytes handle to the object's key and a
+            // Bytes handle to the object's value.
+            (Some(lb), Some(rb)) => {
+                let key_len = (*lb as u16) + (*rb as u16) * 256;
+
+                Some((object.slice(meta, meta + key_len as usize),
+                    object.slice_from(meta + key_len as usize)))
+            }
+
+            // The key length could not be read from the passed in object.
+            _ => {
+                return None;
+            }
+        }
+    }
+
     // This method returns the amount of metadata on each allocated object.
     #[inline]
     fn meta_size(&self) -> usize {
@@ -187,6 +218,28 @@ mod tests {
     fn test_meta_size() {
         let heap = Allocator::new();
         assert_eq!(14, heap.meta_size());
+    }
+
+    // This unit test tests the functionality of the "resolve()" method on
+    // Allocator.
+    #[test]
+    fn test_resolve() {
+        let heap = Allocator::new();
+
+        let key: &[u8] = &[12, 24, 24, 12];
+        let val: &[u8] = &[48, 96, 96, 48];
+
+        // Allocate an object, and resolve the allocation into it's key
+        // and value.
+        let (_, obj) = heap.object(0, 0, key, val)
+                            .expect("Failed to allocate object.");
+        let (k, v) = heap.resolve(obj)
+                            .expect("Failed to resolve object.");
+
+        // Check the contents of the resolved key and value against their
+        // expected values.
+        assert_eq!(key[..], k[..]);
+        assert_eq!(val[..], v[..]);
     }
 
     // This is a basic unit test for Allocator's "test_alloc()" method. It

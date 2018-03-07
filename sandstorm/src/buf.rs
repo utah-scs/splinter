@@ -43,6 +43,10 @@ impl ReadBuf {
             inner: buffer,
         }
     }
+
+    pub fn read(&self) -> &[u8] {
+        return &self.inner[..];
+    }
 }
 
 /// This type represents a read-write buffer of bytes that can be received from

@@ -16,7 +16,11 @@
 use super::buf::ReadBuf;
 
 pub trait DB {
-    fn get(&self, table: u64, key: &[u8]) -> ReadBuf;
+    fn get(&self, table: u64, key: &[u8]) -> Option<ReadBuf>;
+
+    fn args(&self) -> &[u8];
+
+    fn resp(&self, &[u8]);
 
     fn debug_log(&self, &str);
 }

@@ -35,11 +35,15 @@ impl NullDB {
 }
 
 impl DB for NullDB {
-    fn get(&self, _table: u64, _key: &[u8]) -> ReadBuf {
-        unsafe {
-            ReadBuf::new(Bytes::with_capacity(0))
-        }
+    fn get(&self, _table: u64, _key: &[u8]) -> Option<ReadBuf> {
+        return None;
     }
+
+    fn args(&self) -> &[u8] {
+        return &[];
+    }
+
+    fn resp(&self, data: &[u8]) {}
 
     fn debug_log(&self, _message: &str) {}
 }
