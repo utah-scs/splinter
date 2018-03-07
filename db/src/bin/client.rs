@@ -87,7 +87,7 @@ where
         // Create a common invoke rpc header.
         let rpc_tenant: u32 = 1;
         let rpc_name_length: u32 = 3;
-        let rpc_args_length: u32 = 0;
+        let rpc_args_length: u32 = 38;
 
         let inv_header: InvokeRequest = InvokeRequest::new(rpc_tenant,
                                                            rpc_name_length,
@@ -95,7 +95,7 @@ where
 
         // Update RPC payload and header lengths if required.
         if invoke {
-            rpc_key_length = 3;
+            rpc_key_length = 3 + 8 + 30;
             rpc_header_length = size_of::<InvokeRequest>() as u16;
         }
 
@@ -133,9 +133,9 @@ where
 
         // Create a common mac header.
         let mac_src_addr: MacAddress =
-                    MacAddress::new(0x3c, 0xfd, 0xfe, 0x04, 0x93, 0xa2);
+                    MacAddress::new(0x3c, 0xfd, 0xfe, 0x04, 0xa2, 0xe2);
         let mac_dst_addr: MacAddress =
-                    MacAddress::new(0x3c, 0xfd, 0xfe, 0x04, 0xc1, 0xe2);
+                    MacAddress::new(0x3c, 0xfd, 0xfe, 0x04, 0x43, 0xa2);
         let mac_etype: u16 = 0x0800;
 
         let mut mac_header: MacHeader = MacHeader::new();
@@ -168,8 +168,15 @@ where
                                     "Failed to push RPC header into request!");
 
             let name = "get";
-            request.add_to_payload_tail(3, name.as_bytes())
-                    .expect("Failed to write name into invoke() request!");
+            let table = [1, 0, 0, 0, 0, 0, 0, 0];
+            let key: [u8; 30] = [1; 30];
+
+            let mut data = Vec::new();
+            data.extend_from_slice(name.as_bytes());
+            data.extend_from_slice(&table);
+            data.extend_from_slice(&key);
+            request.add_to_payload_tail(data.len(), &data)
+                    .expect("Failed to write data into invoke() request!");
 
             request.deparse_header(size_of::<UdpHeader>())
         } else {
