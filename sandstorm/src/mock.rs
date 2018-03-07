@@ -63,7 +63,7 @@ impl DB for MockDB {
         return &(self.args);
     }
 
-    fn resp(&self, data: &[u8]) {}
+    fn resp(&self, _data: &[u8]) {}
 
     fn debug_log(&self, message: &str) {
         let mut messages = self.messages.borrow_mut();

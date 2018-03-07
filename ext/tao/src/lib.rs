@@ -8,7 +8,7 @@ use sandstorm::db::DB;
 // Multiple instances of a sinle SO *do* share state.
 // Q: Does it interfere with other SOs? And/or with the hosting process?
 // No: each SO is in it's own namespace.
-static mut N: u32 = 0;
+// static mut N: u32 = 0;
 
 #[no_mangle]
 pub fn init(db: &DB) {
@@ -18,7 +18,7 @@ pub fn init(db: &DB) {
   //  N +=1;
   //}
   //db.debug_log(&format!("TAO Initialized! {}", m));
-  db.debug_log("TAO Initialized");
+  db.debug_log("TAO Initialized!");
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 all: netbricks
 	(cd db; cargo build --release)
-	(cd ext/tao; cargo build)
+	(cd ext/tao; cargo build --release)
 	(cd ext/get; cargo build --release)
 
 .PHONY: so-test
@@ -21,3 +21,9 @@ netbricks:
 	(cd net/native; make)
 	mkdir -p net/target/native
 	cp net/native/libzcsi.so net/target/native/libzcsi.so
+
+clean:
+	(cd db; cargo clean)
+	(cd ext/tao; cargo clean)
+	(cd ext/get; cargo clean)
+	(cd sandstorm; cargo clean)

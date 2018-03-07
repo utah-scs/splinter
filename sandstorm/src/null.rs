@@ -18,8 +18,6 @@ use std::fmt::Debug;
 use super::db::DB;
 use super::buf::ReadBuf;
 
-use bytes::Bytes;
-
 pub struct NullDB {}
 
 impl NullDB {
@@ -43,7 +41,7 @@ impl DB for NullDB {
         return &[];
     }
 
-    fn resp(&self, data: &[u8]) {}
+    fn resp(&self, _data: &[u8]) {}
 
     fn debug_log(&self, _message: &str) {}
 }

@@ -235,7 +235,8 @@ impl DB for Context {
     fn resp(&self, data: &[u8]) {
         // Write the passed in data to the response packet/buffer.
         self.response.borrow_mut()
-                        .add_to_payload_tail(data.len(), data);
+                        .add_to_payload_tail(data.len(), data)
+                        .unwrap();
     }
 
     /// Lookup the `DB` trait for documentation on this method.
