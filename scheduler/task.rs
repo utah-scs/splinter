@@ -76,6 +76,6 @@ where
 		match task_state {
 			GeneratorState::Yielded(_i32) => self.state = TaskState::Yielded,
 			GeneratorState::Complete(_i32) => self.state = TaskState::Completed,
-     	}
+     		}
 	}
 }
