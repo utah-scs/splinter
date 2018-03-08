@@ -78,6 +78,9 @@ impl ReadBuf {
 /// the database. This type is primarily intended to be used to receive
 /// allocations from, and write to the database.
 pub struct WriteBuf {
+    // Identifier for the data table this buffer will eventually be written to.
+    table: u64,
+
     // The inner BytesMut that will actually be written to.
     inner: BytesMut,
 
@@ -97,15 +100,17 @@ impl WriteBuf {
     ///
     /// # Arguments
     ///
+    /// * `table`:  Identifier for the table the allocation was made for.
     /// * `buffer`: The underlying buffer that will be wrapped up inside a
     ///             `WriteBuf`.
     ///
     /// # Return
     /// The `WriteBuf` wrapping the passed in buffer.
-    pub unsafe fn new(buffer: BytesMut) -> WriteBuf {
+    pub unsafe fn new(table: u64, buffer: BytesMut) -> WriteBuf {
         let init_len = buffer.len();
 
         WriteBuf {
+            table: table,
             inner: buffer,
             meta_len: init_len,
         }
@@ -225,8 +230,8 @@ impl WriteBuf {
     ///
     /// # Return
     /// A `Bytes` handle to the underlying data that can no longer be mutated.
-    pub unsafe fn freeze(self) -> Bytes {
-        self.inner.freeze()
+    pub unsafe fn freeze(self) -> (u64, Bytes) {
+        (self.table, self.inner.freeze())
     }
 }
 

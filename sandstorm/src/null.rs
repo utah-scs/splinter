@@ -43,6 +43,10 @@ impl DB for NullDB {
         return None;
     }
 
+    fn put(&self, _buf: WriteBuf) -> bool {
+        return false;
+    }
+
     fn args(&self) -> &[u8] {
         return &[];
     }

@@ -18,7 +18,7 @@ use std::fmt::Debug;
 use super::db::DB;
 use super::buf::{ReadBuf, WriteBuf};
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 
 use std::cell::RefCell;
 
@@ -51,7 +51,7 @@ impl MockDB {
 impl DB for MockDB {
     fn get(&self, table: u64, key: &[u8]) -> Option<ReadBuf> {
         self.debug_log(&format!(
-                            "Extension invoked get() on table {} for key {:?}",
+                            "Invoked get() on table {} for key {:?}",
                             table, key));
 
         unsafe {
@@ -59,17 +59,35 @@ impl DB for MockDB {
         }
     }
 
-    fn alloc(&self, _table: u64, _key: &[u8], _val_len: u64)
-             -> Option<WriteBuf>
+    fn alloc(&self, table: u64, key: &[u8], val_len: u64) -> Option<WriteBuf>
     {
-        return None;
+        self.debug_log(&format!(
+                            "Invoked alloc(), table {}, key {:?}, val_len {}",
+                            table, key, val_len));
+
+        unsafe {
+            Some(WriteBuf::new(table, BytesMut::with_capacity(0)))
+        }
+    }
+
+    fn put(&self, buf: WriteBuf) -> bool {
+        unsafe {
+            self.debug_log(&format!("Invoked put(), buf {:?}",
+                                &buf.freeze().1[..]));
+        }
+
+        return true;
     }
 
     fn args(&self) -> &[u8] {
+        self.debug_log(&format!("Invoked args()"));
+
         return &(self.args);
     }
 
-    fn resp(&self, _data: &[u8]) {}
+    fn resp(&self, data: &[u8]) {
+        self.debug_log(&format!("Invoked resp(), data {:?}", data));
+    }
 
     fn debug_log(&self, message: &str) {
         let mut messages = self.messages.borrow_mut();

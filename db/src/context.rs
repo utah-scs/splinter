@@ -62,9 +62,6 @@ pub struct Context {
     // occassionally pre-empt an extension if it has been running for too long.
     reads: RefCell<HashMap<u64, RefCell<HashMap<Bytes, Bytes>>>>,
 
-    // The extension's write set. Required for the same reason as the read set.
-    writes: HashMap<u64, HashMap<Bytes, Bytes>>,
-
     // The tenant that invoked this extension. Required to access the tenant's
     // data, and potentially for accounting.
     tenant: Arc<Tenant>,
@@ -106,7 +103,6 @@ impl Context {
             args_length: args_len,
             response: RefCell::new(res),
             reads: RefCell::new(HashMap::new()),
-            writes: HashMap::new(),
             tenant: tenant,
             heap: alloc,
         }
@@ -235,8 +231,25 @@ impl DB for Context {
                                                          table_id,
                                                          key, val_len) })
                     .and_then(| buf | {
-                        unsafe { Some(WriteBuf::new(buf)) }
-                    })
+                        unsafe { Some(WriteBuf::new(table_id, buf)) } })
+    }
+
+    /// Lookup the `DB` trait for documentation on this method.
+    fn put(&self, buf: WriteBuf) -> bool {
+        // Convert the passed in Writebuf to read only.
+        let (table_id, buf) = unsafe { buf.freeze() };
+
+        // If the table exists, update the extensions read set, and write
+        // to the database.
+        if let Some(table) = self.tenant.get_table(table_id) {
+            return self.heap.resolve(buf.clone())
+                            .map_or(false, | (k, v) | {
+                                self.update_reads(table_id, k.clone(), v);
+                                table.put(k, buf);
+                                true });
+        }
+
+        return false;
     }
 
     /// Lookup the `DB` trait for documentation on this method.

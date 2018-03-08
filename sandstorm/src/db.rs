@@ -20,6 +20,8 @@ pub trait DB {
 
     fn alloc(&self, table: u64, key: &[u8], val_len: u64) -> Option<WriteBuf>;
 
+    fn put(&self, buf: WriteBuf) -> bool;
+
     fn args(&self) -> &[u8];
 
     fn resp(&self, &[u8]);
