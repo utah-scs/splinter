@@ -13,10 +13,12 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use super::buf::ReadBuf;
+use super::buf::{ReadBuf, WriteBuf};
 
 pub trait DB {
     fn get(&self, table: u64, key: &[u8]) -> Option<ReadBuf>;
+
+    fn alloc(&self, table: u64, key: &[u8], val_len: u64) -> Option<WriteBuf>;
 
     fn args(&self) -> &[u8];
 

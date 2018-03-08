@@ -16,7 +16,7 @@
 use std::fmt::Debug;
 
 use super::db::DB;
-use super::buf::ReadBuf;
+use super::buf::{ReadBuf, WriteBuf};
 
 pub struct NullDB {}
 
@@ -34,6 +34,12 @@ impl NullDB {
 
 impl DB for NullDB {
     fn get(&self, _table: u64, _key: &[u8]) -> Option<ReadBuf> {
+        return None;
+    }
+
+    fn alloc(&self, _table: u64, _key: &[u8], _val_len: u64)
+             -> Option<WriteBuf>
+    {
         return None;
     }
 

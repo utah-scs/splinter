@@ -23,8 +23,10 @@ use super::alloc::Allocator;
 use super::wireformat::{InvokeRequest, InvokeResponse};
 
 use bytes::Bytes;
+
 use sandstorm::db::DB;
-use sandstorm::buf::ReadBuf;
+use sandstorm::buf::{ReadBuf, WriteBuf};
+
 use e2d2::common::EmptyMetadata;
 use e2d2::headers::{IpHeader, MacHeader, UdpHeader};
 use e2d2::interface::{Packet, packet_from_mbuf_no_increment};
@@ -219,6 +221,21 @@ impl DB for Context {
                     .and_then(| (k, v) | {
                         self.update_reads(table_id, k, v.clone());
                         unsafe { Some(ReadBuf::new(v)) }
+                    })
+    }
+
+    /// Lookup the `DB` trait for documentation on this method.
+    fn alloc(&self, table_id: u64, key: &[u8], val_len: u64)
+             -> Option<WriteBuf>
+    {
+        // Check if the tenant owns a table with the requested identifier.
+        // If it does, perform and return an allocation.
+        self.tenant.get_table(table_id)
+                    .and_then(| _table | { self.heap.raw(self.tenant.id(),
+                                                         table_id,
+                                                         key, val_len) })
+                    .and_then(| buf | {
+                        unsafe { Some(WriteBuf::new(buf)) }
                     })
     }
 

@@ -16,7 +16,7 @@
 use std::fmt::Debug;
 
 use super::db::DB;
-use super::buf::ReadBuf;
+use super::buf::{ReadBuf, WriteBuf};
 
 use bytes::Bytes;
 
@@ -57,6 +57,12 @@ impl DB for MockDB {
         unsafe {
             Some(ReadBuf::new(Bytes::with_capacity(0)))
         }
+    }
+
+    fn alloc(&self, _table: u64, _key: &[u8], _val_len: u64)
+             -> Option<WriteBuf>
+    {
+        return None;
     }
 
     fn args(&self) -> &[u8] {
