@@ -16,6 +16,7 @@
 extern crate time;
 use std::ops::{Generator, GeneratorState};
 use self::time::{Duration, PreciseTime};
+use super::runnable::Runnable;
 
 pub enum TaskState {
 	Unstarted,
@@ -67,7 +68,7 @@ where
 	/// Return value:
 	///		0:	Task yielded
 	///		1:	Task completed
-	pub fn run(&mut self) {
+	pub fn execute_code(&mut self) {
 		let start = PreciseTime::now();
 		let task_state = self.code_to_execute.resume();
 		let end: Duration = start.to(PreciseTime::now());
@@ -76,6 +77,18 @@ where
 		match task_state {
 			GeneratorState::Yielded(_i32) => self.state = TaskState::Yielded,
 			GeneratorState::Complete(_i32) => self.state = TaskState::Completed,
-     		}
+     	}
+	}
+}
+
+impl<T> Runnable for Task<T>
+	where T: Generator + ?Sized
+{
+	fn run(&mut self) {
+		self.execute_code();
+	}
+
+	fn get_state(&self) -> &TaskState {
+		return &self.state;
 	}
 }
