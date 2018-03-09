@@ -14,9 +14,12 @@
  */
  
 extern crate time;
+
 use std::ops::{Generator, GeneratorState};
 use std::collections::VecDeque;
 use self::time::{Duration, PreciseTime};
+use super::runnable::Runnable;
+use super::task::TaskState;
 
 pub struct Scheduler
 {
@@ -24,8 +27,7 @@ pub struct Scheduler
 	/// This queue also contains a special Dispatch task whose
 	/// job is to pick packets, construct tasks, and enqueue
 	/// them onto this queue.
-	pub run_q: VecDeque<Box<Task<Generator<Yield=i32,Return=i32>>>>,
-
+	pub run_q: VecDeque<Box<Runnable>>,
 }
 
 impl Scheduler
@@ -50,27 +52,28 @@ impl Scheduler
 		    	task.run();
 
 		    	// What should be the behavior at Unstarted and Error state?
-		    	match task.state {
-		    		TaskState::Unstarted => println!("Undefined state"),
+		    	match task.get_state() {
+		    		&TaskState::Unstarted => println!("Undefined state"),
 		    		
 		    		// Task yielded. Enqueue it back so it can be
 		    		// resumed later.
-		    		TaskState::Yielded => self.enqueue(task),
+		    		&TaskState::Yielded => self.enqueue(task),
 
 		    		// Later, this is where we would create and send
 		    		// response packet.
-		    		TaskState::Completed => println!("Task completed."),
+		    		&TaskState::Completed => println!("Task completed."),
 
-		    		TaskState::Error => println!("Undefined error state."),
+		    		&TaskState::Error => println!("Undefined error state."),
 		    	}
 			}
 		}
 	}
 
-	/// This function enqueues the task at the back of queue.
-	/// Wouldn't it be faster if the caller directly push_back()'s
-	/// onto the queue without using this function?
-	pub fn enqueue(&mut self, task: Box<Task<Generator<Yield=i32,Return=i32>>>) {
+	/* This function enqueues the task at the back of queue.
+	 Wouldn't it be faster if the caller directly push_back()'s
+	 onto the queue without using this function?
+	*/
+	pub fn enqueue(&mut self, task: Box<Runnable>) {
 		self.run_q.push_back(task);
 	}
 }
