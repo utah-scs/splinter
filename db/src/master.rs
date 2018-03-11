@@ -123,42 +123,43 @@ impl Master {
         // Get a reference to the key.
         let (key, _) = request.get_payload().split_at(key_length as usize);
 
-        let mut status: RpcStatus = RpcStatus::StatusOk;
+        let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
 
         let outcome =
                 // Check if the tenant exists.
             self.get_tenant(tenant_id)
                 // If the tenant exists, check if it has a table with the
-                // given id. If it does not exist, update the status to
-                // reflect that.
-                .map_or_else(|| {
-                                status = RpcStatus::StatusTenantDoesNotExist;
-                                None
-                             }, | tenant | { tenant.get_table(table_id) })
-                // If the table exists, lookup the provided key. If it does
-                // not exist, update the status to reflect that.
-                .map_or_else(|| {
+                // given id, and update the status of the rpc.
+                .and_then(| tenant | {
                                 status = RpcStatus::StatusTableDoesNotExist;
-                                None
-                             }, | table | { table.get(key) })
-                // If the lookup succeeded, write the value to the
-                // response payload. If it didn't, update the status to reflect
-                // that.
-                .map_or_else(|| {
+                                tenant.get_table(table_id)
+                            })
+                // If the table exists, lookup the provided key, and update
+                // the status of the rpc.
+                .and_then(| table | {
                                 status = RpcStatus::StatusObjectDoesNotExist;
-                                None
-                             }, | value | {
-                                 respons.add_to_payload_tail(value.len(),
-                                                            &value)
-                                        .ok()
-                             })
-                // If the value could not be written to the response payload,
-                // update the status to reflect that.
-                .map_or_else(|| {
+                                table.get(key)
+                            })
+                // If the lookup succeeded, obtain the value, and update the
+                // status of the rpc.
+                .and_then(| object | {
                                 status = RpcStatus::StatusInternalError;
-                                error!("Could not write to response payload.");
-                                None
-                             }, | _ | { Some(()) });
+                                self.heap.resolve(object)
+                            })
+                // If the value was obtained, then write to the response packet
+                // and update the status of the rpc.
+                .and_then(| (_k, value) | {
+                                status = RpcStatus::StatusInternalError;
+                                respons.add_to_payload_tail(value.len(),
+                                                            &value)
+                                       .ok()
+                            })
+                // If the value was written to the response payload,
+                // update the status of the rpc.
+                .and_then(| _ | {
+                                status = RpcStatus::StatusOk;
+                                Some(())
+                            });
 
         match outcome {
             // The RPC completed successfully. Update the response header with
