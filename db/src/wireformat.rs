@@ -51,11 +51,14 @@ pub enum OpCode {
     /// A simple operation that looks up the hash table for a given key.
     SandstormGetRpc    = 0x01,
 
+    /// A simple operation that adds a key-value pair to the database.
+    SandstormPutRpc    = 0x02,
+
     /// This operation invokes a procedure inside the database at runtime.
-    SandstormInvokeRpc = 0x02,
+    SandstormInvokeRpc = 0x03,
 
     /// Any value beyond this represents an invalid rpc.
-    InvalidOperation   = 0x03,
+    InvalidOperation   = 0x04,
 }
 
 /// This enum represents the status of a completed RPC. A status of 'StatusOk'
@@ -304,6 +307,112 @@ impl EndOffset for GetResponse {
 
     fn size() -> usize {
         size_of::<GetResponse>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This type represents the header on a put() RPC request.
+#[repr(C, packed)]
+pub struct PutRequest {
+    /// A generic RPC header identifying the tenant, service, and opcode of the
+    /// request.
+    pub common_header: RpcRequestHeader,
+
+    /// The data table to add the key-value pair to.
+    pub table_id: u64,
+
+    /// The length of the key within the RPC's payload.
+    pub key_length: u16,
+}
+
+// Implementation of methods on PutRequest.
+impl PutRequest {
+    /// This method returns an RPC header that can be added to a put() request.
+    ///
+    /// # Arguments
+    ///
+    /// * `req_tenant`:  An identifier for the tenant issuing the request.
+    /// * `req_table`:   An identifier for the table to add the key-value pair
+    ///                  to.
+    /// * `req_key_len`: The length of the key inside the RPC request's payload.
+    ///
+    /// # Return
+    ///
+    /// An RPC header that can be appended to a put() request.
+    pub fn new(req_tenant: u32, req_table: u64, req_key_len: u16)
+               -> PutRequest
+    {
+        let common = RpcRequestHeader::new(Service::MasterService,
+                                           OpCode::SandstormPutRpc,
+                                           req_tenant);
+
+        PutRequest {
+            common_header: common,
+            table_id: req_table,
+            key_length: req_key_len,
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for PutRequest. Refer to GetRequest's
+// implementation of this trait to understand what the methods and types mean.
+impl EndOffset for PutRequest {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<PutRequest>()
+    }
+
+    fn size() -> usize {
+        size_of::<PutRequest>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This type represents the header on a response to a put() RPC request.
+#[repr(C, packed)]
+pub struct PutResponse {
+    /// A generic RPC header indicating whether the RPC request succeeded
+    /// or failed.
+    pub common_header: RpcResponseHeader,
+}
+
+// Implementation of methods on PutResponse.
+impl PutResponse {
+    /// This method returns a header that can be appended to the response
+    /// to a put() RPC request.
+    pub fn new() -> PutResponse {
+        PutResponse {
+            common_header: RpcResponseHeader::new(),
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for PutResponse. Refer to GetRequest's
+// implementation of this trait to understand what the methods and types mean.
+impl EndOffset for PutResponse {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<PutResponse>()
+    }
+
+    fn size() -> usize {
+        size_of::<PutResponse>()
     }
 
     fn payload_size(&self, hint: usize) -> usize {
