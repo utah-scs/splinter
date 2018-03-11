@@ -18,6 +18,7 @@ use std::ops::{Generator, GeneratorState};
 use self::time::{Duration, PreciseTime};
 use super::runnable::Runnable;
 
+#[derive(PartialEq, Debug)]
 pub enum TaskState {
 	Unstarted,
 	Yielded,
@@ -25,6 +26,7 @@ pub enum TaskState {
 	Error,
 }
 
+#[derive(PartialEq, Debug)]
 pub struct Task<T>
 where
 	T: Generator + ?Sized
@@ -72,7 +74,7 @@ where
 		let start = PreciseTime::now();
 		let task_state = self.code_to_execute.resume();
 		let end: Duration = start.to(PreciseTime::now());
-		self.time_consumed = end.num_microseconds().expect("ERROR: Duration overflow!");
+		self.time_consumed += end.num_microseconds().expect("ERROR: Duration overflow!");
 
 		match task_state {
 			GeneratorState::Yielded(_i32) => self.state = TaskState::Yielded,
@@ -91,4 +93,121 @@ impl<T> Runnable for Task<T>
 	fn get_state(&self) -> &TaskState {
 		return &self.state;
 	}
+}
+
+/// Unit tests for each method in Task struct
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests whether the task was created successfully
+    /// using Task::new().
+    #[test]
+    fn new_creates_task() {
+        let gen = || {
+			println!("Yielding...");
+			yield 1;
+			println!("Resumed");
+			println!("Hello");
+			println!("Ended.");
+			return 1;
+		};
+
+		let mut task = Task::new(0, Box::new(gen));
+
+		// The fact that task.task_id is readable means
+		// that task was successfully created.
+    	assert_eq!(task.task_id, 0);
+    }
+
+    /// Tests whether the execute_code() yields correctly.
+    #[test]
+    fn execute_code_function_yields() {
+    	let gen = || {
+			println!("Yielding...");
+			yield 1;
+			println!("Resumed");
+			println!("Hello");
+			println!("Ended.");
+			return 1;
+		};
+
+		let mut task = Task::new(0, Box::new(gen));
+		task.execute_code();
+
+		assert_eq!(task.state, TaskState::Yielded);
+    }
+
+    /// Tests whether the execute_code() completes correctly.
+    #[test]
+    fn execute_code_function_completes() {
+    	let gen = || {
+			println!("Yielding...");
+			yield 1;
+			println!("Resumed");
+			println!("Hello");
+			println!("Ended.");
+			return 1;
+		};
+
+		let mut task = Task::new(0, Box::new(gen));
+
+		task.execute_code();
+		task.execute_code();
+
+		assert_eq!(task.state, TaskState::Completed);
+    }
+
+    /// Tests whether the execute_code() updates
+    /// time_consumed field.
+    #[test]
+    fn execute_code_function_updates_time_consumed() {
+    	let gen = || {
+			println!("Yielding...");
+			yield 1;
+			println!("Resumed");
+			println!("Hello");
+			println!("Ended.");
+			return 1;
+		};
+
+		let mut task = Task::new(0, Box::new(gen));
+		task.execute_code();
+
+		assert_ne!(task.time_consumed, 0);
+    }
+
+    /// Tests whether the get_state() returns state.
+    #[test]
+    fn get_state_works() {
+    	let gen = || {
+			println!("Yielding...");
+			yield 1;
+			println!("Resumed");
+			println!("Hello");
+			println!("Ended.");
+			return 1;
+		};
+
+		let mut task = Task::new(0, Box::new(gen));
+		
+		assert_eq!(*task.get_state(), TaskState::Unstarted);
+    }
+
+    /// Tests whether run() calls execute_code().
+    #[test]
+    fn run_calls_execute_code() {
+    	let gen = || {
+			println!("Yielding...");
+			yield 1;
+			println!("Resumed");
+			println!("Hello");
+			println!("Ended.");
+			return 1;
+		};
+		let mut task = Task::new(0, Box::new(gen));
+		task.run();
+
+		assert_eq!(task.state, TaskState::Yielded);
+    }
 }

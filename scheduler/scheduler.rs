@@ -77,3 +77,43 @@ impl Scheduler
 		self.run_q.push_back(task);
 	}
 }
+
+/// Unit tests for each method in Scheduler struct
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use task::Task;
+
+    /// Tests whether the scheduler was created successfully
+    /// using Scheduler::new().
+    #[test]
+    fn new_creates_scheduler() {
+		let mut scheduler = Scheduler::new();
+
+		// The fact that task.task_id is readable means
+		// that task was successfully created.
+    	assert_eq!(scheduler.run_q.len(), 0);
+    }
+
+    /// Tests whether the scheduler enqueues tasks
+    /// using Scheduler::enqueue().
+    #[test]
+    fn enqueue_works() {
+		let mut scheduler = Scheduler::new();
+
+		let gen = || {
+			println!("Yielding...");
+			yield 1;
+			println!("Resumed");
+			println!("Hello");
+			println!("Ended.");
+			return 1;
+		};
+
+		let mut task = Task::new(0, Box::new(gen));
+
+		scheduler.enqueue(Box::new(task));
+
+		assert_eq!(scheduler.run_q.len(), 1);
+    }
+}
