@@ -8,3 +8,4 @@ crate-type = ["dylib"]
 
 [dependencies]
 sandstorm = { path = "../../sandstorm" }
+byteorder = "1"
