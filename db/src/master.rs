@@ -123,42 +123,43 @@ impl Master {
         // Get a reference to the key.
         let (key, _) = request.get_payload().split_at(key_length as usize);
 
-        let mut status: RpcStatus = RpcStatus::StatusOk;
+        let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
 
         let outcome =
                 // Check if the tenant exists.
             self.get_tenant(tenant_id)
                 // If the tenant exists, check if it has a table with the
-                // given id. If it does not exist, update the status to
-                // reflect that.
-                .map_or_else(|| {
-                                status = RpcStatus::StatusTenantDoesNotExist;
-                                None
-                             }, | tenant | { tenant.get_table(table_id) })
-                // If the table exists, lookup the provided key. If it does
-                // not exist, update the status to reflect that.
-                .map_or_else(|| {
+                // given id, and update the status of the rpc.
+                .and_then(| tenant | {
                                 status = RpcStatus::StatusTableDoesNotExist;
-                                None
-                             }, | table | { table.get(key) })
-                // If the lookup succeeded, write the value to the
-                // response payload. If it didn't, update the status to reflect
-                // that.
-                .map_or_else(|| {
+                                tenant.get_table(table_id)
+                            })
+                // If the table exists, lookup the provided key, and update
+                // the status of the rpc.
+                .and_then(| table | {
                                 status = RpcStatus::StatusObjectDoesNotExist;
-                                None
-                             }, | value | {
-                                 respons.add_to_payload_tail(value.len(),
-                                                            &value)
-                                        .ok()
-                             })
-                // If the value could not be written to the response payload,
-                // update the status to reflect that.
-                .map_or_else(|| {
+                                table.get(key)
+                            })
+                // If the lookup succeeded, obtain the value, and update the
+                // status of the rpc.
+                .and_then(| object | {
                                 status = RpcStatus::StatusInternalError;
-                                error!("Could not write to response payload.");
-                                None
-                             }, | _ | { Some(()) });
+                                self.heap.resolve(object)
+                            })
+                // If the value was obtained, then write to the response packet
+                // and update the status of the rpc.
+                .and_then(| (_k, value) | {
+                                status = RpcStatus::StatusInternalError;
+                                respons.add_to_payload_tail(value.len(),
+                                                            &value)
+                                       .ok()
+                            })
+                // If the value was written to the response payload,
+                // update the status of the rpc.
+                .and_then(| _ | {
+                                status = RpcStatus::StatusOk;
+                                Some(())
+                            });
 
         match outcome {
             // The RPC completed successfully. Update the response header with
@@ -178,6 +179,64 @@ impl Master {
             }
         }
 
+        return;
+    }
+
+    fn put(&self, req_hdr: &PutRequest,
+           request: &Packet<PutRequest, EmptyMetadata>,
+           respons: &mut Packet<PutResponse, EmptyMetadata>) {
+        // Read fields of the request header.
+        let tenant_id: TenantId = req_hdr.common_header.tenant as TenantId;
+        let table_id: TableId = req_hdr.table_id as TableId;
+        let key_length: u16 = req_hdr.key_length;
+
+        // If the payload size is less than the key length, return an error.
+        if request.get_payload().len() < key_length as usize {
+            let resp_hdr: &mut PutResponse = respons.get_mut_header();
+            resp_hdr.common_header.status = RpcStatus::StatusMalformedRequest;
+            return;
+        }
+
+        // Get a reference to the key and value.
+        let (key, val) = request.get_payload().split_at(key_length as usize);
+
+        // If the payload does not contain a value, return an error.
+        if val.len() <= 0 {
+            let resp_hdr: &mut PutResponse = respons.get_mut_header();
+            resp_hdr.common_header.status = RpcStatus::StatusMalformedRequest;
+            return;
+        }
+
+        let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
+
+        let outcome =
+                // Check if the tenant exists.
+            self.get_tenant(tenant_id)
+                // If the tenant exists, check if it has a table with the
+                // given id, and update the status of the rpc.
+                .and_then(| tenant | {
+                                status = RpcStatus::StatusTableDoesNotExist;
+                                tenant.get_table(table_id)
+                            });
+
+        // If the table exists, update the status of the rpc, and allocate an
+        // object.
+        if let Some(table) = outcome {
+            status = RpcStatus::StatusInternalError;
+            let _ = self.heap.object(tenant_id, table_id, key, val)
+                                // If the allocation succeeds, update the
+                                // status of the rpc, and insert the object
+                                // into the table.
+                                .and_then(| (key, obj) | {
+                                                status = RpcStatus::StatusOk;
+                                                table.put(key, obj);
+                                                Some(())
+                                            });
+        }
+
+        // Update the response header, and return.
+        let resp_hdr: &mut PutResponse = respons.get_mut_header();
+        resp_hdr.common_header.status = status;
         return;
     }
 
@@ -270,6 +329,29 @@ impl Service for Master {
 
                 // Handle the RPC request.
                 self.get(request.get_header(), &request, &mut respons);
+
+                // Deparse request and response headers so that packets can
+                // be handed back to ServerDispatch.
+                let request: Packet<UdpHeader, EmptyMetadata> =
+                    request.deparse_header(PACKET_UDP_LEN as usize);
+                let respons: Packet<UdpHeader, EmptyMetadata> =
+                    respons.deparse_header(PACKET_UDP_LEN as usize);
+
+                return (request, respons);
+            }
+
+            OpCode::SandstormPutRpc => {
+                let request: Packet<PutRequest, EmptyMetadata> =
+                    request.parse_header::<PutRequest>();
+
+                // Create a response header for the request.
+                let response_header = PutResponse::new();
+                let mut respons: Packet<PutResponse, EmptyMetadata> =
+                    respons.push_header(&response_header)
+                        .expect("ERROR: Failed to setup Put() response header");
+
+                // Handle the RPC request.
+                self.put(request.get_header(), &request, &mut respons);
 
                 // Deparse request and response headers so that packets can
                 // be handed back to ServerDispatch.

@@ -16,13 +16,10 @@
 use std::sync::Arc;
 use std::mem::size_of;
 use std::cell::RefCell;
-use std::collections::HashMap;
 
 use super::tenant::Tenant;
 use super::alloc::Allocator;
 use super::wireformat::{InvokeRequest, InvokeResponse};
-
-use bytes::Bytes;
 
 use sandstorm::db::DB;
 use sandstorm::buf::{ReadBuf, WriteBuf};
@@ -55,12 +52,6 @@ pub struct Context {
     // to the issuing client/tenant. For example, a get() extension will need
     // to return a value to the issuing client/tenant.
     response: RefCell<Packet<InvokeResponse, EmptyMetadata>>,
-
-    // The extension's read set. This is required to avoid holding locks for
-    // every object read by an extension. Avoiding locks is extremely critical
-    // because the database will not run requests to completion, and might
-    // occassionally pre-empt an extension if it has been running for too long.
-    reads: RefCell<HashMap<u64, RefCell<HashMap<Bytes, Bytes>>>>,
 
     // The tenant that invoked this extension. Required to access the tenant's
     // data, and potentially for accounting.
@@ -102,7 +93,6 @@ impl Context {
             args_offset: args_off,
             args_length: args_len,
             response: RefCell::new(res),
-            reads: RefCell::new(HashMap::new()),
             tenant: tenant,
             heap: alloc,
         }
@@ -135,89 +125,21 @@ impl Context {
         // is dropped, and can never be used again.
         return (req, res);
     }
-
-    // This method looks up the read set for a key-value pair.
-    //
-    // # Arguments
-    //
-    // * `table_id`: The identifier for the table the key-value pair belongs to.
-    // * `key`:      The key to be looked up.
-    //
-    // # Return
-    //
-    // A `Bytes` handle to the value, if one exists.
-    fn lookup_reads(&self, table_id: u64, key: &[u8]) -> Option<Bytes> {
-        let reads = self.reads.borrow();
-
-        // Check if the table has been read before. If it has, check if the
-        // key has been read before, and return.
-        if let Some(table) = reads.get(&table_id) {
-            let table = table.borrow();
-
-            return table.get(key)
-                        .and_then(| val | { Some(val.clone()) });
-        }
-
-        // The table has not been read before.
-        return None;
-    }
-
-    // This method updates the read set with a key-value pair.
-    //
-    // # Arguments
-    //
-    // * `table_id`: The identifier for the table the key-value pair belongs to.
-    // * `key`:      A `Bytes` handle to the key.
-    // * `val`:      A `Bytes` handle to the value.
-    fn update_reads(&self, table_id: u64, key: Bytes, val: Bytes) {
-        let mut reads = self.reads.borrow_mut();
-
-        // Check if the table has been read before. If it has, then add the
-        // key-value pair to the read set.
-        if let Some(table) = reads.get(&table_id) {
-            let mut table = table.borrow_mut();
-
-            let _ = table.remove(&key);
-            table.insert(key, val);
-
-            return;
-        }
-
-        // The table has never been read before. Update the read set with the
-        // table and the key-value pair.
-        let table = RefCell::new(HashMap::new());
-        table.borrow_mut().insert(key, val);
-
-        reads.insert(table_id, table);
-
-        return;
-    }
 }
 
 // The DB trait for Context.
 impl DB for Context {
     /// Lookup the `DB` trait for documentation on this method.
     fn get(&self, table_id: u64, key: &[u8]) -> Option<ReadBuf> {
-        // If the key-value pair has been read before, then return the value
-        // from the read set.
-        if let Some(val) = self.lookup_reads(table_id, key) {
-            unsafe {
-                return Some(ReadBuf::new(val));
-            }
-        }
-
-        // The key-value pair has not been read before. Lookup the database for
-        // it. If it exists, then update the read set and return the value.
+        // Lookup the database for the key value pair. If it exists, then update
+        // the read set and return the value.
         self.tenant.get_table(table_id)
                     .and_then(| table | { table.get(key) })
                     // The object exists in the database. Get a handle to it's
                     // key and value.
                     .and_then(| object | { self.heap.resolve(object) })
-                    // Update the read set, and return the value.
-                    .and_then(| (k, v) | {
-                        self.update_reads(table_id, k, v.clone());
-                        unsafe { Some(ReadBuf::new(v)) }
-                    })
+                    // Return the value wrapped up inside a safe type.
+                    .and_then(| (_k, v) | { unsafe { Some(ReadBuf::new(v)) } })
     }
 
     /// Lookup the `DB` trait for documentation on this method.
@@ -239,12 +161,10 @@ impl DB for Context {
         // Convert the passed in Writebuf to read only.
         let (table_id, buf) = unsafe { buf.freeze() };
 
-        // If the table exists, update the extensions read set, and write
-        // to the database.
+        // If the table exists, write to the database.
         if let Some(table) = self.tenant.get_table(table_id) {
             return self.heap.resolve(buf.clone())
-                            .map_or(false, | (k, v) | {
-                                self.update_reads(table_id, k.clone(), v);
+                            .map_or(false, | (k, _v) | {
                                 table.put(k, buf);
                                 true });
         }
