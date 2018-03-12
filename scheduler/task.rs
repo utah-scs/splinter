@@ -93,6 +93,10 @@ impl<T> Runnable for Task<T>
 	fn get_state(&self) -> &TaskState {
 		return &self.state;
 	}
+
+	fn get_priority(&self) -> i64 {
+		return self.time_consumed;
+	}
 }
 
 /// Unit tests for each method in Task struct

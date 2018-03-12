@@ -18,4 +18,8 @@ use super::task::TaskState;
 pub trait Runnable {
 	fn run(&mut self);
 	fn get_state(&self) -> &TaskState;
+
+	// In our current implementation, least time_consumed means
+	// highest priority.
+	fn get_priority(&self) -> i64;
 }
