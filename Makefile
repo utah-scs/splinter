@@ -28,3 +28,4 @@ clean:
 	(cd ext/tao; cargo clean)
 	(cd ext/get; cargo clean)
 	(cd sandstorm; cargo clean)
+	(cd net; ./build.sh clean)

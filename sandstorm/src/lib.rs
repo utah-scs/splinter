@@ -92,10 +92,10 @@ impl DB for MockDB {
 
     fn delete_key<K>(&self, _table_id: u64, _key: &K){
     }
-    fn alloc<K>(&self, table: u64, key: &K, val_len: usize) -> Option<Vec<u8>>{
+
+    fn alloc<K>(&self, _table: u64, _key: &K, _val_len: usize) -> Option<Vec<u8>> {
         None
     }
-
 }
 
 #[cfg(test)]
