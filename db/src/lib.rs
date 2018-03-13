@@ -33,6 +33,7 @@ mod tenant;
 mod master;
 mod context;
 mod alloc;
+mod task;
 
 // Public modules for binaries.
 pub mod ext;
