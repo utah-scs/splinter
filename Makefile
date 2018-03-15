@@ -3,6 +3,8 @@ all: netbricks
 	(cd ext/tao; cargo build --release)
 	(cd ext/get; cargo build --release)
 	(cd ext/put; cargo build --release)
+	(cd ext/err; cargo build --release)
+	(cd ext/test; cargo build --release)
 
 .PHONY: so-test
 

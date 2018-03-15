@@ -57,8 +57,10 @@ impl Master {
         master.insert_tenant(tenant);
 
         // Load a get extension for this tenant.
-        master.extensions.load("../ext/get/target/release/libget.so", 1, "get")
-                            .unwrap();
+        let name = "../ext/get/target/release/libget.so";
+        if master.extensions.load(name, 1, "get") == false {
+            panic!("Failed to load get() extension.");
+        }
 
         master
     }
@@ -273,7 +275,7 @@ impl Master {
                 // Run the extension.
                 let db = Context::new(request, name_length, args_length,
                                       respons, tenant, Arc::clone(&self.heap));
-                self.extensions.call(&db, tenant_id, &ext_name);
+                // self.extensions.call(&db, tenant_id, &ext_name);
 
                 // Commit changes made by the procedure, and return.
                 unsafe {
