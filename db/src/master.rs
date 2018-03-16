@@ -13,6 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::rc::Rc;
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -22,7 +23,9 @@ use super::tenant::Tenant;
 use super::service::Service;
 use super::context::Context;
 use super::alloc::Allocator;
+use super::container::Container;
 use super::rpc::parse_rpc_opcode;
+use super::task::{Task, TaskPriority, TaskState};
 use super::common::{TenantId, TableId, PACKET_UDP_LEN};
 
 use e2d2::interface::Packet;
@@ -244,8 +247,8 @@ impl Master {
 
     fn invoke(&self, request: Packet<InvokeRequest, EmptyMetadata>,
               mut respons: Packet<InvokeResponse, EmptyMetadata>)
-              -> (Packet<InvokeRequest, EmptyMetadata>,
-                  Packet<InvokeResponse, EmptyMetadata>)
+              -> (Packet<UdpHeader, EmptyMetadata>,
+                  Packet<UdpHeader, EmptyMetadata>)
     {
         // Read fields of the request header.
         let tenant_id: TenantId = request.get_header()
@@ -258,6 +261,9 @@ impl Master {
         if request.get_payload().len() < name_length + args_length {
             respons.get_mut_header().common_header.status =
                                             RpcStatus::StatusMalformedRequest;
+            let request = request.deparse_header(PACKET_UDP_LEN as usize);
+            let respons = respons.deparse_header(PACKET_UDP_LEN as usize);
+
             return (request, respons);
         }
 
@@ -272,20 +278,19 @@ impl Master {
         match self.get_tenant(tenant_id) {
             // The tenant exists. Do nothing for now.
             Some(tenant) => {
-                // Run the extension.
-                let db = Context::new(request, name_length, args_length,
-                                      respons, tenant, Arc::clone(&self.heap));
-                // self.extensions.call(&db, tenant_id, &ext_name);
+                // Construct a task for the extension.
+                let db = Rc::new(Context::new(request, name_length, args_length,
+                                      respons, tenant, Arc::clone(&self.heap)));
+                let ext = self.extensions.get(tenant_id, &ext_name)
+                                            .expect("Extension does not exist");
+                let mut task = Container::new(TaskPriority::REQUEST, db, ext);
 
-                // Commit changes made by the procedure, and return.
+                // Run the task to completion.
+                while task.run().0 != TaskState::COMPLETED { ; }
+
+                // Tear down the task, and return.
                 unsafe {
-                    let (request, mut respons) = db.commit();
-
-                    // Populate response header and return.
-                    respons.get_mut_header().common_header.status =
-                                                        RpcStatus::StatusOk;
-
-                    return (request, respons);
+                    return task.tear().expect("Failed to get packets");
                 }
             }
 
@@ -293,6 +298,9 @@ impl Master {
             None => {
                 respons.get_mut_header().common_header.status =
                                             RpcStatus::StatusTenantDoesNotExist;
+                let request = request.deparse_header(PACKET_UDP_LEN as usize);
+                let respons = respons.deparse_header(PACKET_UDP_LEN as usize);
+
                 return (request, respons);
             }
         }
@@ -376,16 +384,7 @@ impl Service for Master {
                         .expect("ERROR: Failed to setup invoke() resp header");
 
                 // Handle the RPC request.
-                let (request, respons) = self.invoke(request, respons);
-
-                // Deparse request and response headers so that packets can
-                // be handed back to ServerDispatch.
-                let request: Packet<UdpHeader, EmptyMetadata> =
-                    request.deparse_header(PACKET_UDP_LEN as usize);
-                let respons: Packet<UdpHeader, EmptyMetadata> =
-                    respons.deparse_header(PACKET_UDP_LEN as usize);
-
-                return (request, respons);
+                return self.invoke(request, respons);
             }
 
             OpCode::InvalidOperation => {

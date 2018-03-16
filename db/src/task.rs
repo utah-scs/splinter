@@ -21,6 +21,7 @@ use e2d2::common::EmptyMetadata;
 
 /// This enum represents the different states a task can be in.
 #[repr(u8)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum TaskState {
     /// A task is in this state when it has just been created, but has not
     /// had a chance to execute on the CPU yet.
@@ -32,20 +33,17 @@ pub enum TaskState {
     /// A task is in this state when it has got a chance to run on the CPU at
     /// least once, but has yeilded to the scheduler, and is currently not
     /// executing on the CPU.
-    YEILDED     = 0x03,
+    YIELDED     = 0x03,
 
     /// A task is in this state when it has finished executing completely, and
     /// it's results are ready.
     COMPLETED   = 0x04,
-
-    /// A task is in this state if the scheduler decided to abort it's
-    /// execution.
-    ABORTED     = 0x05,
 }
 
 /// This enum represents the priority of a task in the system. A smaller value
 /// indicates a task with a higher priority.
 #[repr(u8)]
+#[derive(Clone)]
 pub enum TaskPriority {
     /// The priority of a dispatch task. Highest in the system, because this
     /// task is responsible for all network processing.
@@ -65,7 +63,7 @@ pub trait Task {
     /// A tuple whose first member consists of the current state of the task
     /// (`TaskState`), and whose second member consists of the amount of time
     /// the task continuously ran for during this call to run().
-    fn run(&self) -> (TaskState, Duration);
+    fn run(&mut self) -> (TaskState, Duration);
 
     /// When called, this method should return the current state of the task.
     ///
@@ -98,6 +96,6 @@ pub trait Task {
     ///
     /// A tuple whose first member consists of the request packet, and whose
     /// second member consists of a response packet, if available.
-    fn tear(self) -> Option<(Packet<UdpHeader, EmptyMetadata>,
-                             Packet<UdpHeader, EmptyMetadata>)>;
+    unsafe fn tear(self) -> Option<(Packet<UdpHeader, EmptyMetadata>,
+                                    Packet<UdpHeader, EmptyMetadata>)>;
 }

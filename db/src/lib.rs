@@ -14,7 +14,7 @@
  */
 
 #![macro_use]
-#![feature(generator_trait)]
+#![feature(generators, generator_trait)]
 
 extern crate time;
 extern crate spin;
@@ -35,6 +35,7 @@ mod master;
 mod context;
 mod alloc;
 mod task;
+mod container;
 
 // Public modules for binaries.
 pub mod ext;
