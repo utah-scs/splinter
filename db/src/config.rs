@@ -13,7 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::error::{Error};
+use std::error::Error;
 use std::fmt;
 use std::fs::File;
 use std::io::Read;
@@ -21,7 +21,7 @@ use std::io::Read;
 use super::e2d2::headers::*;
 use super::toml;
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct ParseError;
 
 impl Error for ParseError {
@@ -39,20 +39,22 @@ impl fmt::Display for ParseError {
 /// Parses str into a MacAddress or returns ParseError.
 /// str must be formatted six colon-separated hex literals.
 pub fn parse_mac(mac: &str) -> Result<MacAddress, ParseError> {
-    let bytes : Result<Vec<_>, _> =
-        mac.split(':')
-            .map(|s| u8::from_str_radix(s, 16))
-            .collect();
+    let bytes: Result<Vec<_>, _> = mac.split(':').map(|s| u8::from_str_radix(s, 16)).collect();
 
     match bytes {
-        Ok(bytes) => 
-            if bytes.len() == 6 {
-                Ok(MacAddress::new(bytes[0], bytes[1], bytes[2],
-                                   bytes[3], bytes[4], bytes[5]))
-            } else {
-                Err(ParseError{})
-            },
-        Err(_) => Err(ParseError{})
+        Ok(bytes) => if bytes.len() == 6 {
+            Ok(MacAddress::new(
+                bytes[0],
+                bytes[1],
+                bytes[2],
+                bytes[3],
+                bytes[4],
+                bytes[5],
+            ))
+        } else {
+            Err(ParseError {})
+        },
+        Err(_) => Err(ParseError {}),
     }
 }
 
@@ -83,15 +85,12 @@ impl ServerConfig {
     pub fn load() -> ServerConfig {
         let mut contents = String::new();
 
-        let _ = File::open("server.toml").and_then(|mut file|
-                    file.read_to_string(&mut contents));
+        let _ = File::open("server.toml").and_then(|mut file| file.read_to_string(&mut contents));
 
-        toml::from_str(&mut contents)
-            .ok()
-            .unwrap_or_else(|| {
-                warn!("No valid server.toml; using default server config.");
-                ServerConfig::new()
-            })
+        toml::from_str(&mut contents).ok().unwrap_or_else(|| {
+            warn!("No valid server.toml; using default server config.");
+            ServerConfig::new()
+        })
     }
 
     /// Parse `mac_address` into NetBrick's format or panic if malformed.
@@ -131,10 +130,22 @@ mod tests {
 
     #[test]
     fn bad_examples() {
-        if let Ok(_) = parse_mac("A1:b2:C3:d4:E5:g6") { assert!(false); } else {}
-        if let Ok(_) = parse_mac("A1:b2:C3:d4:E5: 6") { assert!(false); } else {}
-        if let Ok(_) = parse_mac("A1:b2:C3:d4:E5") { assert!(false); } else {}
-        if let Ok(_) = parse_mac(":::::") { assert!(false); } else {}
+        if let Ok(_) = parse_mac("A1:b2:C3:d4:E5:g6") {
+            assert!(false);
+        } else {
+        }
+        if let Ok(_) = parse_mac("A1:b2:C3:d4:E5: 6") {
+            assert!(false);
+        } else {
+        }
+        if let Ok(_) = parse_mac("A1:b2:C3:d4:E5") {
+            assert!(false);
+        } else {
+        }
+        if let Ok(_) = parse_mac(":::::") {
+            assert!(false);
+        } else {
+        }
     }
 
 }
