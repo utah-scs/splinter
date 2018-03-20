@@ -27,9 +27,8 @@ use db::e2d2::interface::*;
 use db::e2d2::scheduler::NetBricksContext as NetbricksContext;
 use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
 
-use db::dispatch::ServerDispatch;
-
 use db::config;
+use db::dispatch::ServerDispatch;
 
 /// This function sets up a Sandstorm server's dispatch thread on top
 /// of Netbricks.
@@ -143,8 +142,8 @@ fn main() {
     // Basic setup and initialization.
     db::env_logger::init()
                 .expect("ERROR: failed to initialize logger!");
-    let config = config::ServerConfig::load();
 
+    let config = config::ServerConfig::load();
     info!("Starting up Sandstorm server with config {:?}", config);
 
     // Setup Netbricks.

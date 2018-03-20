@@ -58,11 +58,41 @@ pub fn parse_mac(mac: &str) -> Result<MacAddress, ParseError> {
     }
 }
 
+/// Load a config from `filename` otherwise return a default structure.
+fn load_config(filename: &str) -> ServerConfig {
+    let mut contents = String::new();
+
+    let _ = File::open(filename).and_then(|mut file| file.read_to_string(&mut contents));
+
+    match toml::from_str(&contents) {
+        Ok(config) => config,
+        Err(e) => {
+            warn!("Failure paring config file {}: {}", filename, e);
+            ServerConfig::default()
+        }
+    }
+}
+
+/// Load a config from `filename` otherwise return a default structure.
+fn load_config_cl(filename: &str) -> ClientConfig {
+    let mut contents = String::new();
+
+    let _ = File::open(filename).and_then(|mut file| file.read_to_string(&mut contents));
+
+    match toml::from_str(&contents) {
+        Ok(config) => config,
+        Err(e) => {
+            warn!("Failure paring config file {}: {}", filename, e);
+            ClientConfig::default()
+        }
+    }
+}
+
 /// All of the various configuration options needed to run a server, both optional and required.
 /// Normally this config is recovered from a server.toml file (an example of which is in
 /// server.toml-example). If this file is malformed or missing, the server will typically
 /// crash when it cannot determine a MAC address to bind to.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ServerConfig {
     mac_address: String,
     pub ip_address: String,
@@ -70,27 +100,10 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
-    /// Create a new, default instance. Some required fields cannot be defaulted (`mac_address`) so the
-    /// returned config will likely need some reinitialization to be useful.
-    fn new() -> ServerConfig {
-        ServerConfig {
-            mac_address: String::from("<INVALID MAC ADDRESS>"),
-            ip_address: String::from("<INVALID IP ADDRESS>"),
-            udp_port: 0,
-        }
-    }
-
     /// Load server config from server.toml file in the current directory or otherwise return a
     /// default structure.
     pub fn load() -> ServerConfig {
-        let mut contents = String::new();
-
-        let _ = File::open("server.toml").and_then(|mut file| file.read_to_string(&mut contents));
-
-        toml::from_str(&mut contents).ok().unwrap_or_else(|| {
-            warn!("No valid server.toml; using default server config.");
-            ServerConfig::new()
-        })
+        load_config("server.toml")
     }
 
     /// Parse `mac_address` into NetBrick's format or panic if malformed.
@@ -98,6 +111,43 @@ impl ServerConfig {
     pub fn parse_mac(&self) -> MacAddress {
         parse_mac(&self.mac_address)
             .expect("Missing or malformed mac_address field in server config.")
+    }
+}
+
+/// All of the various configuration options needed to run a client, both optional and required.
+/// Normally this config is recovered from a client.toml file (an example of which is in
+/// client.toml-example). If this file is malformed or missing, the client will typically
+/// crash when it cannot determine a MAC address to bind to.
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct ClientConfig {
+    mac_address: String,
+    pub ip_address: String,
+    pub udp_port: u16,
+
+    server_mac_address: String,
+    pub server_ip_address: String,
+    pub server_udp_port: u16,
+}
+
+impl ClientConfig {
+    /// Load client config from client.toml file in the current directory or otherwise return a
+    /// default structure.
+    pub fn load() -> ClientConfig {
+        load_config_cl("client.toml")
+    }
+
+    /// Parse `mac_address` into NetBrick's format or panic if malformed.
+    /// Linear time, so ideally we'd store this in ClientConfig, but TOML parsing makes that tricky.
+    pub fn parse_mac(&self) -> MacAddress {
+        parse_mac(&self.mac_address)
+            .expect("Missing or malformed mac_address field in client config.")
+    }
+
+    /// Parse `server_mac_address` into NetBrick's format or panic if malformed.
+    /// Linear time, so ideally we'd store this in ClientConfig, but TOML parsing makes that tricky.
+    pub fn parse_server_mac(&self) -> MacAddress {
+        parse_mac(&self.server_mac_address)
+            .expect("Missing or malformed server_mac_address field in client config.")
     }
 }
 
