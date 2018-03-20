@@ -22,10 +22,11 @@ use std::option::Option;
 use time::{ precise_time_ns };
 
 use super::common;
-use super::wireformat;
+use super::config;
 use super::master::Master;
-use super::service::Service;
 use super::rpc::parse_rpc_service;
+use super::service::Service;
+use super::wireformat;
 
 use super::e2d2::headers::*;
 use super::e2d2::interface::*;
@@ -100,12 +101,12 @@ where
     ///
     /// - `return`: A dispatcher of type ServerDispatch capable of receiving
     ///             RPCs, and responding to them.
-    pub fn new(net_port: T) -> ServerDispatch<T> {
+    pub fn new(config: &config::ServerConfig, net_port: T) -> ServerDispatch<T> {
         let rx_batch_size: u8 = 32;
         let tx_batch_size: u8 = 32;
 
         // Create a common udp header for response packets.
-        let udp_src_port: u16 = common::SERVER_UDP_PORT;
+        let udp_src_port: u16 = config.udp_port;
         let udp_dst_port: u16 = common::CLIENT_UDP_PORT;
         // Currently assuming that all incoming requests are Get() operations
         // for 100 Byte values.
@@ -122,7 +123,7 @@ where
 
         // Create a common ip header for response packets.
         let ip_src_addr: u32 =
-            u32::from(Ipv4Addr::from_str(common::SERVER_IP_ADDRESS)
+            u32::from(Ipv4Addr::from_str(&config.ip_address)
                     .expect("Failed to create server IP address."));
         let ip_dst_addr: u32 =
             u32::from(Ipv4Addr::from_str(common::CLIENT_IP_ADDRESS)
@@ -145,7 +146,7 @@ where
         ip_header.set_length(ip_length);
 
         // Create a common mac header for response packets.
-        let mac_src_addr: MacAddress = common::SERVER_MAC_ADDRESS;
+        let mac_src_addr: MacAddress = config.parse_mac();
         let mac_dst_addr: MacAddress = common::CLIENT_MAC_ADDRESS;
         let mac_etype: u16 = common::PACKET_ETYPE;
 
@@ -449,7 +450,7 @@ where
                 let udp_header: &UdpHeader = packet.get_header();
 
                 valid = (udp_header.length() >= MIN_LENGTH_UDP) &&
-                        (udp_header.dst_port() == common::SERVER_UDP_PORT);
+                        (udp_header.dst_port() == self.resp_udp_header.src_port());
             }
 
             match valid {

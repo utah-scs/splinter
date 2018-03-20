@@ -13,3 +13,13 @@ Cargo.lock
 *.data
 *.data.gz
 *.pdf
+
+# Ignore config files
+db/server.toml
+
+# Ignore NetBricks objects
+net/native/*
+net/3rdparty/dpdk/*
+net/3rdparty/dpdk.tar.gz
+.installed_rust
+

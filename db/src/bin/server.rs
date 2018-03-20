@@ -29,9 +29,11 @@ use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
 
 use db::dispatch::ServerDispatch;
 
+use db::config;
+
 /// This function sets up a Sandstorm server's dispatch thread on top
 /// of Netbricks.
-fn setup_server<T, S>(ports: Vec<T>, scheduler: &mut S)
+fn setup_server<T, S>(config: &config::ServerConfig, ports: Vec<T>, scheduler: &mut S)
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
     S: Scheduler + Sized,
@@ -41,7 +43,7 @@ where
         std::process::exit(1);
     }
 
-    let server: ServerDispatch<T> = ServerDispatch::new(ports[0].clone());
+    let server: ServerDispatch<T> = ServerDispatch::new(config, ports[0].clone());
 
     // Add the server to a netbricks pipeline.
     match scheduler.add_task(server) {
@@ -141,7 +143,9 @@ fn main() {
     // Basic setup and initialization.
     db::env_logger::init()
                 .expect("ERROR: failed to initialize logger!");
-    info!("Starting up Sandstorm server.");
+    let config = config::ServerConfig::load();
+
+    info!("Starting up Sandstorm server with config {:?}", config);
 
     // Setup Netbricks.
     let mut net_context: NetbricksContext = config_and_init_netbricks();
@@ -150,7 +154,7 @@ fn main() {
     net_context.start_schedulers();
     net_context.add_pipeline_to_run(Arc::new(
             move | ports, scheduler: &mut StandaloneScheduler |
-            setup_server(ports, scheduler)
+            setup_server(&config, ports, scheduler)
             ));
 
     // Run the server.

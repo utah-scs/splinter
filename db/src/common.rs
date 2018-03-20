@@ -29,12 +29,6 @@ pub const PACKET_IP_IHL: u8 = 5;
 pub const PACKET_IP_LEN: u16 = 20 + PACKET_UDP_LEN;
 pub const PACKET_ETYPE: u16 = 0x0800;
 
-// The following are constants required to identify packets sent by the server.
-pub const SERVER_UDP_PORT: u16 = 0;
-pub const SERVER_IP_ADDRESS: &'static str = "192.168.0.2";
-pub const SERVER_MAC_ADDRESS: MacAddress =
-        MacAddress{ addr: [0x3c, 0xfd, 0xfe, 0x04, 0xc1, 0xe2] };
-
 // The following are constants required to identify packets sent by the client.
 pub const CLIENT_UDP_PORT: u16 = 0;
 pub const CLIENT_IP_ADDRESS: &'static str = "192.168.0.1";

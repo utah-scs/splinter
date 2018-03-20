@@ -13,32 +13,36 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![macro_use]
 #![feature(generators, generator_trait)]
 
-extern crate time;
-extern crate spin;
-extern crate sandstorm;
 extern crate libloading;
+extern crate sandstorm;
+#[macro_use]
+extern crate serde_derive;
+extern crate spin;
+extern crate toml;
+extern crate time;
 
+pub extern crate bytes;
+pub extern crate e2d2;
+pub extern crate env_logger;
 #[macro_use]
 pub extern crate log;
-pub extern crate e2d2;
-pub extern crate bytes;
-pub extern crate env_logger;
 
+mod alloc;
 mod common;
+mod container;
+mod context;
+mod master;
 mod rpc;
 mod service;
-mod tenant;
-mod master;
-mod context;
-mod alloc;
 mod task;
-mod container;
+mod tenant;
 
 // Public modules for binaries.
+pub mod config;
+pub mod dispatch;
 pub mod ext;
 pub mod table;
 pub mod wireformat;
-pub mod dispatch;
+pub mod util;
