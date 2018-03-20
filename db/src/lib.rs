@@ -45,4 +45,3 @@ pub mod dispatch;
 pub mod ext;
 pub mod table;
 pub mod wireformat;
-pub mod util;
