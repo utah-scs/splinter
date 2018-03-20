@@ -271,8 +271,8 @@ where
         if self.responses_sent == 1000000 {
             self.measurement_stop_ns = precise_time_ns();
 
-            info!("Took {} nano seconds for a Million packets!",
-                  self.measurement_stop_ns - self.measurement_start_ns);
+            info!("{:.0} K/packets/s",
+                  (self.measurement_stop_ns - self.measurement_start_ns) as f64/1e6);
 
             self.measurement_start_ns = self.measurement_stop_ns;
             self.responses_sent = 0;
