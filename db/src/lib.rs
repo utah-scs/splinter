@@ -39,6 +39,7 @@ mod rpc;
 mod service;
 mod task;
 mod tenant;
+mod native;
 
 // Public modules for binaries.
 pub mod config;

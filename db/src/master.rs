@@ -19,6 +19,7 @@ use std::collections::HashMap;
 
 use super::ext::*;
 use super::wireformat::*;
+use super::native::Native;
 use super::tenant::Tenant;
 use super::service::Service;
 use super::context::Context;
@@ -107,35 +108,40 @@ impl Master {
     //
     // # Arguments
     //
-    // * `req_hdr`: A reference to the request header of the RPC.
     // * `request`: A reference to the entire request packet.
     // * `respons`: A mutable reference to the entire response packet.
-    fn get(&self, req_hdr: &GetRequest,
-           request: &Packet<GetRequest, EmptyMetadata>,
-           respons: &mut Packet<GetResponse, EmptyMetadata>) {
+    #[allow(unreachable_code)]
+    fn get(&self, request: Packet<GetRequest, EmptyMetadata>, mut respons: Packet<GetResponse, EmptyMetadata>)
+           -> (Packet<UdpHeader, EmptyMetadata>, Packet<UdpHeader, EmptyMetadata>)
+    {
         // Read fields of the request header.
-        let tenant_id: TenantId = req_hdr.common_header.tenant as TenantId;
-        let table_id: TableId = req_hdr.table_id as TableId;
-        let key_length: u16 = req_hdr.key_length;
+        let tenant_id: TenantId = request.get_header().common_header.tenant as TenantId;
+        let table_id: TableId = request.get_header().table_id as TableId;
+        let key_length: u16 = request.get_header().key_length;
 
         // If the payload size is less than the key length, return an error.
         if request.get_payload().len() < key_length as usize {
-            let resp_hdr: &mut GetResponse = respons.get_mut_header();
-            resp_hdr.common_header.status = RpcStatus::StatusMalformedRequest;
-            return;
+            respons.get_mut_header().common_header.status =
+                                            RpcStatus::StatusMalformedRequest;
+            let request = request.deparse_header(PACKET_UDP_LEN as usize);
+            let respons = respons.deparse_header(PACKET_UDP_LEN as usize);
+
+            return (request, respons);
         }
 
-        // Get a reference to the key.
-        let (key, _) = request.get_payload().split_at(key_length as usize);
+        // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
+        // reference to Master in the generator below.
+        let tenant = self.get_tenant(tenant_id);
+        let alloc = self.heap.clone();
 
-        let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
+        // Create a generator for this request.
+        let gen = Box::new(move || {
+            let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
 
-        let outcome =
-                // Check if the tenant exists.
-            self.get_tenant(tenant_id)
-                // If the tenant exists, check if it has a table with the
-                // given id, and update the status of the rpc.
-                .and_then(| tenant | {
+            let outcome =
+                // Check if the tenant exists. If it does, then check if the
+                // table exists, and update the status of the rpc.
+                tenant.and_then(| tenant | {
                                 status = RpcStatus::StatusTableDoesNotExist;
                                 tenant.get_table(table_id)
                             })
@@ -143,13 +149,14 @@ impl Master {
                 // the status of the rpc.
                 .and_then(| table | {
                                 status = RpcStatus::StatusObjectDoesNotExist;
+                                let (key, _) = request.get_payload().split_at(key_length as usize);
                                 table.get(key)
                             })
                 // If the lookup succeeded, obtain the value, and update the
                 // status of the rpc.
                 .and_then(| object | {
                                 status = RpcStatus::StatusInternalError;
-                                self.heap.resolve(object)
+                                alloc.resolve(object)
                             })
                 // If the value was obtained, then write to the response packet
                 // and update the status of the rpc.
@@ -166,83 +173,122 @@ impl Master {
                                 Some(())
                             });
 
-        match outcome {
-            // The RPC completed successfully. Update the response header with
-            // the status and value length.
-            Some(()) => {
-                let val_len = respons.get_payload().len() as u32;
+            match outcome {
+                // The RPC completed successfully. Update the response header with
+                // the status and value length.
+                Some(()) => {
+                    let val_len = respons.get_payload().len() as u32;
 
-                let resp_hdr: &mut GetResponse = respons.get_mut_header();
-                resp_hdr.value_length = val_len;
-                resp_hdr.common_header.status = status;
+                    let resp_hdr: &mut GetResponse = respons.get_mut_header();
+                    resp_hdr.value_length = val_len;
+                    resp_hdr.common_header.status = status;
+                }
+
+                // The RPC failed. Update the response header with the status.
+                None => {
+                    respons.get_mut_header().common_header.status = status;
+                }
             }
 
-            // The RPC failed. Update the response header with the status.
-            None => {
-                let resp_hdr: &mut GetResponse = respons.get_mut_header();
-                resp_hdr.common_header.status = status;
-            }
+            // Deparse request and response packets down to UDP.
+            let request = request.deparse_header(PACKET_UDP_LEN as usize);
+            let respons = respons.deparse_header(PACKET_UDP_LEN as usize);
+
+            return Some((request, respons));
+
+            // XXX: This yield is required to get the compiler to compile this closure into a
+            // generator. It is unreachable and benign.
+            yield 0;
+        });
+
+        // Create a native task and run it.
+        let mut task = Native::new(TaskPriority::REQUEST, gen);
+
+        while task.run().0 != TaskState::COMPLETED { ; }
+
+        unsafe {
+            return task.tear().expect("Failed to get packets!");
         }
-
-        return;
     }
 
-    fn put(&self, req_hdr: &PutRequest,
-           request: &Packet<PutRequest, EmptyMetadata>,
-           respons: &mut Packet<PutResponse, EmptyMetadata>) {
+    #[allow(unreachable_code)]
+    fn put(&self, request: Packet<PutRequest, EmptyMetadata>, mut respons: Packet<PutResponse, EmptyMetadata>)
+           -> (Packet<UdpHeader, EmptyMetadata>, Packet<UdpHeader, EmptyMetadata>)
+    {
         // Read fields of the request header.
-        let tenant_id: TenantId = req_hdr.common_header.tenant as TenantId;
-        let table_id: TableId = req_hdr.table_id as TableId;
-        let key_length: u16 = req_hdr.key_length;
+        let tenant_id: TenantId = request.get_header().common_header.tenant as TenantId;
+        let table_id: TableId = request.get_header().table_id as TableId;
+        let key_length: u16 = request.get_header().key_length;
 
         // If the payload size is less than the key length, return an error.
         if request.get_payload().len() < key_length as usize {
-            let resp_hdr: &mut PutResponse = respons.get_mut_header();
-            resp_hdr.common_header.status = RpcStatus::StatusMalformedRequest;
-            return;
+            respons.get_mut_header().common_header.status = RpcStatus::StatusMalformedRequest;
+            let request = request.deparse_header(PACKET_UDP_LEN as usize);
+            let respons = respons.deparse_header(PACKET_UDP_LEN as usize);
+
+            return (request, respons);
         }
 
-        // Get a reference to the key and value.
-        let (key, val) = request.get_payload().split_at(key_length as usize);
+        // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
+        // reference to Master in the generator below.
+        let tenant = self.get_tenant(tenant_id);
+        let alloc = self.heap.clone();
 
-        // If the payload does not contain a value, return an error.
-        if val.len() <= 0 {
-            let resp_hdr: &mut PutResponse = respons.get_mut_header();
-            resp_hdr.common_header.status = RpcStatus::StatusMalformedRequest;
-            return;
-        }
+        // Create a generator for this request.
+        let gen = Box::new(move || {
+            let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
 
-        let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
-
-        let outcome =
-                // Check if the tenant exists.
-            self.get_tenant(tenant_id)
-                // If the tenant exists, check if it has a table with the
-                // given id, and update the status of the rpc.
-                .and_then(| tenant | {
+            // If the tenant exists, check if it has a table with the given id,
+            // and update the status of the rpc.
+            let outcome = tenant.and_then(| tenant | {
                                 status = RpcStatus::StatusTableDoesNotExist;
                                 tenant.get_table(table_id)
                             });
 
-        // If the table exists, update the status of the rpc, and allocate an
-        // object.
-        if let Some(table) = outcome {
-            status = RpcStatus::StatusInternalError;
-            let _ = self.heap.object(tenant_id, table_id, key, val)
-                                // If the allocation succeeds, update the
-                                // status of the rpc, and insert the object
-                                // into the table.
-                                .and_then(| (key, obj) | {
+            // If the table exists, update the status of the rpc, and allocate an
+            // object.
+            if let Some(table) = outcome {
+                // Get a reference to the key and value.
+                status = RpcStatus::StatusMalformedRequest;
+                let (key, val) = request.get_payload().split_at(key_length as usize);
+
+                // If there is a value, then write it in.
+                if val.len() > 0 {
+                    status = RpcStatus::StatusInternalError;
+                    let _result = alloc.object(tenant_id, table_id, key, val)
+                                        // If the allocation succeeds, update the
+                                        // status of the rpc, and insert the object
+                                        // into the table.
+                                        .and_then(| (key, obj) | {
                                                 status = RpcStatus::StatusOk;
                                                 table.put(key, obj);
                                                 Some(())
                                             });
-        }
+                }
+            }
 
-        // Update the response header, and return.
-        let resp_hdr: &mut PutResponse = respons.get_mut_header();
-        resp_hdr.common_header.status = status;
-        return;
+            // Update the response header, and return.
+            respons.get_mut_header().common_header.status = status;
+
+            // Deparse request and response packets to UDP.
+            let request = request.deparse_header(PACKET_UDP_LEN as usize);
+            let respons = respons.deparse_header(PACKET_UDP_LEN as usize);
+
+            return Some((request, respons));
+
+            // XXX: This yield is required to get the compiler to compile this closure into a
+            // generator. It is unreachable and benign.
+            yield 0;
+        });
+
+        // Create a native task and run it.
+        let mut task = Native::new(TaskPriority::REQUEST, gen);
+
+        while task.run().0 != TaskState::COMPLETED { ; }
+
+        unsafe {
+            return task.tear().expect("Failed to get packets!");
+        }
     }
 
     fn invoke(&self, request: Packet<InvokeRequest, EmptyMetadata>,
@@ -338,16 +384,7 @@ impl Service for Master {
                         .expect("ERROR: Failed to setup Get() response header");
 
                 // Handle the RPC request.
-                self.get(request.get_header(), &request, &mut respons);
-
-                // Deparse request and response headers so that packets can
-                // be handed back to ServerDispatch.
-                let request: Packet<UdpHeader, EmptyMetadata> =
-                    request.deparse_header(PACKET_UDP_LEN as usize);
-                let respons: Packet<UdpHeader, EmptyMetadata> =
-                    respons.deparse_header(PACKET_UDP_LEN as usize);
-
-                return (request, respons);
+                return self.get(request, respons);
             }
 
             OpCode::SandstormPutRpc => {
@@ -361,16 +398,7 @@ impl Service for Master {
                         .expect("ERROR: Failed to setup Put() response header");
 
                 // Handle the RPC request.
-                self.put(request.get_header(), &request, &mut respons);
-
-                // Deparse request and response headers so that packets can
-                // be handed back to ServerDispatch.
-                let request: Packet<UdpHeader, EmptyMetadata> =
-                    request.deparse_header(PACKET_UDP_LEN as usize);
-                let respons: Packet<UdpHeader, EmptyMetadata> =
-                    respons.deparse_header(PACKET_UDP_LEN as usize);
-
-                return (request, respons);
+                return self.put(request, respons);
             }
 
             OpCode::SandstormInvokeRpc => {
