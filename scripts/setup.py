@@ -18,17 +18,46 @@ import os
 import sys
 import subprocess
 
-"""This function compiles DPDK using Netbricks scripts on CloudLab's d430.
+colors = {
+    "bold": '\033[1m',
+    "end" : '\033[0m',
+}
+
+"""This function prints a passed in string in the specified color.
+"""
+def printColor(color, string):
+    print colors[color] + string + colors["end"]
+
+"""This function first compiles DPDK using Netbricks scripts on CloudLab's d430.
+   It then binds an active 10 GigE NIC to the compiled igb_uio driver.
 """
 def setupDpdk():
-    print "=============== Compiling DPDK ========================"
+    printColor("bold", "=============== Compiling DPDK =======================")
     subprocess.check_call("./net/3rdparty/get-dpdk.sh", shell=True)
+
+    print ""
+    printColor("bold", "=============== Binding NIC to DPDK ==================")
+    # First, find the PCI-ID of the 10 GigE NIC.
+    cmd = "./net/3rdparty/dpdk/usertools/dpdk-devbind.py --status-dev=net |" + \
+            " grep 10GbE | grep Active | awk '{ print $1 }'"
+    pci = subprocess.check_output(cmd, shell=True)
+
+    # Next, load the necessary kernel modules.
+    cmd = "sudo insmod ./net/3rdparty/dpdk/build/kmod/igb_uio.ko"
+    subprocess.check_call("sudo modprobe uio", shell=True)
+    subprocess.check_call(cmd, shell=True)
+
+    # Then, bind the NIC to igb_uio.
+    cmd = "sudo ./net/3rdparty/dpdk/usertools/dpdk-devbind.py --force -b " + \
+            "igb_uio " + str(pci)
+    subprocess.check_call(cmd, shell=True)
+
     return
 
 """This function updates Rust to the nightly build.
 """
 def setRustNightly():
-    print "=============== Setting Rust to Nightly ==============="
+    printColor("bold", "=============== Setting Rust to Nightly ==============")
     subprocess.check_call("rustup install nightly", shell=True)
     subprocess.check_call("rustup default nightly", shell=True)
     return
@@ -36,11 +65,12 @@ def setRustNightly():
 """This function installs the stable version of Rust.
 """
 def installRust():
-    print "=============== Installing Rust ======================="
+    printColor("bold", "=============== Installing Rust ======================")
     subprocess.check_call("curl https://sh.rustup.rs -sSf | sh", shell=True)
 
-    print "\n" + "\033[1m" + "Run \'source $HOME/.cargo/env\', and then" +\
-          " re-run this script." + "\033[0m"
+    print "\n"
+    printColor("bold", "Run \'source $HOME/.cargo/env\', and then" + \
+               " re-run this script.")
     return
 
 if __name__ == "__main__":
