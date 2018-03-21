@@ -9,4 +9,4 @@ if [[ ! -f server.toml ]]; then
     exit -1
 fi
 
-RUST_LOG=info ./target/release/server
+RUST_LOG=debug ./target/release/server

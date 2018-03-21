@@ -268,11 +268,13 @@ where
 
         // For every million packets sent out by the dispatcher, print out the
         // amount of time in nano seconds it took to do so.
-        if self.responses_sent == 1000000 {
+        let every = 1000000;
+        if self.responses_sent >= every {
             self.measurement_stop_ns = precise_time_ns();
 
             info!("{:.0} K/packets/s",
-                  (self.measurement_stop_ns - self.measurement_start_ns) as f64/1e6);
+                  (self.responses_sent as f64 / 1e3) /
+                      ((self.measurement_stop_ns - self.measurement_start_ns) as f64 / 1e9));
 
             self.measurement_start_ns = self.measurement_stop_ns;
             self.responses_sent = 0;

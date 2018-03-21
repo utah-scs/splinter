@@ -1,0 +1,7 @@
+mac_address = "01:02:03:04:05:07"
+ip_address = "192.168.0.1"
+udp_port = 0
+
+server_mac_address = "01:02:03:04:05:06"
+server_ip_address = "192.168.0.2"
+server_udp_port = 0
