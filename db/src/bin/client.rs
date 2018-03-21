@@ -17,20 +17,26 @@
 
 extern crate db;
 
-use std::cell::Cell;
 use std::sync::Arc;
+use std::cell::Cell;
 use std::fmt::Display;
 use std::str::FromStr;
+use std::mem::size_of;
 use std::net::Ipv4Addr;
 
+use db::e2d2::headers::*;
+use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
 use db::e2d2::scheduler::NetBricksContext as NetbricksContext;
-use db::e2d2::interface::*;
-use db::e2d2::headers::*;
+use db::e2d2::common::EmptyMetadata;
 use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
 use db::config;
 use db::log::*;
-use db::wireformat::{GetRequest, InvokeRequest, UdpPacket, IpPacket};
+use db::wireformat::{GetRequest, InvokeRequest};
+
+// Type aliases for convenience.
+type UdpPacket = Packet<UdpHeader, EmptyMetadata>;
+type IpPacket = Packet<IpHeader, EmptyMetadata>;
 
 /// This type implements a simple request generator for Sandstorm.
 /// When the generate_request() method on this type is called, an RPC request
@@ -127,6 +133,20 @@ where
             .expect("Failed to push UDP header into request!")
     }
 
+    /// Compute and populate UDP and IP header length fields for `request`.
+    /// This should be called at the tail of every `construct()` call,
+    /// otherwise headers may indicate incorrect payload sizes.
+    fn fixup_header_length_fields(mut request: UdpPacket) -> IpPacket
+    {
+        let udp_len = (size_of::<UdpHeader>() + request.get_payload().len()) as u16;
+        request.get_mut_header().set_length(udp_len);
+
+        let mut request = request.deparse_header(size_of::<IpHeader>());
+        request.get_mut_header().set_length(size_of::<IpHeader>() as u16 + udp_len);
+
+        request
+    }
+
     /// Allocate and populate a packet that requests a server "get" operation.
     /// The returned request packet is implicitly addressed to the server
     /// specified by `new()`.
@@ -146,7 +166,19 @@ where
                           key: &[u8])
         -> IpPacket
     {
-        GetRequest::construct(self.create_request(), tenant, table_id, key)
+        if key.len() > u16::max_value() as usize {
+            // TODO(stutsman) This function should return Result instead of panic.
+            panic!("Key too long ({} bytes).", key.len());
+        }
+
+        let mut request = self.create_request()
+                                .push_header(&GetRequest::new(tenant, table_id, key.len() as u16))
+                                .expect("Failed to push RPC header into request!");
+
+        request.add_to_payload_tail(key.len(), &key)
+                .expect("Failed to write key into get() request!");
+
+        Self::fixup_header_length_fields(request.deparse_header(size_of::<UdpHeader>()))
     }
 
     /// Allocate and populate a packet that requests a server "invoke" operation.
@@ -156,19 +188,38 @@ where
     /// headers.
     ///
     /// # Arguments
-    ///  * `tenant`: Id of the tenant requesting the item.
-    ///  * `name`: Name of the tenant's procedure to invoke. Limit 4 GB.
-    ///  * `args`: Arguments to the invoked procedure. Limit 4 GB.
+    ///  * `tenant`:   Id of the tenant requesting the item.
+    ///  * `name_len`: Length of the extensions name inside the payload.
+    ///  * `args_len`: Length of the arguments inside the payload.
     /// # Return
     ///  Packet populated with the request parameters.
     #[inline]
     fn create_invoke_request(&self,
                              tenant: u32,
-                             name: &[u8],
-                             args: &[u8])
+                             name_len: usize,
+                             args_len: usize,
+                             payload: &[u8])
         -> IpPacket
     {
-        InvokeRequest::construct(self.create_request(), tenant, name, args)
+        if name_len > u32::max_value() as usize {
+            // TODO(stutsman) This function should return Result instead of panic.
+            panic!("Name too long ({} bytes).", name_len);
+        }
+
+        if args_len > u32::max_value() as usize {
+            // TODO(stutsman) This function should return Result instead of panic.
+            panic!("Args too long ({} bytes).", args_len);
+        }
+
+        let mut request = self.create_request()
+                                .push_header(&InvokeRequest::new(tenant, name_len as u32,
+                                                                 args_len as u32))
+                                .expect("Failed to push RPC header into request!");
+
+        request.add_to_payload_tail(payload.len(), &payload)
+                .expect("Failed to write args into invoke() request!");
+
+        Self::fixup_header_length_fields(request.deparse_header(size_of::<UdpHeader>()))
     }
 
     /// This method generates a simple get() RPC request and sends it
@@ -176,14 +227,16 @@ where
     #[inline]
     fn generate_request(&self) {
         let request = if self.use_invoke {
-                let mut args: Vec<u8> = Vec::new();
+                let mut payload: Vec<u8> = Vec::new();
                 let table = [1, 0, 0, 0, 0, 0, 0, 0];
                 let key: [u8; 30] = [1; 30];
-                args.extend_from_slice(&table);
-                args.extend_from_slice(&key);
-                self.create_invoke_request(1, "get".as_bytes(), args.as_slice())
+                let name = "get".as_bytes();
+                payload.extend_from_slice(name);
+                payload.extend_from_slice(&table);
+                payload.extend_from_slice(&key);
+                self.create_invoke_request(1, name.len(), payload.len() - name.len(), payload.as_slice())
             } else {
-                self.create_get_request(1, 1, "test".as_bytes())
+                self.create_get_request(1, 1, &[1; 30])
             };
 
         // Send the request out the network.

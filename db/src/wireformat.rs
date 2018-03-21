@@ -15,13 +15,7 @@
 
 use std::mem::size_of;
 
-use e2d2::headers::{EndOffset, UdpHeader, IpHeader, MacHeader};
-use e2d2::interface::*;
-use e2d2::common::EmptyMetadata;
-
-pub type UdpPacket = Packet<UdpHeader, EmptyMetadata>;
-pub type IpPacket = Packet<IpHeader, EmptyMetadata>;
-pub type MacPacket = Packet<MacHeader, EmptyMetadata>;
+use e2d2::headers::{EndOffset, UdpHeader};
 
 /// This enum represents the different sets of services that a Sandstorm server
 /// can provide, and helps identify the service an incoming remote procedure
@@ -215,47 +209,6 @@ impl GetRequest {
             table_id: req_table_id,
             key_length: req_key_length,
         }
-    }
-
-    /// Populate a packet with an RPC header that requests a server
-    /// "get" operation.
-    /// May panic if there is a problem allocating constructing headers
-    /// or if `key` is too big.
-    ///
-    /// # Arguments
-    ///  * `request`: Packet into which this RPC request is populated.
-    ///               Must already ready contain proper network headers.
-    ///  * `tenant`: Id of the tenant requesting the item.
-    ///  * `table_id`: Id of the table from which the key is looked up.
-    ///  * `key`: Byte string of key whose value is to be fetched. Limit 64 KB.
-    /// # Return
-    ///  Packet populated with the request parameters.
-    pub fn construct(request: UdpPacket,
-                     tenant: u32,
-                     table_id: u64,
-                     key: &[u8])
-        -> IpPacket
-    {
-        if key.len() > u16::max_value() as usize {
-            // TODO(stutsman) This function should return Result instead of panic.
-            panic!("Key too long ({} bytes).", key.len());
-        }
-
-        let mut request =
-            request.push_header(
-                    &GetRequest {
-                        common_header: RpcRequestHeader::new(Service::MasterService,
-                                                             OpCode::SandstormGetRpc,
-                                                             tenant),
-                        table_id: table_id,
-                        key_length: key.len() as u16,
-                    })
-            .expect("Failed to push RPC header into request!");
-
-        request.add_to_payload_tail(key.len(), &key)
-            .expect("Failed to write key into get() request!");
-
-        fixup_header_length_fields(request.deparse_header(size_of::<UdpHeader>()))
     }
 }
 
@@ -514,54 +467,6 @@ impl InvokeRequest {
             args_length: args_length,
         }
     }
-
-    /// Populate a packet with an RPC header that requests a server
-    /// "get" operation.
-    /// May panic if there is a problem constructing headers or if
-    /// `name` or `args` are too big.
-    ///
-    /// # Arguments
-    ///  * `request`: Packet into which this RPC request is populated.
-    ///               Must already ready contain proper network headers.
-    ///  * `tenant`: Id of the tenant requesting the item.
-    ///  * `name`: Name of the tenant's procedure to invoke. Limit 4 GB.
-    ///  * `args`: Arguments to the invoked procedure. Limit 4 GB.
-    /// # Return
-    ///  Packet populated with the request parameters.
-    pub fn construct(request: UdpPacket,
-                     tenant: u32,
-                     name: &[u8],
-                     args: &[u8])
-        -> IpPacket
-    {
-        if name.len() > u32::max_value() as usize {
-            // TODO(stutsman) This function should return Result instead of panic.
-            panic!("Name too long ({} bytes).", name.len());
-        }
-
-        if args.len() > u32::max_value() as usize {
-            // TODO(stutsman) This function should return Result instead of panic.
-            panic!("Args too long ({} bytes).", args.len());
-        }
-
-        let mut request =
-            request.push_header(
-                    &InvokeRequest {
-                        common_header: RpcRequestHeader::new(Service::MasterService,
-                                                             OpCode::SandstormGetRpc,
-                                                             tenant),
-                        name_length: name.len() as u32,
-                        args_length: args.len() as u32,
-                    })
-            .expect("Failed to push RPC header into request!");
-
-        request.add_to_payload_tail(name.len(), &name)
-            .expect("Failed to write name into invoke() request!");
-        request.add_to_payload_tail(args.len(), &args)
-            .expect("Failed to write args into invoke() request!");
-
-        fixup_header_length_fields(request.deparse_header(size_of::<UdpHeader>()))
-    }
 }
 
 // Implementation of the EndOffset trait for InvokeRequest. Refer to
@@ -626,18 +531,3 @@ impl EndOffset for InvokeResponse {
         true
     }
 }
-
-/// Compute and populate UDP and IP header length fields for `request`.
-/// This should be called at the tail of every `construct()` call,
-/// otherwise headers may indicate incorrect payload sizes.
-fn fixup_header_length_fields(mut request: UdpPacket) -> IpPacket
-{
-    let udp_len = (size_of::<UdpHeader>() + request.get_payload().len()) as u16;
-    request.get_mut_header().set_length(udp_len);
-
-    let mut request = request.deparse_header(size_of::<IpHeader>());
-    request.get_mut_header().set_length(size_of::<IpHeader>() as u16 + udp_len);
-
-    request
-}
-
