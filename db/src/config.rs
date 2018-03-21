@@ -43,14 +43,7 @@ pub fn parse_mac(mac: &str) -> Result<MacAddress, ParseError> {
 
     match bytes {
         Ok(bytes) => if bytes.len() == 6 {
-            Ok(MacAddress::new(
-                bytes[0],
-                bytes[1],
-                bytes[2],
-                bytes[3],
-                bytes[4],
-                bytes[5],
-            ))
+            Ok(MacAddress::new_from_slice(&bytes))
         } else {
             Err(ParseError {})
         },
@@ -127,6 +120,8 @@ pub struct ClientConfig {
     server_mac_address: String,
     pub server_ip_address: String,
     pub server_udp_port: u16,
+
+    pub use_invoke: bool,
 }
 
 impl ClientConfig {

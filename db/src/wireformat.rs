@@ -15,9 +15,13 @@
 
 use std::mem::size_of;
 
-use e2d2::headers::{EndOffset, UdpHeader};
+use e2d2::headers::{EndOffset, UdpHeader, IpHeader, MacHeader};
 use e2d2::interface::*;
 use e2d2::common::EmptyMetadata;
+
+pub type UdpPacket = Packet<UdpHeader, EmptyMetadata>;
+pub type IpPacket = Packet<IpHeader, EmptyMetadata>;
+pub type MacPacket = Packet<MacHeader, EmptyMetadata>;
 
 /// This enum represents the different sets of services that a Sandstorm server
 /// can provide, and helps identify the service an incoming remote procedure
@@ -226,11 +230,11 @@ impl GetRequest {
     ///  * `key`: Byte string of key whose value is to be fetched. Limit 64 KB.
     /// # Return
     ///  Packet populated with the request parameters.
-    pub fn construct(request: Packet<UdpHeader, EmptyMetadata>,
+    pub fn construct(request: UdpPacket,
                      tenant: u32,
                      table_id: u64,
                      key: &[u8])
-        -> Packet<UdpHeader, EmptyMetadata>
+        -> IpPacket
     {
         if key.len() > u16::max_value() as usize {
             // TODO(stutsman) This function should return Result instead of panic.
@@ -251,7 +255,7 @@ impl GetRequest {
         request.add_to_payload_tail(key.len(), &key)
             .expect("Failed to write key into get() request!");
 
-        request.deparse_header(size_of::<UdpHeader>())
+        fixup_header_length_fields(request.deparse_header(size_of::<UdpHeader>()))
     }
 }
 
@@ -524,11 +528,11 @@ impl InvokeRequest {
     ///  * `args`: Arguments to the invoked procedure. Limit 4 GB.
     /// # Return
     ///  Packet populated with the request parameters.
-    pub fn construct(request: Packet<UdpHeader, EmptyMetadata>,
+    pub fn construct(request: UdpPacket,
                      tenant: u32,
                      name: &[u8],
                      args: &[u8])
-        -> Packet<UdpHeader, EmptyMetadata>
+        -> IpPacket
     {
         if name.len() > u32::max_value() as usize {
             // TODO(stutsman) This function should return Result instead of panic.
@@ -556,7 +560,7 @@ impl InvokeRequest {
         request.add_to_payload_tail(args.len(), &args)
             .expect("Failed to write args into invoke() request!");
 
-        request.deparse_header(size_of::<UdpHeader>())
+        fixup_header_length_fields(request.deparse_header(size_of::<UdpHeader>()))
     }
 }
 
@@ -622,3 +626,18 @@ impl EndOffset for InvokeResponse {
         true
     }
 }
+
+/// Compute and populate UDP and IP header length fields for `request`.
+/// This should be called at the tail of every `construct()` call,
+/// otherwise headers may indicate incorrect payload sizes.
+fn fixup_header_length_fields(mut request: UdpPacket) -> IpPacket
+{
+    let udp_len = (size_of::<UdpHeader>() + request.get_payload().len()) as u16;
+    request.get_mut_header().set_length(udp_len);
+
+    let mut request = request.deparse_header(size_of::<IpHeader>());
+    request.get_mut_header().set_length(size_of::<IpHeader>() as u16 + udp_len);
+
+    request
+}
+
