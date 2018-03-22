@@ -35,6 +35,7 @@ use sandstorm::db::DB;
 ///
 /// A coroutine that can be run inside the database.
 #[no_mangle]
+#[allow(unreachable_code)]
 #[allow(unused_assignments)]
 pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
     Box::new(move || {
@@ -57,22 +58,15 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
             // (first eight bytes), and a view over the key to be looked up.
             // De-serialize the table identifier into a u64.
             let (table, key) = args.split_at(8);
-            let table: u64 = *table.get(0).unwrap() as u64 +
-                                (*table.get(1).unwrap() as u64) * 2^8 +
-                                (*table.get(2).unwrap() as u64) * 2^16 +
-                                (*table.get(3).unwrap() as u64) * 2^24 +
-                                (*table.get(4).unwrap() as u64) * 2^32 +
-                                (*table.get(5).unwrap() as u64) * 2^40 +
-                                (*table.get(6).unwrap() as u64) * 2^48 +
-                                (*table.get(7).unwrap() as u64) * 2^56;
+            let table: u64 = 0 | table[0] as u64 | (table[1] as u64) << 8 |
+                            (table[2] as u64) << 16 | (table[3] as u64) << 24 |
+                            (table[4] as u64) << 32 | (table[5] as u64) << 40 |
+                            (table[6] as u64) << 48 | (table[7] as u64) << 56;
 
 
             // Finally, lookup the database for the object.
             obj = db.get(table, key);
         }
-
-        // Yield down to the database after issuing the get().
-        yield 0;
 
         // Populate a response to the tenant.
         match obj {
@@ -90,5 +84,9 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
                 return 0;
             }
         }
+
+        // XXX: This yield is required to get the compiler to compile this closure into a
+        // generator. It is unreachable and benign.
+        yield 0;
     })
 }

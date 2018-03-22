@@ -22,7 +22,7 @@ use e2d2::interface::Packet;
 use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
 
-use time::Duration;
+use time::{Duration, PreciseTime};
 
 // The expected type signature on a generator for a native operation (ex: get()). The return
 // value is an optional tuple consisting of a request and response packet parsed/deparsed upto
@@ -80,25 +80,26 @@ impl Native {
 impl Task for Native {
     /// Refer to the Task trait for documentation.
     fn run(&mut self) -> (TaskState, Duration) {
-        let mut exec = Duration::microseconds(0);
+        let start = PreciseTime::now();
 
         // Run the generator if need be.
         if self.state == INITIALIZED || self.state == YIELDED {
             self.state = RUNNING;
 
-            exec = Duration::span(|| {
-                        match self.gen.resume() {
-                            GeneratorState::Yielded(_) => {
-                                self.state = YIELDED;
-                            }
+            match self.gen.resume() {
+                GeneratorState::Yielded(_) => {
+                    self.state = YIELDED;
+                }
 
-                            GeneratorState::Complete(pkts) => {
-                                self.res = pkts;
-                                self.state = COMPLETED;
-                            }
-                        }
-                    }) + exec;
+                GeneratorState::Complete(pkts) => {
+                    self.res = pkts;
+                    self.state = COMPLETED;
+                }
+            }
         }
+
+        // Get the continuous time this task executed for.
+        let exec = start.to(PreciseTime::now());
 
         // Update the total time this task has executed for and return.
         self.time = exec + self.time;

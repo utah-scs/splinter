@@ -27,8 +27,8 @@ use e2d2::interface::Packet;
 use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
 
-use time::Duration;
 use sandstorm::db::DB;
+use time::{Duration, PreciseTime};
 
 /// A container for untrusted code that can be scheduled by the database.
 pub struct Container {
@@ -95,14 +95,12 @@ impl Container {
 impl Task for Container {
     /// Refer to the Task trait for Documentation.
     fn run(&mut self) -> (TaskState, Duration) {
-        let mut exec = Duration::microseconds(0);
+        let start = PreciseTime::now();
 
         // If the task has never run before, retrieve the generator for the
         // extension first.
         if self.state == INITIALIZED {
-            exec = Duration::span(|| {
-                        self.gen = self.ext.get(Rc::clone(&self.db) as Rc<DB>)
-                   }) + exec;
+            self.gen = self.ext.get(Rc::clone(&self.db) as Rc<DB>);
         }
 
         // Resume the task if need be. The task needs to be run/resumed only
@@ -111,18 +109,19 @@ impl Task for Container {
         if self.state == INITIALIZED || self.state == YIELDED {
             self.state = RUNNING;
 
-            exec = Duration::span(|| {
-                        match self.gen.resume() {
-                            GeneratorState::Yielded(_) => {
-                                self.state = YIELDED;
-                            }
+            match self.gen.resume() {
+                GeneratorState::Yielded(_) => {
+                    self.state = YIELDED;
+                }
 
-                            GeneratorState::Complete(_) => {
-                                self.state = COMPLETED;
-                            }
-                        }
-                    }) + exec;
+                GeneratorState::Complete(_) => {
+                    self.state = COMPLETED;
+                }
+            }
         }
+
+        // Calculate the amount of time the task executed for.
+        let exec = start.to(PreciseTime::now());
 
         // Update the total execution time of the task.
         self.time = exec + self.time;
