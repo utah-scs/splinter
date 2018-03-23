@@ -14,6 +14,7 @@
  */
 
 #![feature(use_extern_macros)]
+#![feature(integer_atomics)]
 
 extern crate db;
 
@@ -37,6 +38,8 @@ use db::wireformat::{GetRequest, InvokeRequest};
 // Type aliases for convenience.
 type UdpPacket = Packet<UdpHeader, EmptyMetadata>;
 type IpPacket = Packet<IpHeader, EmptyMetadata>;
+
+mod ycsb;
 
 /// This type implements a simple request generator for Sandstorm.
 /// When the generate_request() method on this type is called, an RPC request
