@@ -13,27 +13,37 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use super::task::Task;
+use super::wireformat::OpCode;
+
 use e2d2::interface::Packet;
 use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
 
-/// When implemented, this trait allows for a "service" (ex: Master service,
-/// or Backup service) to receive RPC requests from ServerDispatch.
+/// The Service trait. When implemented, it allows for servicing of RPC requests sent by clients.
 pub trait Service {
-    /// This function will be invoked by ServerDispatch (which polls the
-    /// network interface for incoming requests) to hand off a packet
-    /// corresponding to an RPC request.
+    /// Dispatches an RPC request, and generates a task that can be scheduled.
     ///
-    /// - `request`: A packet corresponding to an RPC request which should
-    ///              have been parsed upto (and including) it's UDP header.
-    /// - `respons`: A pre-allocated packet with headers upto UDP for the
-    ///              response to the RPC.
+    /// # Arguments
     ///
-    /// - `return`: A tupule consisting off the original request packet and
-    ///             the response packet populated with the response, both
-    ///             deparsed to their UDP headers.
-    fn dispatch(&self,
-                request: Packet<UdpHeader, EmptyMetadata>,
-                respons: Packet<UdpHeader, EmptyMetadata>) ->
-        (Packet<UdpHeader, EmptyMetadata>, Packet<UdpHeader, EmptyMetadata>);
+    /// * `op`:  The opcode on the RPC request (ex: SandstormGetRpc)
+    /// * `req`: The RPC request packet, parsed upto it's UDP header.
+    /// * `res`: The RPC response packet. This has to be pre-allocated by the caller upto UDP.
+    ///
+    /// # Return
+    ///
+    /// A `Task` object that can be scheduled and run by the database. In the case of an error, the
+    /// passed in request and response packets are returned.
+    fn dispatch(
+        &self,
+        op: OpCode,
+        req: Packet<UdpHeader, EmptyMetadata>,
+        res: Packet<UdpHeader, EmptyMetadata>,
+    ) -> Result<
+        Box<Task>,
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+    >;
 }

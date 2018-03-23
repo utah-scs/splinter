@@ -15,6 +15,7 @@
 
 use std::rc::Rc;
 use std::sync::Arc;
+use std::cell::Cell;
 use std::ops::{Generator, GeneratorState};
 
 use super::ext::Extension;
@@ -46,7 +47,7 @@ pub struct Container {
 
     // An execution context for the task that implements the DB trait. Required
     // for the task to interact with the database.
-    db: Rc<Context>,
+    db: Cell<Option<Rc<Context>>>,
 
     // A handle to the dynamically loaded extension. Required to initialize the
     // task, and ensure that the extension stays loaded for as long as the task
@@ -55,7 +56,7 @@ pub struct Container {
 
     // The actual generator/coroutine containing the extension's code to be
     // executed inside the database.
-    gen: Box<Generator<Yield=u64, Return=u64>>,
+    gen: Box<Generator<Yield = u64, Return = u64>>,
 }
 
 // Implementation of methods on Container.
@@ -75,18 +76,19 @@ impl Container {
     /// # Return
     ///
     /// A container that when scheduled, runs the extension.
-    pub fn new(prio: TaskPriority, context: Rc<Context>, ext: Arc<Extension>)
-               -> Container
-    {
+    pub fn new(prio: TaskPriority, context: Rc<Context>, ext: Arc<Extension>) -> Container {
         // The generator is initialized to a dummy. The first call to run() will
         // retrieve the actual generator from the extension.
         Container {
             state: INITIALIZED,
             priority: prio,
             time: Duration::microseconds(0),
-            db: context,
+            db: Cell::new(Some(context)),
             ext: ext,
-            gen: Box::new(|| { yield 0; return 0; }),
+            gen: Box::new(|| {
+                yield 0;
+                return 0;
+            }),
         }
     }
 }
@@ -100,7 +102,9 @@ impl Task for Container {
         // If the task has never run before, retrieve the generator for the
         // extension first.
         if self.state == INITIALIZED {
-            self.gen = self.ext.get(Rc::clone(&self.db) as Rc<DB>);
+            let context = self.db.replace(None).unwrap();
+            self.gen = self.ext.get(Rc::clone(&context) as Rc<DB>);
+            self.db.set(Some(context));
         }
 
         // Resume the task if need be. The task needs to be run/resumed only
@@ -146,16 +150,23 @@ impl Task for Container {
     }
 
     /// Refer to the Task trait for Documentation.
-    unsafe fn tear(mut self) -> Option<(Packet<UdpHeader, EmptyMetadata>,
-                                        Packet<UdpHeader, EmptyMetadata>)>
-    {
+    unsafe fn tear(
+        &mut self,
+    ) -> Option<(
+        Packet<UdpHeader, EmptyMetadata>,
+        Packet<UdpHeader, EmptyMetadata>,
+    )> {
         // First, drop the generator. Doing so ensures that self.db is the
         // only reference to the extension's execution context.
-        self.gen = Box::new(|| { yield 0; return 0; });
+        self.gen = Box::new(|| {
+            yield 0;
+            return 0;
+        });
 
         // Next, unwrap the execution context, and, retrieve and return the
         // request and response packets.
-        match Rc::try_unwrap(self.db) {
+        let context = self.db.replace(None).unwrap();
+        match Rc::try_unwrap(context) {
             Ok(db) => {
                 let (req, res) = db.commit();
 

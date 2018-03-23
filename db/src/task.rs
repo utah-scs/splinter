@@ -28,16 +28,16 @@ pub enum TaskState {
     INITIALIZED = 0x01,
 
     /// A task is in this state when it is currently running on the CPU.
-    RUNNING     = 0x02,
+    RUNNING = 0x02,
 
     /// A task is in this state when it has got a chance to run on the CPU at
     /// least once, but has yeilded to the scheduler, and is currently not
     /// executing on the CPU.
-    YIELDED     = 0x03,
+    YIELDED = 0x03,
 
     /// A task is in this state when it has finished executing completely, and
     /// it's results are ready.
-    COMPLETED   = 0x04,
+    COMPLETED = 0x04,
 }
 
 /// This enum represents the priority of a task in the system. A smaller value
@@ -50,7 +50,7 @@ pub enum TaskPriority {
     DISPATCH = 0x01,
 
     /// The priority of a task corresponding to an RPC request.
-    REQUEST  = 0x02,
+    REQUEST = 0x02,
 }
 
 /// This trait consists of methods that will allow a type to be run as a task
@@ -87,15 +87,17 @@ pub trait Task {
     /// The priority of the task.
     fn priority(&self) -> TaskPriority;
 
-    /// When called, this method should consume the task, and return any packets
-    /// or buffers that were passed in during creation. This method effectively
-    /// removes the task from the system, and might be called when a task has
-    /// completed or aborted.
+    /// When called, this method should return any packets or buffers that were passed in during
+    /// creation. This method shoulf be called when a task has completed or aborted.
     ///
     /// # Return
     ///
     /// A tuple whose first member consists of the request packet, and whose
     /// second member consists of a response packet, if available.
-    unsafe fn tear(self) -> Option<(Packet<UdpHeader, EmptyMetadata>,
-                                    Packet<UdpHeader, EmptyMetadata>)>;
+    unsafe fn tear(
+        &mut self,
+    ) -> Option<(
+        Packet<UdpHeader, EmptyMetadata>,
+        Packet<UdpHeader, EmptyMetadata>,
+    )>;
 }

@@ -229,14 +229,14 @@ where
         let request = if self.use_invoke {
                 let mut payload: Vec<u8> = Vec::new();
                 let table = [1, 0, 0, 0, 0, 0, 0, 0];
-                let key: [u8; 30] = [1; 30];
+                let key: [u8; 30] = [0; 30];
                 let name = "get".as_bytes();
                 payload.extend_from_slice(name);
                 payload.extend_from_slice(&table);
                 payload.extend_from_slice(&key);
                 self.create_invoke_request(1, name.len(), payload.len() - name.len(), payload.as_slice())
             } else {
-                self.create_get_request(1, 1, &[1; 30])
+                self.create_get_request(1, 1, &[0; 30])
             };
 
         // Send the request out the network.

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 University of Utah
+/* Copyright (c) 2018 University of Utah
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -19,14 +19,15 @@ use std::mem::size_of;
 use std::net::Ipv4Addr;
 use std::option::Option;
 
-use time::{ precise_time_ns };
+use time::precise_time_ns;
 
+use super::rpc::*;
 use super::common;
 use super::config;
-use super::master::Master;
-use super::rpc::parse_rpc_service;
-use super::service::Service;
 use super::wireformat;
+use super::master::Master;
+use super::task::TaskState;
+use super::service::Service;
 
 use super::e2d2::headers::*;
 use super::e2d2::interface::*;
@@ -110,9 +111,8 @@ where
         let udp_dst_port: u16 = common::CLIENT_UDP_PORT;
         // Currently assuming that all incoming requests are Get() operations
         // for 100 Byte values.
-        let udp_length: u16 = common::PACKET_UDP_LEN +
-                              size_of::<wireformat::GetResponse>() as u16 +
-                              100;
+        let udp_length: u16 =
+            common::PACKET_UDP_LEN + size_of::<wireformat::GetResponse>() as u16 + 100;
         let udp_checksum: u16 = common::PACKET_UDP_CHECKSUM;
 
         let mut udp_header: UdpHeader = UdpHeader::new();
@@ -122,20 +122,20 @@ where
         udp_header.set_checksum(udp_checksum);
 
         // Create a common ip header for response packets.
-        let ip_src_addr: u32 =
-            u32::from(Ipv4Addr::from_str(&config.ip_address)
-                    .expect("Failed to create server IP address."));
-        let ip_dst_addr: u32 =
-            u32::from(Ipv4Addr::from_str(common::CLIENT_IP_ADDRESS)
-                    .expect("Failed to create client IP address."));
+        let ip_src_addr: u32 = u32::from(
+            Ipv4Addr::from_str(&config.ip_address).expect("Failed to create server IP address."),
+        );
+        let ip_dst_addr: u32 = u32::from(
+            Ipv4Addr::from_str(common::CLIENT_IP_ADDRESS)
+                .expect("Failed to create client IP address."),
+        );
         let ip_ttl: u8 = common::PACKET_IP_TTL;
         let ip_version: u8 = common::PACKET_IP_VER;
         let ip_ihl: u8 = common::PACKET_IP_IHL;
         // Currently assuming that all incoming requests are Get() operations
         // for 100 Byte values.
-        let ip_length: u16 = common::PACKET_IP_LEN +
-                             size_of::<wireformat::GetResponse>() as u16 +
-                             100;
+        let ip_length: u16 =
+            common::PACKET_IP_LEN + size_of::<wireformat::GetResponse>() as u16 + 100;
 
         let mut ip_header: IpHeader = IpHeader::new();
         ip_header.set_src(ip_src_addr);
@@ -155,8 +155,16 @@ where
         mac_header.dst = mac_dst_addr;
         mac_header.set_etype(mac_etype);
 
+        // Create a test tenant with a table containing 10 million objects, and with a set of
+        // test extensions.
+        let master = Master::new();
+        info!("Populating test data table and extensions...");
+        master.fill_test(1, 1, 10 * 1000 * 1000);
+        master.load_test(1);
+        info!("Finished populating data and extensions");
+
         ServerDispatch {
-            master_service: Master::new(),
+            master_service: master,
             network_port: net_port.clone(),
             network_ip_addr: ip_src_addr,
             max_rx_packets: rx_batch_size,
@@ -178,9 +186,7 @@ where
     ///             anything received at the network port.
     ///             None, if no packets were received or there was an error
     ///             during the receive.
-    fn try_receive_packets(&self) ->
-        Option<Vec<Packet<NullHeader, EmptyMetadata>>>
-    {
+    fn try_receive_packets(&self) -> Option<Vec<Packet<NullHeader, EmptyMetadata>>> {
         // Allocate a vector of mutable MBuf pointers into which packets will
         // be received.
         let mut mbuf_vector = Vec::with_capacity(self.max_rx_packets as usize);
@@ -201,9 +207,9 @@ where
                     }
 
                     // Allocate a vector for the received packets.
-                    let mut recvd_packets =
-                    Vec::<Packet<NullHeader, EmptyMetadata>>::with_capacity(
-                        self.max_rx_packets as usize);
+                    let mut recvd_packets = Vec::<Packet<NullHeader, EmptyMetadata>>::with_capacity(
+                        self.max_rx_packets as usize,
+                    );
 
                     // Clear out any dangling pointers in mbuf_vector.
                     for _dangling in num_received..self.max_rx_packets as u32 {
@@ -215,8 +221,7 @@ where
                     // bumped up here. Hence, the call to
                     // packet_from_mbuf_no_increment().
                     for mbuf in mbuf_vector.iter_mut() {
-                        recvd_packets.push(packet_from_mbuf_no_increment(*mbuf,
-                                                                         0));
+                        recvd_packets.push(packet_from_mbuf_no_increment(*mbuf, 0));
                     }
 
                     return Some(recvd_packets);
@@ -236,8 +241,7 @@ where
     ///
     /// - `packets`: A vector of packets to be sent out the network, parsed
     ///              upto their UDP headers.
-    fn try_send_packets(&mut self,
-                        mut packets: Vec<Packet<UdpHeader, EmptyMetadata>>) {
+    fn try_send_packets(&mut self, mut packets: Vec<Packet<UdpHeader, EmptyMetadata>>) {
         // This unsafe block is required to extract the underlying Mbuf's from
         // the passed in batch of packets, and send them out the network port.
         unsafe {
@@ -253,8 +257,7 @@ where
             match self.network_port.send(&mut mbufs) {
                 Ok(sent) => {
                     if sent < num_packets as u32 {
-                        warn!("Was able to send only {} of {} packets.", sent,
-                              num_packets);
+                        warn!("Was able to send only {} of {} packets.", sent, num_packets);
                     }
 
                     self.responses_sent += mbufs.len() as u64;
@@ -272,9 +275,11 @@ where
         if self.responses_sent >= every {
             self.measurement_stop_ns = precise_time_ns();
 
-            info!("{:.0} K/packets/s",
-                  (self.responses_sent as f64 / 1e3) /
-                      ((self.measurement_stop_ns - self.measurement_start_ns) as f64 / 1e9));
+            info!(
+                "{:.0} K/packets/s",
+                (self.responses_sent as f64 / 1e3)
+                    / ((self.measurement_stop_ns - self.measurement_start_ns) as f64 / 1e9)
+            );
 
             self.measurement_start_ns = self.measurement_stop_ns;
             self.responses_sent = 0;
@@ -285,8 +290,7 @@ where
     ///
     /// - `packets`: A vector of packets wrapped in Netbrick's Packet<> type.
     #[inline]
-    fn free_packets<S: EndOffset>(&self,
-                                  mut packets: Vec<Packet<S, EmptyMetadata>>) {
+    fn free_packets<S: EndOffset>(&self, mut packets: Vec<Packet<S, EmptyMetadata>>) {
         while let Some(packet) = packets.pop() {
             packet.free_packet();
         }
@@ -309,22 +313,21 @@ where
     /// - `return`: A vector of valid packets with their MAC headers parsed.
     ///             The packets are of type Packet<MacHeader, EmptyMetadata>.
     #[allow(unused_assignments)]
-    fn parse_mac_headers(&self,
-                         mut packets: Vec<Packet<NullHeader, EmptyMetadata>>) ->
-        Vec<Packet<MacHeader, EmptyMetadata>>
-    {
+    fn parse_mac_headers(
+        &self,
+        mut packets: Vec<Packet<NullHeader, EmptyMetadata>>,
+    ) -> Vec<Packet<MacHeader, EmptyMetadata>> {
         // This vector will hold the set of *valid* parsed packets.
-        let mut parsed_packets = Vec::<Packet<MacHeader, EmptyMetadata>>::
-                                with_capacity(self.max_rx_packets as usize);
+        let mut parsed_packets =
+            Vec::<Packet<MacHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
         // This vector will hold the set of invalid parsed packets.
-        let mut ignore_packets = Vec::<Packet<MacHeader, EmptyMetadata>>::
-                                with_capacity(self.max_rx_packets as usize);
+        let mut ignore_packets =
+            Vec::<Packet<MacHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
 
         // Parse the MacHeader on each packet, and check if it is valid.
         while let Some(packet) = packets.pop() {
             let mut valid: bool = true;
-            let packet: Packet<MacHeader, EmptyMetadata> =
-                packet.parse_header::<MacHeader>();
+            let packet: Packet<MacHeader, EmptyMetadata> = packet.parse_header::<MacHeader>();
 
             // The following block borrows the MAC header from the parsed
             // packet, and checks if the ethertype on it matches what the
@@ -336,9 +339,13 @@ where
             }
 
             match valid {
-                true => { parsed_packets.push(packet); }
+                true => {
+                    parsed_packets.push(packet);
+                }
 
-                false => { ignore_packets.push(packet); }
+                false => {
+                    ignore_packets.push(packet);
+                }
             }
         }
 
@@ -365,22 +372,21 @@ where
     ///             wrapped up in Netbrick's Packet<MacHeader, EmptyMetadata>
     ///             type.
     #[allow(unused_assignments)]
-    fn parse_ip_headers(&self,
-                        mut packets: Vec<Packet<MacHeader, EmptyMetadata>>) ->
-        Vec<Packet<IpHeader, EmptyMetadata>>
-    {
+    fn parse_ip_headers(
+        &self,
+        mut packets: Vec<Packet<MacHeader, EmptyMetadata>>,
+    ) -> Vec<Packet<IpHeader, EmptyMetadata>> {
         // This vector will hold the set of *valid* parsed packets.
-        let mut parsed_packets = Vec::<Packet<IpHeader, EmptyMetadata>>::
-                                with_capacity(self.max_rx_packets as usize);
+        let mut parsed_packets =
+            Vec::<Packet<IpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
         // This vector will hold the set of invalid parsed packets.
-        let mut ignore_packets = Vec::<Packet<IpHeader, EmptyMetadata>>::
-                                with_capacity(self.max_rx_packets as usize);
+        let mut ignore_packets =
+            Vec::<Packet<IpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
 
         // Parse the IpHeader on each packet, and check if it is valid.
         while let Some(packet) = packets.pop() {
             let mut valid: bool = true;
-            let packet: Packet<IpHeader, EmptyMetadata> =
-                packet.parse_header::<IpHeader>();
+            let packet: Packet<IpHeader, EmptyMetadata> = packet.parse_header::<IpHeader>();
 
             // The following block borrows the Ip header from the parsed
             // packet, and checks if it is valid. A packet is considered
@@ -393,16 +399,19 @@ where
                 const MIN_LENGTH_IP: u16 = common::PACKET_IP_LEN + 2;
                 let ip_header: &IpHeader = packet.get_header();
 
-                valid = (ip_header.version() == 4) &&
-                        (ip_header.ttl() > 0) &&
-                        (ip_header.length() >= MIN_LENGTH_IP) &&
-                        (ip_header.dst() == self.network_ip_addr);
+                valid = (ip_header.version() == 4) && (ip_header.ttl() > 0)
+                    && (ip_header.length() >= MIN_LENGTH_IP)
+                    && (ip_header.dst() == self.network_ip_addr);
             }
 
             match valid {
-                true => { parsed_packets.push(packet); }
+                true => {
+                    parsed_packets.push(packet);
+                }
 
-                false => { ignore_packets.push(packet); }
+                false => {
+                    ignore_packets.push(packet);
+                }
             }
         }
 
@@ -426,22 +435,21 @@ where
     ///             packets are wrapped in Netbrick's
     ///             Packet<UdpHeader, EmptyMetadata> type.
     #[allow(unused_assignments)]
-    fn parse_udp_headers(&self,
-                         mut packets: Vec<Packet<IpHeader, EmptyMetadata>>) ->
-        Vec<Packet<UdpHeader, EmptyMetadata>>
-    {
+    fn parse_udp_headers(
+        &self,
+        mut packets: Vec<Packet<IpHeader, EmptyMetadata>>,
+    ) -> Vec<Packet<UdpHeader, EmptyMetadata>> {
         // This vector will hold the set of *valid* parsed packets.
-        let mut parsed_packets = Vec::<Packet<UdpHeader, EmptyMetadata>>::
-                                with_capacity(self.max_rx_packets as usize);
+        let mut parsed_packets =
+            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
         // This vector will hold the set of invalid parsed packets.
-        let mut ignore_packets = Vec::<Packet<UdpHeader, EmptyMetadata>>::
-                                with_capacity(self.max_rx_packets as usize);
+        let mut ignore_packets =
+            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
 
         // Parse the UdpHeader on each packet, and check if it is valid.
         while let Some(packet) = packets.pop() {
             let mut valid: bool = true;
-            let packet: Packet<UdpHeader, EmptyMetadata> =
-                packet.parse_header::<UdpHeader>();
+            let packet: Packet<UdpHeader, EmptyMetadata> = packet.parse_header::<UdpHeader>();
 
             // This block borrows the UDP header from the parsed packet, and
             // checks if it is valid. A packet is considered valid if:
@@ -451,14 +459,18 @@ where
                 const MIN_LENGTH_UDP: u16 = common::PACKET_UDP_LEN + 2;
                 let udp_header: &UdpHeader = packet.get_header();
 
-                valid = (udp_header.length() >= MIN_LENGTH_UDP) &&
-                        (udp_header.dst_port() == self.resp_udp_header.src_port());
+                valid = (udp_header.length() >= MIN_LENGTH_UDP)
+                    && (udp_header.dst_port() == self.resp_udp_header.src_port());
             }
 
             match valid {
-                true => { parsed_packets.push(packet); }
+                true => {
+                    parsed_packets.push(packet);
+                }
 
-                false => { ignore_packets.push(packet); }
+                false => {
+                    ignore_packets.push(packet);
+                }
             }
         }
 
@@ -478,49 +490,48 @@ where
     ///
     /// - `return`: A vector of packets containing the responses to the requests
     ///             that were passed in to this method.
-    fn dispatch_requests(&self,
-                         mut requests: Vec<Packet<UdpHeader, EmptyMetadata>>) ->
-        Vec<Packet<UdpHeader, EmptyMetadata>>
-    {
+    fn dispatch_requests(
+        &self,
+        mut requests: Vec<Packet<UdpHeader, EmptyMetadata>>,
+    ) -> Vec<Packet<UdpHeader, EmptyMetadata>> {
         // This vector will hold the set of packets that were successfully
         // dispatched to a service.
         let mut dispatched_requests =
-            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(
-                self.max_rx_packets as usize);
+            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
         // This vector will hold the set of responses that need to be sent
         // back to the client.
         let mut response_packets =
-            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(
-                self.max_rx_packets as usize);
+            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
 
         while let Some(mut request) = requests.pop() {
-            // Allocate a packet for the response upfront.
-            let response: Packet<NullHeader, EmptyMetadata> =
-                new_packet()
-                    .expect("ERROR: Failed to allocate packet for response!");
+            // Allocate a packet for the response upfront, and add in MAC, IP, and UDP headers.
+            let mut response = new_packet()
+                .expect("ERROR: Failed to allocate packet for response!")
+                .push_header(&self.resp_mac_header)
+                .expect("ERROR: Failed to add response MAC header")
+                .push_header(&self.resp_ip_header)
+                .expect("ERROR: Failed to add response IP header")
+                .push_header(&self.resp_udp_header)
+                .expect("ERROR: Failed to add response UDP header");
 
-            // Populate MAC, IP, and UDP headers on the response packet.
-            let response: Packet<MacHeader, EmptyMetadata> =
-                response.push_header(&self.resp_mac_header)
-                            .expect("ERROR: Failed to add response MAC header");
-            let response: Packet<IpHeader, EmptyMetadata> =
-                response.push_header(&self.resp_ip_header)
-                            .expect("ERROR: Failed to add response IP header");
-            let mut response: Packet<UdpHeader, EmptyMetadata> =
-                response.push_header(&self.resp_udp_header)
-                            .expect("ERROR: Failed to add response UDP header");
+            // Check if the RPC request is for master service. If it is, call into Master, and
+            // run the returned task to completion.
+            if parse_rpc_service(&request) == wireformat::Service::MasterService {
+                let opcode = parse_rpc_opcode(&request);
+                match self.master_service.dispatch(opcode, request, response) {
+                    Ok(mut task) => {
+                        while task.run().0 != TaskState::COMPLETED {}
 
-            // Handoff the request to the appropriate service.
-            match parse_rpc_service(&request) {
-                wireformat::Service::MasterService => {
-                    let result =
-                        self.master_service.dispatch(request, response);
-                    request = result.0;
-                    response = result.1;
-                }
+                        let pkts =
+                            unsafe { task.tear().expect("Failed to retrieve packets from task.") };
+                        request = pkts.0;
+                        response = pkts.1;
+                    }
 
-                wireformat::Service::InvalidService => {
-                    error!("Server received packet for invalid service!");
+                    Err((req, res)) => {
+                        request = req;
+                        response = res;
+                    }
                 }
             }
 

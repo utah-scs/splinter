@@ -13,6 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::cell::Cell;
 use std::ops::{Generator, GeneratorState};
 
 use super::task::TaskState::*;
@@ -28,8 +29,15 @@ use time::{Duration, PreciseTime};
 // value is an optional tuple consisting of a request and response packet parsed/deparsed upto
 // their UDP headers. This is to allow for operations that might not require a response packet
 // such as garbage collection, logging etc. to be run as generators too.
-type NativeGenerator = Box<Generator<Yield=u64, Return=Option<(Packet<UdpHeader, EmptyMetadata>,
-                                                               Packet<UdpHeader, EmptyMetadata>)>>>;
+type NativeGenerator = Box<
+    Generator<
+        Yield = u64,
+        Return = Option<(
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        )>,
+    >,
+>;
 
 /// A task corresponding to a native operation (like get() and put() requests).
 pub struct Native {
@@ -47,8 +55,12 @@ pub struct Native {
     gen: NativeGenerator,
 
     // The result (if any) returned by the generator once it completes execution.
-    res: Option<(Packet<UdpHeader, EmptyMetadata>,
-                 Packet<UdpHeader, EmptyMetadata>)>,
+    res: Cell<
+        Option<(
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        )>,
+    >,
 }
 
 // Implementation of methods on Native.
@@ -71,7 +83,7 @@ impl Native {
             time: Duration::microseconds(0),
             priority: prio,
             gen: generator,
-            res: None,
+            res: Cell::new(None),
         }
     }
 }
@@ -92,7 +104,7 @@ impl Task for Native {
                 }
 
                 GeneratorState::Complete(pkts) => {
-                    self.res = pkts;
+                    self.res.set(pkts);
                     self.state = COMPLETED;
                 }
             }
@@ -123,9 +135,12 @@ impl Task for Native {
     }
 
     /// Refer to the Task trait for documentation.
-    unsafe fn tear(self) -> Option<(Packet<UdpHeader, EmptyMetadata>,
-                                    Packet<UdpHeader, EmptyMetadata>)>
-    {
-        self.res
+    unsafe fn tear(
+        &mut self,
+    ) -> Option<(
+        Packet<UdpHeader, EmptyMetadata>,
+        Packet<UdpHeader, EmptyMetadata>,
+    )> {
+        self.res.replace(None)
     }
 }

@@ -28,11 +28,12 @@ use e2d2::headers::{EndOffset, UdpHeader};
 /// The first field on the header of every rpc request identifies the service
 /// that it should be dispatched to.
 #[repr(u8)]
+#[derive(PartialEq)]
 pub enum Service {
     /// The most common of all services provided by a sandstorm server. This
     /// service implements the primary interface to the database consisting of
     /// operations such as get() and put().
-    MasterService  = 0x01,
+    MasterService = 0x01,
 
     /// Any value beyond this represents an invalid service.
     InvalidService = 0x02,
@@ -49,16 +50,16 @@ pub enum Service {
 #[repr(u8)]
 pub enum OpCode {
     /// A simple operation that looks up the hash table for a given key.
-    SandstormGetRpc    = 0x01,
+    SandstormGetRpc = 0x01,
 
     /// A simple operation that adds a key-value pair to the database.
-    SandstormPutRpc    = 0x02,
+    SandstormPutRpc = 0x02,
 
     /// This operation invokes a procedure inside the database at runtime.
     SandstormInvokeRpc = 0x03,
 
     /// Any value beyond this represents an invalid rpc.
-    InvalidOperation   = 0x04,
+    InvalidOperation = 0x04,
 }
 
 /// This enum represents the status of a completed RPC. A status of 'StatusOk'
@@ -68,7 +69,7 @@ pub enum OpCode {
 pub enum RpcStatus {
     /// The RPC completed successfully. The response can be safely unpacked
     /// at the client.
-    StatusOk                 = 0x01,
+    StatusOk = 0x01,
 
     /// The RPC failed at the server because the tenant sending it could not
     /// be identified.
@@ -76,7 +77,7 @@ pub enum RpcStatus {
 
     /// The RPC failed at the server because the table being looked up could
     /// not be found at the server.
-    StatusTableDoesNotExist  = 0x03,
+    StatusTableDoesNotExist = 0x03,
 
     /// The RPC failed at the server because the object being looked up could
     /// not be found at the server.
@@ -85,15 +86,18 @@ pub enum RpcStatus {
     /// The RPC failed at the server because the request was malformed. For
     /// example, the size of the payload on a get() request was lesser than
     /// the supplied key length.
-    StatusMalformedRequest   = 0x05,
+    StatusMalformedRequest = 0x05,
 
     /// The RPC failed at the server because of an internal error (ex:
     /// insufficent memory etc).
-    StatusInternalError      = 0x06,
+    StatusInternalError = 0x06,
+
+    /// The RPC failed at the server because the extension did not exist.
+    StatusInvalidExtension = 0x07,
 
     /// The RPC failed at the server because it requested for an
     /// invalid/unsupported operation.
-    StatusInvalidOperation   = 0x07,
+    StatusInvalidOperation = 0x08,
 }
 
 /// This type represents the request header on a typical remote procedure call
@@ -134,8 +138,7 @@ impl RpcRequestHeader {
     /// \return
     ///     A header identifying the RPC. This header is of type
     ///     'RpcRequestHeader'.
-    pub fn new(rpc_service: Service, rpc_opcode: OpCode,
-               rpc_tenant: u32) -> RpcRequestHeader {
+    pub fn new(rpc_service: Service, rpc_opcode: OpCode, rpc_tenant: u32) -> RpcRequestHeader {
         RpcRequestHeader {
             service: rpc_service,
             opcode: rpc_opcode,
@@ -200,12 +203,13 @@ impl GetRequest {
     /// \return
     ///     An RPC header for the get() request. The header is of type
     ///     'GetRequest'.
-    pub fn new(req_tenant: u32, req_table_id: u64,
-               req_key_length: u16) -> GetRequest {
+    pub fn new(req_tenant: u32, req_table_id: u64, req_key_length: u16) -> GetRequest {
         GetRequest {
-            common_header: RpcRequestHeader::new(Service::MasterService,
-                                                 OpCode::SandstormGetRpc,
-                                                 req_tenant),
+            common_header: RpcRequestHeader::new(
+                Service::MasterService,
+                OpCode::SandstormGetRpc,
+                req_tenant,
+            ),
             table_id: req_table_id,
             key_length: req_key_length,
         }
@@ -346,12 +350,9 @@ impl PutRequest {
     /// # Return
     ///
     /// An RPC header that can be appended to a put() request.
-    pub fn new(req_tenant: u32, req_table: u64, req_key_len: u16)
-               -> PutRequest
-    {
-        let common = RpcRequestHeader::new(Service::MasterService,
-                                           OpCode::SandstormPutRpc,
-                                           req_tenant);
+    pub fn new(req_tenant: u32, req_table: u64, req_key_len: u16) -> PutRequest {
+        let common =
+            RpcRequestHeader::new(Service::MasterService, OpCode::SandstormPutRpc, req_tenant);
 
         PutRequest {
             common_header: common,
@@ -457,12 +458,13 @@ impl InvokeRequest {
     /// # Return
     ///
     /// An RPC request header of type `InvokeRequest`.
-    pub fn new(tenant: u32, name_length: u32, args_length: u32)
-               -> InvokeRequest {
+    pub fn new(tenant: u32, name_length: u32, args_length: u32) -> InvokeRequest {
         InvokeRequest {
-            common_header: RpcRequestHeader::new(Service::MasterService,
-                                                 OpCode::SandstormInvokeRpc,
-                                                 tenant),
+            common_header: RpcRequestHeader::new(
+                Service::MasterService,
+                OpCode::SandstormInvokeRpc,
+                tenant,
+            ),
             name_length: name_length,
             args_length: args_length,
         }
