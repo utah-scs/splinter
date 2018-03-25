@@ -13,38 +13,43 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::sync::Arc;
 use std::fmt::Display;
 use std::str::FromStr;
 use std::mem::size_of;
 use std::net::Ipv4Addr;
 use std::option::Option;
 
-use time::precise_time_ns;
+use time::{precise_time_ns, Duration, PreciseTime};
 
 use super::rpc::*;
 use super::common;
 use super::config;
 use super::wireformat;
 use super::master::Master;
-use super::task::TaskState;
 use super::service::Service;
+use super::sched::RoundRobin;
+use super::task::{Task, TaskPriority, TaskState};
 
 use super::e2d2::headers::*;
 use super::e2d2::interface::*;
-use super::e2d2::scheduler::Executable;
 use super::e2d2::common::EmptyMetadata;
 
 /// This type represents a requests-dispatcher in Sandstorm. When added to a
 /// Netbricks scheduler, this dispatcher polls a network port for RPCs,
 /// dispatches them to a service, and sends out responses on the same network
 /// port.
-pub struct ServerDispatch<T>
+pub struct Dispatch<T>
 where
     T: PacketRx + PacketTx + Display + Clone + 'static,
 {
     /// A ref counted pointer to a master service. The master service
     /// implements the primary interface to the database.
-    master_service: Master,
+    master_service: Arc<Master>,
+
+    /// A ref counted pointer to the scheduler on which to enqueue tasks,
+    /// and from which to receive response packets to be sent back to clients.
+    scheduler: Arc<RoundRobin>,
 
     /// The network port/interface on which this dispatcher receives and
     /// transmits RPC requests and responses on.
@@ -85,24 +90,43 @@ where
 
     /// An indicator of the stop of the previous measurement interval.
     measurement_stop_ns: u64,
+
+    /// The current execution state of the Dispatch task. Can be INITIALIZED, YIELDED, or RUNNING.
+    state: TaskState,
+
+    /// The total time for which the Dispatch task has executed on the CPU.
+    time: Duration,
+
+    /// The priority of the Dispatch task. Required by the scheduler to determine when to run the
+    /// task again.
+    priority: TaskPriority,
 }
 
-impl<T> ServerDispatch<T>
+impl<T> Dispatch<T>
 where
     T: PacketRx + PacketTx + Display + Clone + 'static,
 {
     /// This function creates and returns a requests-dispatcher which can be
-    /// added to a Netbricks scheduler. This dispatcher will receive IPv4
-    /// Ethernet frames from a network port with a destination IP address of
-    /// 192.168.0.2 and UDP port of 0. Responses will be sent out to IP address
-    /// 192.168.0.1 and UDP port 0.
+    /// added to a Netbricks scheduler.
     ///
-    /// - `net_port`: A network port/interface on which packets will be
+    /// # Arguments
+    ///
+    /// * `config`:   A configuration consisting of the IP address, UDP port etc.
+    /// * `net_port`: A network port/interface on which packets will be
     ///               received and transmitted.
+    /// * `master`:   A reference to a Master which will be used to construct tasks from received
+    ///               packets.
+    /// * `sched`:    A reference to a scheduler on which tasks will be enqueued.
     ///
-    /// - `return`: A dispatcher of type ServerDispatch capable of receiving
-    ///             RPCs, and responding to them.
-    pub fn new(config: &config::ServerConfig, net_port: T) -> ServerDispatch<T> {
+    /// # Return
+    ///
+    /// A dispatcher of type ServerDispatch capable of receiving RPCs, and responding to them.
+    pub fn new(
+        config: &config::ServerConfig,
+        net_port: T,
+        master: Arc<Master>,
+        sched: Arc<RoundRobin>,
+    ) -> Dispatch<T> {
         let rx_batch_size: u8 = 32;
         let tx_batch_size: u8 = 32;
 
@@ -155,16 +179,9 @@ where
         mac_header.dst = mac_dst_addr;
         mac_header.set_etype(mac_etype);
 
-        // Create a test tenant with a table containing 10 million objects, and with a set of
-        // test extensions.
-        let master = Master::new();
-        info!("Populating test data table and extensions...");
-        master.fill_test(1, 1, 10 * 1000 * 1000);
-        master.load_test(1);
-        info!("Finished populating data and extensions");
-
-        ServerDispatch {
+        Dispatch {
             master_service: master,
+            scheduler: sched,
             network_port: net_port.clone(),
             network_ip_addr: ip_src_addr,
             max_rx_packets: rx_batch_size,
@@ -175,17 +192,19 @@ where
             responses_sent: 0,
             measurement_start_ns: precise_time_ns(),
             measurement_stop_ns: 0,
+            state: TaskState::INITIALIZED,
+            time: Duration::microseconds(0),
+            priority: TaskPriority::DISPATCH,
         }
     }
 
     /// This function attempts to receive a batch of packets from the
     /// dispatcher's network port.
     ///
-    /// - `return`: A vector of packets wrapped up in Netbrick's
-    ///             Packet<NullHeader, EmptyMetadata> type if there was
-    ///             anything received at the network port.
-    ///             None, if no packets were received or there was an error
-    ///             during the receive.
+    /// # Return
+    ///
+    /// A vector of packets wrapped up in Netbrick's Packet<NullHeader, EmptyMetadata> type if
+    /// there was anything received at the network port.
     fn try_receive_packets(&self) -> Option<Vec<Packet<NullHeader, EmptyMetadata>>> {
         // Allocate a vector of mutable MBuf pointers into which packets will
         // be received.
@@ -239,8 +258,9 @@ where
     /// This method takes as input a vector of packets and tries to send them
     /// out a network interface.
     ///
-    /// - `packets`: A vector of packets to be sent out the network, parsed
-    ///              upto their UDP headers.
+    /// # Arguments
+    ///
+    /// * `packets`: A vector of packets to be sent out the network, parsed upto their UDP headers.
     fn try_send_packets(&mut self, mut packets: Vec<Packet<UdpHeader, EmptyMetadata>>) {
         // This unsafe block is required to extract the underlying Mbuf's from
         // the passed in batch of packets, and send them out the network port.
@@ -288,7 +308,9 @@ where
 
     /// This function frees a set of packets that were received from DPDK.
     ///
-    /// - `packets`: A vector of packets wrapped in Netbrick's Packet<> type.
+    /// # Arguments
+    ///
+    /// * `packets`: A vector of packets wrapped in Netbrick's Packet<> type.
     #[inline]
     fn free_packets<S: EndOffset>(&self, mut packets: Vec<Packet<S, EmptyMetadata>>) {
         while let Some(packet) = packets.pop() {
@@ -306,35 +328,36 @@ where
     /// Any packets with an unexpected ethertype on the parsed header are
     /// dropped by this method.
     ///
-    /// - `packets`: A vector of packets that were received from DPDK and
+    /// # Arguments
+    ///
+    /// * `packets`: A vector of packets that were received from DPDK and
     ///              wrapped up in Netbrick's Packet<NullHeader, EmptyMetadata>
     ///              type.
     ///
-    /// - `return`: A vector of valid packets with their MAC headers parsed.
-    ///             The packets are of type Packet<MacHeader, EmptyMetadata>.
+    /// # Return
+    ///
+    /// A vector of valid packets with their MAC headers parsed. The packets are of type
+    /// `Packet<MacHeader, EmptyMetadata>`.
     #[allow(unused_assignments)]
     fn parse_mac_headers(
         &self,
         mut packets: Vec<Packet<NullHeader, EmptyMetadata>>,
     ) -> Vec<Packet<MacHeader, EmptyMetadata>> {
         // This vector will hold the set of *valid* parsed packets.
-        let mut parsed_packets =
-            Vec::<Packet<MacHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
+        let mut parsed_packets = Vec::with_capacity(self.max_rx_packets as usize);
         // This vector will hold the set of invalid parsed packets.
-        let mut ignore_packets =
-            Vec::<Packet<MacHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
+        let mut ignore_packets = Vec::with_capacity(self.max_rx_packets as usize);
 
         // Parse the MacHeader on each packet, and check if it is valid.
         while let Some(packet) = packets.pop() {
             let mut valid: bool = true;
-            let packet: Packet<MacHeader, EmptyMetadata> = packet.parse_header::<MacHeader>();
+            let packet = packet.parse_header::<MacHeader>();
 
             // The following block borrows the MAC header from the parsed
             // packet, and checks if the ethertype on it matches what the
             // server expects.
             {
                 let mac_header: &MacHeader = packet.get_header();
-
                 valid = common::PACKET_ETYPE.eq(&mac_header.etype());
             }
 
@@ -365,28 +388,29 @@ where
     ///     - It's destination IP address does not match that of the server,
     ///     - It's IP header and payload are not long enough.
     ///
-    /// - `packets`: A vector of packets with their MAC headers parsed off
+    /// # Arguments
+    ///
+    /// * `packets`: A vector of packets with their MAC headers parsed off
     ///              (type Packet<MacHeader, EmptyMetadata>).
     ///
-    /// - `return`: A vector of packets with their IP headers parsed, and
-    ///             wrapped up in Netbrick's Packet<MacHeader, EmptyMetadata>
-    ///             type.
+    /// # Return
+    ///
+    /// A vector of packets with their IP headers parsed, and wrapped up in Netbrick's
+    /// `Packet<MacHeader, EmptyMetadata>` type.
     #[allow(unused_assignments)]
     fn parse_ip_headers(
         &self,
         mut packets: Vec<Packet<MacHeader, EmptyMetadata>>,
     ) -> Vec<Packet<IpHeader, EmptyMetadata>> {
         // This vector will hold the set of *valid* parsed packets.
-        let mut parsed_packets =
-            Vec::<Packet<IpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
+        let mut parsed_packets = Vec::with_capacity(self.max_rx_packets as usize);
         // This vector will hold the set of invalid parsed packets.
-        let mut ignore_packets =
-            Vec::<Packet<IpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
+        let mut ignore_packets = Vec::with_capacity(self.max_rx_packets as usize);
 
         // Parse the IpHeader on each packet, and check if it is valid.
         while let Some(packet) = packets.pop() {
             let mut valid: bool = true;
-            let packet: Packet<IpHeader, EmptyMetadata> = packet.parse_header::<IpHeader>();
+            let packet = packet.parse_header::<IpHeader>();
 
             // The following block borrows the Ip header from the parsed
             // packet, and checks if it is valid. A packet is considered
@@ -398,7 +422,6 @@ where
             {
                 const MIN_LENGTH_IP: u16 = common::PACKET_IP_LEN + 2;
                 let ip_header: &IpHeader = packet.get_header();
-
                 valid = (ip_header.version() == 4) && (ip_header.ttl() > 0)
                     && (ip_header.length() >= MIN_LENGTH_IP)
                     && (ip_header.dst() == self.network_ip_addr);
@@ -429,27 +452,28 @@ where
     ///     - It's destination UDP port does not match that of the server,
     ///     - It's UDP header plus payload is not long enough.
     ///
-    /// - `packets`: A vector of packets with their IP headers parsed.
+    /// # Arguments
     ///
-    /// - `return`: A vector of packets with their UDP headers parsed. These
-    ///             packets are wrapped in Netbrick's
-    ///             Packet<UdpHeader, EmptyMetadata> type.
+    /// * `packets`: A vector of packets with their IP headers parsed.
+    ///
+    /// # Return
+    ///
+    /// A vector of packets with their UDP headers parsed. These packets are wrapped in Netbrick's
+    /// `Packet<UdpHeader, EmptyMetadata>` type.
     #[allow(unused_assignments)]
     fn parse_udp_headers(
         &self,
         mut packets: Vec<Packet<IpHeader, EmptyMetadata>>,
     ) -> Vec<Packet<UdpHeader, EmptyMetadata>> {
         // This vector will hold the set of *valid* parsed packets.
-        let mut parsed_packets =
-            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
+        let mut parsed_packets = Vec::with_capacity(self.max_rx_packets as usize);
         // This vector will hold the set of invalid parsed packets.
-        let mut ignore_packets =
-            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
+        let mut ignore_packets = Vec::with_capacity(self.max_rx_packets as usize);
 
         // Parse the UdpHeader on each packet, and check if it is valid.
         while let Some(packet) = packets.pop() {
             let mut valid: bool = true;
-            let packet: Packet<UdpHeader, EmptyMetadata> = packet.parse_header::<UdpHeader>();
+            let packet = packet.parse_header::<UdpHeader>();
 
             // This block borrows the UDP header from the parsed packet, and
             // checks if it is valid. A packet is considered valid if:
@@ -458,7 +482,6 @@ where
             {
                 const MIN_LENGTH_UDP: u16 = common::PACKET_UDP_LEN + 2;
                 let udp_header: &UdpHeader = packet.get_header();
-
                 valid = (udp_header.length() >= MIN_LENGTH_UDP)
                     && (udp_header.dst_port() == self.resp_udp_header.src_port());
             }
@@ -484,26 +507,17 @@ where
     /// packet is pre-allocated by this method and handed in along with the
     /// request. Once the service returns, this method frees the request packet.
     ///
-    /// - `requests`: A vector of packets parsed upto and including their UDP
+    /// # Arguments
+    ///
+    /// * `requests`: A vector of packets parsed upto and including their UDP
     ///               headers that will be dispatched to the appropriate
     ///               service.
-    ///
-    /// - `return`: A vector of packets containing the responses to the requests
-    ///             that were passed in to this method.
-    fn dispatch_requests(
-        &self,
-        mut requests: Vec<Packet<UdpHeader, EmptyMetadata>>,
-    ) -> Vec<Packet<UdpHeader, EmptyMetadata>> {
-        // This vector will hold the set of packets that were successfully
-        // dispatched to a service.
-        let mut dispatched_requests =
-            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
-        // This vector will hold the set of responses that need to be sent
-        // back to the client.
-        let mut response_packets =
-            Vec::<Packet<UdpHeader, EmptyMetadata>>::with_capacity(self.max_rx_packets as usize);
+    fn dispatch_requests(&self, mut requests: Vec<Packet<UdpHeader, EmptyMetadata>>) {
+        // This vector will hold the set of packets that were for either an invalid service or
+        // operation.
+        let mut ignore_packets = Vec::with_capacity(self.max_rx_packets as usize);
 
-        while let Some(mut request) = requests.pop() {
+        while let Some(request) = requests.pop() {
             // Allocate a packet for the response upfront, and add in MAC, IP, and UDP headers.
             let mut response = new_packet()
                 .expect("ERROR: Failed to allocate packet for response!")
@@ -514,35 +528,31 @@ where
                 .push_header(&self.resp_udp_header)
                 .expect("ERROR: Failed to add response UDP header");
 
-            // Check if the RPC request is for master service. If it is, call into Master, and
-            // run the returned task to completion.
             if parse_rpc_service(&request) == wireformat::Service::MasterService {
+                // The request is for Master, get it's opcode, and call into Master.
                 let opcode = parse_rpc_opcode(&request);
                 match self.master_service.dispatch(opcode, request, response) {
-                    Ok(mut task) => {
-                        while task.run().0 != TaskState::COMPLETED {}
-
-                        let pkts =
-                            unsafe { task.tear().expect("Failed to retrieve packets from task.") };
-                        request = pkts.0;
-                        response = pkts.1;
+                    Ok(task) => {
+                        self.scheduler.enqueue(task);
                     }
 
                     Err((req, res)) => {
-                        request = req;
-                        response = res;
+                        // Master returned an error. The allocated request and response packets
+                        // need to be freed up.
+                        ignore_packets.push(req);
+                        ignore_packets.push(res);
                     }
                 }
+            } else {
+                // The request is not for Master. The allocated request and response packets need
+                // to be freed up.
+                ignore_packets.push(request);
+                ignore_packets.push(response);
             }
-
-            response_packets.push(response);
-            dispatched_requests.push(request);
         }
 
-        // Free the set of dispatched packets.
-        self.free_packets(dispatched_requests);
-
-        return response_packets;
+        // Free the set of ignored packets.
+        self.free_packets(ignore_packets);
     }
 
     /// This method polls the dispatchers network port for any received packets,
@@ -550,44 +560,71 @@ where
     /// the network port.
     #[inline]
     fn poll(&mut self) {
-        match self.try_receive_packets() {
-            Some(packets) => {
-                // Perform basic network processing on the received packets.
-                let mut packets = self.parse_mac_headers(packets);
-                let mut packets = self.parse_ip_headers(packets);
-                let mut packets = self.parse_udp_headers(packets);
+        // First, send any pending response packets out.
+        let responses = self.scheduler.responses();
+        if responses.len() > 0 {
+            self.try_send_packets(responses);
+        }
 
-                // Dispatch these packets to the appropriate service.
-                let mut response_packets = self.dispatch_requests(packets);
+        // Next, try to receive packets from the network.
+        if let Some(packets) = self.try_receive_packets() {
+            // Perform basic network processing on the received packets.
+            let mut packets = self.parse_mac_headers(packets);
+            let mut packets = self.parse_ip_headers(packets);
+            let mut packets = self.parse_udp_headers(packets);
 
-                // Send response packets out.
-                self.try_send_packets(response_packets);
-
-                return;
-            }
-
-            None => {
-                return;
-            }
+            // Dispatch these packets to the appropriate service.
+            self.dispatch_requests(packets);
         }
     }
 }
 
-/// Implementation of the Executable trait which will allow the dispatcher to
-/// be scheduled by Netbricks.
-impl<T> Executable for ServerDispatch<T>
+// Implementation of the Task trait for Dispatch. This will allow Dispatch to be scheduled by the
+// database.
+impl<T> Task for Dispatch<T>
 where
     T: PacketRx + PacketTx + Display + Clone + 'static,
 {
-    /// This method is called by Netbricks, and causes the dispatcher to
-    /// receive one batch of packets from the network interface, and process
-    /// them.
-    fn execute(&mut self) {
+    /// Refer to the `Task` trait for Documentation.
+    fn run(&mut self) -> (TaskState, Duration) {
+        let start = PreciseTime::now();
+
+        // Run the dispatch task, polling for received packets and sending out pending responses.
+        self.state = TaskState::RUNNING;
         self.poll();
+        self.state = TaskState::YIELDED;
+
+        // Update the time the task spent executing and return.
+        let exec = start.to(PreciseTime::now());
+
+        self.time = exec + self.time;
+
+        return (self.state.clone(), exec);
     }
 
-    /// This method returns an empty vector.
-    fn dependencies(&mut self) -> Vec<usize> {
-        vec![]
+    /// Refer to the `Task` trait for Documentation.
+    fn state(&self) -> TaskState {
+        self.state.clone()
+    }
+
+    /// Refer to the `Task` trait for Documentation.
+    fn time(&self) -> Duration {
+        self.time.clone()
+    }
+
+    /// Refer to the `Task` trait for Documentation.
+    fn priority(&self) -> TaskPriority {
+        self.priority.clone()
+    }
+
+    /// Refer to the `Task` trait for Documentation.
+    unsafe fn tear(
+        &mut self,
+    ) -> Option<(
+        Packet<UdpHeader, EmptyMetadata>,
+        Packet<UdpHeader, EmptyMetadata>,
+    )> {
+        // The Dispatch task does not return any packets.
+        None
     }
 }

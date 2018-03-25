@@ -24,11 +24,54 @@ use db::log::*;
 
 use db::e2d2::scheduler::*;
 use db::e2d2::interface::*;
+use db::e2d2::scheduler::Executable;
 use db::e2d2::scheduler::NetBricksContext as NetbricksContext;
 use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
 
 use db::config;
-use db::dispatch::ServerDispatch;
+use db::master::Master;
+use db::sched::RoundRobin;
+use db::dispatch::Dispatch;
+
+/// A simple wrapper around the scheduler, allowing it to be added to a Netbricks pipeline.
+struct Server {
+    scheduler: Arc<RoundRobin>,
+}
+
+// Implementation of methods on Server.
+impl Server {
+    /// Creates a Server.
+    ///
+    /// # Arguments
+    ///
+    /// * `sched`: A scheduler of tasks in the database. This scheduler must already have a
+    ///            `Dispatch` task enqueued on it.
+    ///
+    /// # Return
+    ///
+    /// A Server that can be added to a Netbricks pipeline.
+    pub fn new(sched: Arc<RoundRobin>) -> Server {
+        Server {
+            scheduler: sched,
+        }
+    }
+}
+
+// Implementation of the executable trait, allowing Server to be passed into Netbricks.
+impl Executable for Server {
+    /// This function is called internally by Netbricks to "execute" the server.
+    fn execute(&mut self) {
+        // Never return back to Netbricks.
+        loop {
+            self.scheduler.poll();
+        }
+    }
+
+    /// No clue about what this guy is meant to do.
+    fn dependencies(&mut self) -> Vec<usize> {
+        vec![]
+    }
+}
 
 /// This function sets up a Sandstorm server's dispatch thread on top
 /// of Netbricks.
@@ -42,10 +85,21 @@ where
         std::process::exit(1);
     }
 
-    let server: ServerDispatch<T> = ServerDispatch::new(config, ports[0].clone());
+    // Create a test tenant with a table containing 10 million objects, and with a set of
+    // test extensions.
+    let master = Arc::new(Master::new());
+    info!("Populating test data table and extensions...");
+    master.fill_test(1, 1, 10 * 1000 * 1000);
+    master.load_test(1);
+    info!("Finished populating data and extensions");
+
+    // Create a scheduler and a dispatcher for the server.
+    let sched = Arc::new(RoundRobin::new());
+    let dispatch = Dispatch::new(config, ports[0].clone(), master, Arc::clone(&sched));
+    sched.enqueue(Box::new(dispatch));
 
     // Add the server to a netbricks pipeline.
-    match scheduler.add_task(server) {
+    match scheduler.add_task(Server::new(sched)) {
         Ok(_) => {
             info!("Successfully added server to a Netbricks pipeline.");
         }
