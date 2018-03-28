@@ -17,12 +17,9 @@ extern crate rand;
 extern crate zipf;
 
 use std::{mem, slice};
-use std::time::{Duration, Instant};
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use self::rand::{Rng, SeedableRng, XorShiftRng};
-use self::rand::distributions::Sample;
 use self::zipf::ZipfDistribution;
+use ycsb::rand::distributions::Sample;
 
 // YCSB A, B, and C benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
@@ -33,13 +30,12 @@ use self::zipf::ZipfDistribution;
 // function pointers to get/put on `new()` and just calls those as it runs.
 //
 // The tests below give an example of how to use it and how to aggregate the results.
-struct Ycsb {
-    key_len: usize,
-    value_len: usize,
-    n_keys: usize,
+pub struct Ycsb {
     put_pct: usize,
-    skew: f64,
-    done: AtomicBool,
+    rng: Box<Rng>,
+    key_rng: Box<ZipfDistribution>,
+    key_buf: Vec<u8>,
+    value_buf: Vec<u8>,
 }
 
 impl Ycsb {
@@ -61,13 +57,19 @@ impl Ycsb {
         put_pct: usize,
         skew: f64,
     ) -> Ycsb {
+        let seed: [u32; 4] = rand::random::<[u32; 4]>();
+
+        let mut key_buf: Vec<u8> = Vec::with_capacity(key_len);
+        key_buf.resize(key_len, 0);
+        let mut value_buf: Vec<u8> = Vec::with_capacity(value_len);
+        value_buf.resize(value_len, 0);
+
         Ycsb {
-            key_len: key_len,
-            value_len: value_len,
-            n_keys: n_keys,
             put_pct: put_pct,
-            skew: skew,
-            done: AtomicBool::new(false),
+            rng: Box::new(XorShiftRng::from_seed(seed)),
+            key_rng: Box::new(ZipfDistribution::new(n_keys, skew).expect("Couldn't create key RNG.")),
+            key_buf: key_buf,
+            value_buf: value_buf,
         }
     }
 
@@ -81,49 +83,23 @@ impl Ycsb {
     // # Return
     //  A three tuple consisting of the duration that this thread ran the benchmark, the
     //  number of gets it performed, and the number of puts it performed.
-    pub fn abc<G, P>(&self, get: G, put: P) -> (Duration, u32, u32)
-        where G: Fn(&[u8]),
-              P: Fn(&[u8], &[u8]),
+    pub fn abc<G, P, R>(&mut self, mut get: G, mut put: P) -> R
+        where G: FnMut(&[u8]) -> R,
+              P: FnMut(&[u8], &[u8]) -> R,
     {
-        let seed: [u32; 4] = rand::random::<[u32; 4]>();
-        let mut rng = XorShiftRng::from_seed(seed);
+        let is_get = (self.rng.gen::<u32>() % 100) >= self.put_pct as u32;
 
-        let mut key_buf: Vec<u8> = Vec::with_capacity(self.key_len);
-        key_buf.resize(self.key_len, 0);
-        let mut value_buf: Vec<u8> = Vec::with_capacity(self.value_len);
-        value_buf.resize(self.value_len, 0);
+        let k = self.key_rng.sample(&mut self.rng) as u32;
+        let kp = &k as *const u32 as *const u8;
+        let kslice = unsafe { slice::from_raw_parts(kp, mem::size_of::<u32>()) };
 
-        let mut zipf =
-            ZipfDistribution::new(self.n_keys, self.skew).expect("Couldn't create zipf PRNG.");
+        self.key_buf[..mem::size_of::<u32>()].copy_from_slice(kslice);
 
-        let mut n_gets = 0u32;
-        let mut n_puts = 0u32;
-
-        let start = Instant::now();
-        while !self.done.load(Ordering::Relaxed) {
-            let is_get = (rng.gen::<u32>() % 100) >= self.put_pct as u32;
-
-            let k = zipf.sample(&mut rng) as u32;
-            let kp = &k as *const u32 as *const u8;
-            let kslice = unsafe { slice::from_raw_parts(kp, mem::size_of::<u32>()) };
-
-            key_buf[..mem::size_of::<u32>()].copy_from_slice(kslice);
-
-            if is_get {
-                get(key_buf.as_slice());
-                n_gets += 1;
-            } else {
-                put(key_buf.as_slice(), value_buf.as_slice());
-                n_puts += 1;
-            }
+        if is_get {
+            get(self.key_buf.as_slice())
+        } else {
+            put(self.key_buf.as_slice(), self.value_buf.as_slice())
         }
-
-        (start.elapsed(), n_gets, n_puts)
-    }
-
-    // Break all threads running `abc()`.
-    pub fn stop(&self) {
-        self.done.store(true, Ordering::Relaxed);
     }
 }
 
@@ -131,27 +107,38 @@ impl Ycsb {
 mod test {
     use std;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use std::sync::{Arc, Mutex};
     use std::collections::HashMap;
-
-    fn get(_key: &[u8]) {}
-    fn put(_key: &[u8], _value: &[u8]) {}
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
     fn ycsb_abc_basic() {
-        let b = Arc::new(super::Ycsb::new(10, 100, 1000000, 5, 0.99));
-
         let n_threads = 32;
         let mut threads = Vec::with_capacity(n_threads);
+        let done = Arc::new(AtomicBool::new(false));
 
-        for _ in 0..n_threads { let b = b.clone();
-            threads.push(thread::spawn(move || b.abc(get, put)));
+        for _ in 0..n_threads {
+            let done = done.clone();
+            threads.push(thread::spawn(move || {
+                let mut b = super::Ycsb::new(10, 100, 1000000, 5, 0.99);
+                let mut n_gets = 0u64;
+                let mut n_puts = 0u64;
+                let start = Instant::now();
+                while !done.load(Ordering::Relaxed) {
+                    b.abc(|_key| {
+                            n_gets += 1
+                        },
+                        |_key, _value| {
+                            n_puts += 1
+                        });
+                }
+                (start.elapsed(), n_gets, n_puts)
+            }));
         }
 
         thread::sleep(Duration::from_secs(2));
-
-        b.stop();
+        done.store(true, Ordering::Relaxed);
 
         // Iterate across all threads. Return a tupule whose first member consists
         // of the highest execution time across all threads, and whose second member
@@ -192,30 +179,39 @@ mod test {
         let hist = Arc::new(Mutex::new(HashMap::new()));
 
         let n_keys = 20;
-        let b = Arc::new(super::Ycsb::new(4, 100, 20, 5, 0.99));
-
         let n_threads = 32;
-        let mut threads = Vec::with_capacity(n_threads);
 
+        let mut threads = Vec::with_capacity(n_threads);
+        let done = Arc::new(AtomicBool::new(false));
         for _ in 0..n_threads {
-            let b = b.clone();
             let hist = hist.clone();
-            threads.push(thread::spawn(move || b.abc(
-                |key| { // get
-                    let k = convert_key(key);
-                    let mut ht = hist.lock().unwrap();
-                    ht.entry(k).or_insert((0, 0)).0 += 1;
-                },
-                |key, _value| { // put
-                    let k = convert_key(key);
-                    let mut ht = hist.lock().unwrap();
-                    ht.entry(k).or_insert((0, 0)).1 += 1;
-                })));
+            let done = done.clone();
+            threads.push(thread::spawn(move || {
+                let mut b = super::Ycsb::new(4, 100, n_keys, 5, 0.99);
+                let mut n_gets = 0u64;
+                let mut n_puts = 0u64;
+                let start = Instant::now();
+                while !done.load(Ordering::Relaxed) {
+                    b.abc(
+                    |key| { // get
+                        let k = convert_key(key);
+                        let mut ht = hist.lock().unwrap();
+                        ht.entry(k).or_insert((0, 0)).0 += 1;
+                        n_gets += 1
+                    },
+                    |key, _value| { // put
+                        let k = convert_key(key);
+                        let mut ht = hist.lock().unwrap();
+                        ht.entry(k).or_insert((0, 0)).1 += 1;
+                        n_puts += 1
+                    });
+                }
+                (start.elapsed(), n_gets, n_puts)
+            }));
         }
 
         thread::sleep(Duration::from_secs(2));
-
-        b.stop();
+        done.store(true, Ordering::Relaxed);
 
         // Iterate across all threads. Return a tupule whose first member consists
         // of the highest execution time across all threads, and whose second member

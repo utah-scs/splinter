@@ -122,6 +122,13 @@ pub struct ClientConfig {
     pub server_udp_port: u16,
 
     pub use_invoke: bool,
+
+    pub use_ycsb: bool,
+    pub key_len: usize,
+    pub value_len: usize,
+    pub n_keys: usize,
+    pub put_pct: usize,
+    pub skew: f64,
 }
 
 impl ClientConfig {
