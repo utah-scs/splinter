@@ -20,7 +20,7 @@ use std::{mem, slice};
 use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use self::rand::{Rng, XorShiftRng};
+use self::rand::{Rng, SeedableRng, XorShiftRng};
 use self::rand::distributions::Sample;
 use self::zipf::ZipfDistribution;
 
@@ -85,9 +85,8 @@ impl Ycsb {
         where G: Fn(&[u8]),
               P: Fn(&[u8], &[u8]),
     {
-        // TODO(stutsman) It's unclear why this won't work.
-        // let rng = XorShiftRng::from_rng(rand::thread_rng()).expect("Couldn't create PRNG.");
-        let mut rng = XorShiftRng::new_unseeded();
+        let seed: [u32; 4] = rand::random::<[u32; 4]>();
+        let mut rng = XorShiftRng::from_seed(seed);
 
         let mut key_buf: Vec<u8> = Vec::with_capacity(self.key_len);
         key_buf.resize(self.key_len, 0);
