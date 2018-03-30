@@ -122,6 +122,9 @@ pub struct RpcRequestHeader {
 
     /// An identifier for the tenant that sent this RPC request.
     pub tenant: u32,
+
+    /// An identifier for the RPC request.
+    pub stamp: u64,
 }
 
 impl RpcRequestHeader {
@@ -134,15 +137,23 @@ impl RpcRequestHeader {
     ///     operation must be supported by rpc_service.
     /// \param rpc_tenant
     ///     An identifier for the tenant sending this request.
+    /// \param rpc_stamp
+    ///     An identifier for the rpc request.
     ///
     /// \return
     ///     A header identifying the RPC. This header is of type
     ///     'RpcRequestHeader'.
-    pub fn new(rpc_service: Service, rpc_opcode: OpCode, rpc_tenant: u32) -> RpcRequestHeader {
+    pub fn new(
+        rpc_service: Service,
+        rpc_opcode: OpCode,
+        rpc_tenant: u32,
+        rpc_stamp: u64,
+    ) -> RpcRequestHeader {
         RpcRequestHeader {
             service: rpc_service,
             opcode: rpc_opcode,
             tenant: rpc_tenant,
+            stamp: rpc_stamp,
         }
     }
 }
@@ -160,17 +171,23 @@ impl RpcRequestHeader {
 pub struct RpcResponseHeader {
     /// The status of the RPC indicating whether it completed successfully.
     pub status: RpcStatus,
+
+    /// Identifier of the RPC request this response is being generated for.
+    pub stamp: u64,
 }
 
 impl RpcResponseHeader {
     /// This method returns a header of type RpcResponseHeader that can be
     /// added to an RPC response. The status on the header is set to StatusOk.
     ///
+    /// - `req_stamp`:  RPC identifier.
+    ///
     /// - `return`: A header of type RpcResponseHeader with the status field
     ///             set to RpcStatus::StatusOk.
-    pub fn new() -> RpcResponseHeader {
+    pub fn new(req_stamp: u64) -> RpcResponseHeader {
         RpcResponseHeader {
             status: RpcStatus::StatusOk,
+            stamp: req_stamp,
         }
     }
 }
@@ -199,16 +216,24 @@ impl GetRequest {
     ///     An identifier for the data table the key belongs to.
     /// \param req_key_length
     ///     The length of the key being looked up.
+    /// \param req_stamp
+    ///     RPC identifier.
     ///
     /// \return
     ///     An RPC header for the get() request. The header is of type
     ///     'GetRequest'.
-    pub fn new(req_tenant: u32, req_table_id: u64, req_key_length: u16) -> GetRequest {
+    pub fn new(
+        req_tenant: u32,
+        req_table_id: u64,
+        req_key_length: u16,
+        req_stamp: u64,
+    ) -> GetRequest {
         GetRequest {
             common_header: RpcRequestHeader::new(
                 Service::MasterService,
                 OpCode::SandstormGetRpc,
                 req_tenant,
+                req_stamp,
             ),
             table_id: req_table_id,
             key_length: req_key_length,
@@ -290,11 +315,13 @@ impl GetResponse {
     /// This method returns a header that can be added to the response to a
     /// get() RPC request. The value_length field is set to zero.
     ///
+    /// - `req_stamp`: RPC identifier.
+    ///
     /// - `return`: A header of type GetResponse that can be added to an RPC
     ///             response.
-    pub fn new() -> GetResponse {
+    pub fn new(req_stamp: u64) -> GetResponse {
         GetResponse {
-            common_header: RpcResponseHeader::new(),
+            common_header: RpcResponseHeader::new(req_stamp),
             value_length: 0,
         }
     }
@@ -346,13 +373,18 @@ impl PutRequest {
     /// * `req_table`:   An identifier for the table to add the key-value pair
     ///                  to.
     /// * `req_key_len`: The length of the key inside the RPC request's payload.
+    /// * `req_stamp`:   RPC identifier.
     ///
     /// # Return
     ///
     /// An RPC header that can be appended to a put() request.
-    pub fn new(req_tenant: u32, req_table: u64, req_key_len: u16) -> PutRequest {
-        let common =
-            RpcRequestHeader::new(Service::MasterService, OpCode::SandstormPutRpc, req_tenant);
+    pub fn new(req_tenant: u32, req_table: u64, req_key_len: u16, req_stamp: u64) -> PutRequest {
+        let common = RpcRequestHeader::new(
+            Service::MasterService,
+            OpCode::SandstormPutRpc,
+            req_tenant,
+            req_stamp,
+        );
 
         PutRequest {
             common_header: common,
@@ -396,9 +428,13 @@ pub struct PutResponse {
 impl PutResponse {
     /// This method returns a header that can be appended to the response
     /// to a put() RPC request.
-    pub fn new() -> PutResponse {
+    ///
+    /// # Arguments
+    ///
+    /// * `req_stamp`: RPC identifier.
+    pub fn new(req_stamp: u64) -> PutResponse {
         PutResponse {
-            common_header: RpcResponseHeader::new(),
+            common_header: RpcResponseHeader::new(req_stamp),
         }
     }
 }
@@ -454,16 +490,18 @@ impl InvokeRequest {
     /// * `args_length`: The length of the args to be supplied to the procedure.
     ///                  Required so that the server can unpack them from a
     ///                  request packet.
+    /// * `req_stamp`:   RPC identifier.
     ///
     /// # Return
     ///
     /// An RPC request header of type `InvokeRequest`.
-    pub fn new(tenant: u32, name_length: u32, args_length: u32) -> InvokeRequest {
+    pub fn new(tenant: u32, name_length: u32, args_length: u32, req_stamp: u64) -> InvokeRequest {
         InvokeRequest {
             common_header: RpcRequestHeader::new(
                 Service::MasterService,
                 OpCode::SandstormInvokeRpc,
                 tenant,
+                req_stamp,
             ),
             name_length: name_length,
             args_length: args_length,
@@ -504,9 +542,13 @@ pub struct InvokeResponse {
 impl InvokeResponse {
     /// This method returns a header that can be appended to the response
     /// packet for an invoke() RPC request.
-    pub fn new() -> InvokeResponse {
+    ///
+    /// # Arguments
+    ///
+    /// * `req_stamp`: RPC identifier.
+    pub fn new(req_stamp: u64) -> InvokeResponse {
         InvokeResponse {
-            common_header: RpcResponseHeader::new(),
+            common_header: RpcResponseHeader::new(req_stamp),
         }
     }
 }

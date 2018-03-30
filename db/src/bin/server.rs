@@ -90,6 +90,7 @@ where
     let master = Arc::new(Master::new());
     info!("Populating test data table and extensions...");
     master.fill_test(1, 1, 10 * 1000 * 1000);
+    master.fill_test(100, 100, 0);
     master.load_test(1);
     info!("Finished populating data and extensions");
 

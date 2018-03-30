@@ -9,4 +9,4 @@ if [[ ! -f client.toml ]]; then
     exit -1
 fi
 
-RUST_LOG=debug ./target/release/client
+RUST_LOG=debug ./target/release/sanity

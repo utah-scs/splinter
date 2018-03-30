@@ -14,8 +14,8 @@ name = "server"
 path = "src/bin/server.rs"
 
 [[bin]]
-name = "client"
-path = "src/bin/client/main.rs"
+name = "sanity"
+path = "src/bin/client/sanity.rs"
 
 [[bin]]
 name = "ext_bench"

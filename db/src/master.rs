@@ -192,22 +192,26 @@ impl Master {
             Packet<UdpHeader, EmptyMetadata>,
         ),
     > {
-        // First, parse and setup the request and response packets.
+        // First, parse the request packet.
         let req = req.parse_header::<GetRequest>();
-        let mut res = res.push_header(&GetResponse::new())
-            .expect("Failed to setup GetResponse");
 
         // Read fields off the request header.
         let mut tenant_id: TenantId = 0;
         let mut table_id: TableId = 0;
         let mut key_length = 0;
+        let mut rpc_stamp = 0;
 
         {
             let hdr = req.get_header();
             tenant_id = hdr.common_header.tenant as TenantId;
             table_id = hdr.table_id as TableId;
             key_length = hdr.key_length;
+            rpc_stamp = hdr.common_header.stamp
         }
+
+        // Next, add a header to the response packet.
+        let mut res = res.push_header(&GetResponse::new(rpc_stamp))
+            .expect("Failed to setup GetResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < key_length as usize {
@@ -319,22 +323,26 @@ impl Master {
             Packet<UdpHeader, EmptyMetadata>,
         ),
     > {
-        // First, parse and setup the request and response packets.
+        // First, parse the request packet.
         let req = req.parse_header::<PutRequest>();
-        let mut res = res.push_header(&PutResponse::new())
-            .expect("Failed to push PutResponse");
 
         // Read fields off the request header.
         let mut tenant_id: TenantId = 0;
         let mut table_id: TableId = 0;
         let mut key_length = 0;
+        let mut rpc_stamp = 0;
 
         {
             let hdr = req.get_header();
             tenant_id = hdr.common_header.tenant as TenantId;
             table_id = hdr.table_id as TableId;
             key_length = hdr.key_length;
+            rpc_stamp = hdr.common_header.stamp;
         }
+
+        // Next, write a header into the response packet.
+        let mut res = res.push_header(&PutResponse::new(rpc_stamp))
+            .expect("Failed to push PutResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < key_length as usize {
@@ -426,22 +434,26 @@ impl Master {
             Packet<UdpHeader, EmptyMetadata>,
         ),
     > {
-        // First, parse and setup headers on the request and response packets.
+        // First, parse the request packet.
         let req = req.parse_header::<InvokeRequest>();
-        let mut res = res.push_header(&InvokeResponse::new())
-            .expect("Failed to push InvokeResponse");
 
         // Read fields of the request header.
         let mut tenant_id: TenantId = 0;
         let mut name_length: usize = 0;
         let mut args_length: usize = 0;
+        let mut rpc_stamp = 0;
 
         {
             let hdr = req.get_header();
             tenant_id = hdr.common_header.tenant as TenantId;
             name_length = hdr.name_length as usize;
             args_length = hdr.args_length as usize;
+            rpc_stamp = hdr.common_header.stamp;
         }
+
+        // Next, add a header to the response packet.
+        let mut res = res.push_header(&InvokeResponse::new(rpc_stamp))
+            .expect("Failed to push InvokeResponse");
 
         // If the payload size is less than the sum of the name and args
         // length, return an error.
