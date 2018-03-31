@@ -15,6 +15,7 @@
 
 #![feature(use_extern_macros)]
 #![feature(integer_atomics)]
+#![feature(duration_from_micros)]
 
 extern crate db;
 
@@ -78,6 +79,9 @@ where
 {
     /// Called by a Netbricks scheduler.
     fn execute(&mut self) {
+        // Throttle. Sleep for 1 micro-second before issuing a request.
+        std::thread::sleep(std::time::Duration::from_micros(1));
+
         // If there are pending puts, issue one and return.
         if self.puts > 0 {
             let temp = self.puts;
