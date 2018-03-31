@@ -90,6 +90,8 @@ pub struct ServerConfig {
     mac_address: String,
     pub ip_address: String,
     pub udp_port: u16,
+    client_mac: String,
+    pub client_ip: String,
 }
 
 impl ServerConfig {
@@ -103,6 +105,13 @@ impl ServerConfig {
     /// Linear time, so ideally we'd store this in ServerConfig, but TOML parsing makes that tricky.
     pub fn parse_mac(&self) -> MacAddress {
         parse_mac(&self.mac_address)
+            .expect("Missing or malformed mac_address field in server config.")
+    }
+
+    /// Parse `client_mac` into NetBrick's format or panic if malformed.
+    /// Linear time, so ideally we'd store this in ServerConfig, but TOML parsing makes that tricky.
+    pub fn parse_client_mac(&self) -> MacAddress {
+        parse_mac(&self.client_mac)
             .expect("Missing or malformed mac_address field in server config.")
     }
 }

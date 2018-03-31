@@ -16,11 +16,12 @@
 use std::cell::Cell;
 use std::collections::VecDeque;
 
+use super::rpc;
 use super::task::Task;
 use super::task::TaskState::*;
 
 use e2d2::interface::Packet;
-use e2d2::headers::UdpHeader;
+use e2d2::headers::IpHeader;
 use e2d2::common::EmptyMetadata;
 
 use spin::RwLock;
@@ -38,7 +39,7 @@ pub struct RoundRobin {
 
     // Response packets returned by completed tasks. Will be picked up and sent out the network by
     // the Dispatch task.
-    responses: RwLock<Vec<Packet<UdpHeader, EmptyMetadata>>>,
+    responses: RwLock<Vec<Packet<IpHeader, EmptyMetadata>>>,
 }
 
 // Implementation of methods on RoundRobin.
@@ -96,7 +97,7 @@ impl RoundRobin {
     /// packets should be sent out the network. If there are no pending responses, then an empty
     /// vector is returned.
     #[inline]
-    pub fn responses(&self) -> Vec<Packet<UdpHeader, EmptyMetadata>> {
+    pub fn responses(&self) -> Vec<Packet<IpHeader, EmptyMetadata>> {
         let mut responses = self.responses.write();
         return responses.drain(..).collect();
     }
@@ -122,7 +123,7 @@ impl RoundRobin {
                 // exist, then free the request packet, and enqueue the response packet.
                 if let Some((req, res)) = unsafe { task.tear() } {
                     req.free_packet();
-                    self.responses.write().push(res);
+                    self.responses.write().push(rpc::fixup_header_length_fields(res));
                 }
             } else {
                 // The task did not complete execution. Add it back to the waiting list so that it

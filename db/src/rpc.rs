@@ -118,7 +118,7 @@ fn create_request(
 /// # Return
 ///
 /// A packet parsed upto it's IP headers with said fields set.
-fn fixup_header_length_fields(
+pub fn fixup_header_length_fields(
     mut request: Packet<UdpHeader, EmptyMetadata>,
 ) -> Packet<IpHeader, EmptyMetadata> {
     // Set fields on the UDP header.

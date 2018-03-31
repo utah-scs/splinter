@@ -255,7 +255,7 @@ impl Master {
                 // and update the status of the rpc.
                 .and_then(| (_k, value) | {
                                 status = RpcStatus::StatusInternalError;
-                                res.add_to_payload_tail(value.len(), &value).ok()
+                                res.add_to_payload_tail(value.len(), &value[..]).ok()
                             })
                 // If the value was written to the response payload,
                 // update the status of the rpc.

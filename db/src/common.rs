@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use super::e2d2::headers::MacAddress;
-
 // Type definitions for convenience.
 pub type TenantId = u32;
 pub type TableId = u64;
@@ -31,6 +29,3 @@ pub const PACKET_ETYPE: u16 = 0x0800;
 
 // The following are constants required to identify packets sent by the client.
 pub const CLIENT_UDP_PORT: u16 = 0;
-pub const CLIENT_IP_ADDRESS: &'static str = "192.168.0.1";
-pub const CLIENT_MAC_ADDRESS: MacAddress =
-        MacAddress{ addr: [0x3c, 0xfd, 0xfe, 0x04, 0x93, 0xa2] };

@@ -16,7 +16,6 @@
 use std::sync::Arc;
 use std::fmt::Display;
 use std::str::FromStr;
-use std::mem::size_of;
 use std::net::Ipv4Addr;
 use std::option::Option;
 
@@ -133,10 +132,7 @@ where
         // Create a common udp header for response packets.
         let udp_src_port: u16 = config.udp_port;
         let udp_dst_port: u16 = common::CLIENT_UDP_PORT;
-        // Currently assuming that all incoming requests are Get() operations
-        // for 100 Byte values.
-        let udp_length: u16 =
-            common::PACKET_UDP_LEN + size_of::<wireformat::GetResponse>() as u16 + 100;
+        let udp_length: u16 = common::PACKET_UDP_LEN;
         let udp_checksum: u16 = common::PACKET_UDP_CHECKSUM;
 
         let mut udp_header: UdpHeader = UdpHeader::new();
@@ -150,16 +146,12 @@ where
             Ipv4Addr::from_str(&config.ip_address).expect("Failed to create server IP address."),
         );
         let ip_dst_addr: u32 = u32::from(
-            Ipv4Addr::from_str(common::CLIENT_IP_ADDRESS)
-                .expect("Failed to create client IP address."),
+            Ipv4Addr::from_str(&config.client_ip).expect("Failed to create client IP address."),
         );
         let ip_ttl: u8 = common::PACKET_IP_TTL;
         let ip_version: u8 = common::PACKET_IP_VER;
         let ip_ihl: u8 = common::PACKET_IP_IHL;
-        // Currently assuming that all incoming requests are Get() operations
-        // for 100 Byte values.
-        let ip_length: u16 =
-            common::PACKET_IP_LEN + size_of::<wireformat::GetResponse>() as u16 + 100;
+        let ip_length: u16 = common::PACKET_IP_LEN;
 
         let mut ip_header: IpHeader = IpHeader::new();
         ip_header.set_src(ip_src_addr);
@@ -171,7 +163,7 @@ where
 
         // Create a common mac header for response packets.
         let mac_src_addr: MacAddress = config.parse_mac();
-        let mac_dst_addr: MacAddress = common::CLIENT_MAC_ADDRESS;
+        let mac_dst_addr: MacAddress = config.parse_client_mac();
         let mac_etype: u16 = common::PACKET_ETYPE;
 
         let mut mac_header: MacHeader = MacHeader::new();
@@ -261,7 +253,7 @@ where
     /// # Arguments
     ///
     /// * `packets`: A vector of packets to be sent out the network, parsed upto their UDP headers.
-    fn try_send_packets(&mut self, mut packets: Vec<Packet<UdpHeader, EmptyMetadata>>) {
+    fn try_send_packets(&mut self, mut packets: Vec<Packet<IpHeader, EmptyMetadata>>) {
         // This unsafe block is required to extract the underlying Mbuf's from
         // the passed in batch of packets, and send them out the network port.
         unsafe {
