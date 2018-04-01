@@ -15,7 +15,6 @@
 
 use std::str;
 use std::sync::Arc;
-use std::mem::size_of;
 use std::cell::RefCell;
 
 use super::tenant::Tenant;
@@ -25,9 +24,8 @@ use super::wireformat::{InvokeRequest, InvokeResponse};
 use sandstorm::db::DB;
 use sandstorm::buf::{ReadBuf, WriteBuf};
 
+use e2d2::interface::Packet;
 use e2d2::common::EmptyMetadata;
-use e2d2::headers::{IpHeader, MacHeader, UdpHeader};
-use e2d2::interface::{Packet, packet_from_mbuf_no_increment};
 
 /// This type is passed into the init method of every extension. The methods
 /// on this type form the interface allowing extensions to read and write
