@@ -13,6 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::str;
 use std::sync::Arc;
 use std::mem::size_of;
 use std::cell::RefCell;
@@ -109,21 +110,7 @@ impl Context {
     pub unsafe fn commit(self) -> (Packet<InvokeRequest, EmptyMetadata>,
                                    Packet<InvokeResponse, EmptyMetadata>)
     {
-        // Rewrap the request into a new packet.
-        let req = packet_from_mbuf_no_increment::<InvokeRequest>(
-                    self.request.get_mbuf(), size_of::<MacHeader>() +
-                    size_of::<IpHeader>() + size_of::<UdpHeader>() +
-                    size_of::<InvokeRequest>());
-
-        // Rewrap the response into a new packet.
-        let res = packet_from_mbuf_no_increment::<InvokeResponse>(
-                    self.response.into_inner().get_mbuf(),
-                    size_of::<MacHeader>() + size_of::<IpHeader>() +
-                    size_of::<UdpHeader>() + size_of::<InvokeResponse>());
-
-        // Return the request and response packet. At this point, the context
-        // is dropped, and can never be used again.
-        return (req, res);
+        return (self.request, self.response.into_inner());
     }
 }
 
