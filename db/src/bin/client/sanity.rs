@@ -46,6 +46,10 @@ where
     // Number of get() requests remaining to be issued. Once all of these have been issued,
     // SanitySend will stop issuing RPC requests.
     gets: u64,
+
+    // If true, native get() and put() requests are sent out. If false, invoke based requests are
+    // sent out.
+    native: bool,
 }
 
 // Implementation of methods on SanitySend.
@@ -66,8 +70,9 @@ where
     fn new(config: &config::ClientConfig, port: T) -> SanitySend<T> {
         SanitySend {
             sender: dispatch::Sender::new(config, port),
-            puts: 1 * 1000 * 1000,
-            gets: 1 * 1000 * 1000,
+            puts: 1 * 1000,
+            gets: 1 * 1000,
+            native: !config.use_invoke,
         }
     }
 }
@@ -84,9 +89,23 @@ where
 
         // If there are pending puts, issue one and return.
         if self.puts > 0 {
+            // Determine the key and value to be inserted into the database.
             let temp = self.puts;
             let temp: [u8; 8] = unsafe { transmute(temp.to_le()) };
-            self.sender.send_put(100, 100, &temp, &temp, self.puts);
+
+            // Send out either a put() or invoke().
+            if self.native == true {
+                self.sender.send_put(100, 100, &temp, &temp, self.puts);
+            } else {
+                let mut args = Vec::new();
+                let table: [u8; 8] = unsafe { transmute(100u64.to_le()) };
+                args.extend_from_slice(&table);  // Table Id
+                args.extend_from_slice(&[8, 0]); // Key Length
+                args.extend_from_slice(&temp);   // Key
+                args.extend_from_slice(&temp);   // Value
+                self.sender.send_invoke(100, "put".as_bytes(), &args, self.puts);
+            }
+
             self.puts -= 1;
             return;
         }
@@ -95,7 +114,18 @@ where
         if self.gets > 0 {
             let temp = self.gets;
             let temp: [u8; 8] = unsafe { transmute(temp.to_le()) };
-            self.sender.send_get(100, 100, &temp, self.gets);
+
+            // Send out either a get() or invoke().
+            if self.native == true {
+                self.sender.send_get(100, 100, &temp, self.gets);
+            } else {
+                let mut args = Vec::new();
+                let table: [u8; 8] = unsafe { transmute(100u64.to_le()) };
+                args.extend_from_slice(&table); // Table Id
+                args.extend_from_slice(&temp);  // Key
+                self.sender.send_invoke(100, "get".as_bytes(), &args, self.gets);
+            }
+
             self.gets -= 1;
             return;
         }
