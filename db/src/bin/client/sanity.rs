@@ -262,14 +262,14 @@ fn main() {
     // Retrieve one port-queue from Netbricks, and setup the Send side.
     let port = net_context
         .rx_queues
-        .get(&1)
+        .get(&2)
         .expect("Failed to retrieve network port!")
         .clone();
 
-    // Setup the send side on core 1.
+    // Setup the send side on core 2.
     net_context
         .add_pipeline_to_core(
-            1,
+            2,
             Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
                 setup_send(&config, port.clone(), sched)
             }),
@@ -279,14 +279,14 @@ fn main() {
     // Retrieve one port-queue from Netbricks, and setup the Receive side.
     let port = net_context
         .rx_queues
-        .get(&1)
+        .get(&2)
         .expect("Failed to retrieve network port!")
         .clone();
 
-    // Setup the receive side on core 2.
+    // Setup the receive side on core 4.
     net_context
         .add_pipeline_to_core(
-            2,
+            4,
             Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
                 setup_recv(port.clone(), sched)
             }),

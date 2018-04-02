@@ -1,0 +1,12 @@
+#!/bin/bash
+
+export LD_LIBRARY_PATH=$(pwd)/net/target/native
+
+cd db
+
+if [[ ! -f client.toml ]]; then
+    echo "Missing client.toml file (in db directory)."
+    exit -1
+fi
+
+RUST_LOG=debug ./target/release/ycsb

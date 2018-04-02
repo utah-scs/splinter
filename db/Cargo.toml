@@ -18,6 +18,10 @@ name = "sanity"
 path = "src/bin/client/sanity.rs"
 
 [[bin]]
+name = "ycsb"
+path = "src/bin/client/ycsb.rs"
+
+[[bin]]
 name = "ext_bench"
 path = "src/bin/ext_bench.rs"
 

@@ -32,7 +32,7 @@ fn get_default_netbricks_config() -> NetbricksConfiguration {
     let net_config_name = String::from("client");
     let dpdk_secondary: bool = false;
     let net_primary_core: i32 = 0;
-    let net_cores: Vec<i32> = vec![1, 2];
+    let net_cores: Vec<i32> = vec![2, 4];
     let net_strict_cores: bool = true;
     let net_pool_size: u32 = 2048 - 1;
     let net_cache_size: u32 = 64;

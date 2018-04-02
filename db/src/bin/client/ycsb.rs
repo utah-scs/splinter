@@ -13,13 +13,29 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+extern crate db;
 extern crate rand;
+extern crate time;
 extern crate zipf;
 
+mod setup;
+mod dispatch;
+
+use std::sync::Arc;
 use std::{mem, slice};
-use self::rand::{Rng, SeedableRng, XorShiftRng};
-use self::zipf::ZipfDistribution;
-use ycsb::rand::distributions::Sample;
+use std::fmt::Display;
+use std::cell::RefCell;
+use std::mem::transmute;
+
+use db::log::*;
+use db::config;
+use db::e2d2::interface::*;
+use db::e2d2::scheduler::*;
+
+use time::precise_time_ns;
+use zipf::ZipfDistribution;
+use rand::distributions::Sample;
+use rand::{Rng, SeedableRng, XorShiftRng};
 
 // YCSB A, B, and C benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
@@ -50,13 +66,7 @@ impl Ycsb {
     //  - skew: Zipfian skew parameter. 0.99 is YCSB default.
     // # Return
     //  A new instance of YCSB that threads can call `abc()` on to run.
-    pub fn new(
-        key_len: usize,
-        value_len: usize,
-        n_keys: usize,
-        put_pct: usize,
-        skew: f64,
-    ) -> Ycsb {
+    fn new(key_len: usize, value_len: usize, n_keys: usize, put_pct: usize, skew: f64) -> Ycsb {
         let seed: [u32; 4] = rand::random::<[u32; 4]>();
 
         let mut key_buf: Vec<u8> = Vec::with_capacity(key_len);
@@ -67,7 +77,9 @@ impl Ycsb {
         Ycsb {
             put_pct: put_pct,
             rng: Box::new(XorShiftRng::from_seed(seed)),
-            key_rng: Box::new(ZipfDistribution::new(n_keys, skew).expect("Couldn't create key RNG.")),
+            key_rng: Box::new(
+                ZipfDistribution::new(n_keys, skew).expect("Couldn't create key RNG."),
+            ),
             key_buf: key_buf,
             value_buf: value_buf,
         }
@@ -84,16 +96,16 @@ impl Ycsb {
     //  A three tuple consisting of the duration that this thread ran the benchmark, the
     //  number of gets it performed, and the number of puts it performed.
     pub fn abc<G, P, R>(&mut self, mut get: G, mut put: P) -> R
-        where G: FnMut(&[u8]) -> R,
-              P: FnMut(&[u8], &[u8]) -> R,
+    where
+        G: FnMut(&[u8]) -> R,
+        P: FnMut(&[u8], &[u8]) -> R,
     {
         let is_get = (self.rng.gen::<u32>() % 100) >= self.put_pct as u32;
 
+        // Sample a key, and convert into a little endian byte array.
         let k = self.key_rng.sample(&mut self.rng) as u32;
-        let kp = &k as *const u32 as *const u8;
-        let kslice = unsafe { slice::from_raw_parts(kp, mem::size_of::<u32>()) };
-
-        self.key_buf[..mem::size_of::<u32>()].copy_from_slice(kslice);
+        let k: [u8; 4] = unsafe { transmute(k.to_le()) };
+        self.key_buf[0..mem::size_of::<u32>()].copy_from_slice(&k);
 
         if is_get {
             get(self.key_buf.as_slice())
@@ -103,10 +115,335 @@ impl Ycsb {
     }
 }
 
+/// Sends out YCSB based RPC requests to a Sandstorm server.
+struct YcsbSend<T>
+where
+    T: PacketTx + PacketRx + Display + Clone + 'static,
+{
+    // The actual YCSB workload. Required to generate keys and values for get() and put() requests.
+    workload: RefCell<Ycsb>,
+
+    // Network stack required to actually send RPC requests out the network.
+    sender: dispatch::Sender<T>,
+
+    // Total number of requests to be sent out.
+    requests: u64,
+
+    // Number of requests that have been sent out so far.
+    sent: u64,
+
+    // The inverse of the rate at which requests are to be generated. Basically, the time interval
+    // between two request generations in nanoseconds.
+    rate_inv: u64,
+
+    // The time stamp at which the workload started generating requests.
+    start: u64,
+
+    // The time stamp at which the next request must be issued.
+    next: u64,
+
+    // If true, RPC requests corresponding to native get() and put() operations are sent out. If
+    // false, invoke() based RPC requests are sent out.
+    native: bool,
+}
+
+// Implementation of methods on YcsbSend.
+impl<T> YcsbSend<T>
+where
+    T: PacketTx + PacketRx + Display + Clone + 'static,
+{
+    /// Constructs a YcsbSend.
+    ///
+    /// # Arguments
+    ///
+    /// * `config`: Client configuration with YCSB related (key and value length etc.) as well as
+    ///             Network related (Server and Client MAC address etc.) parameters.
+    /// * `port`:   Network port over which requests will be sent out.
+    ///
+    /// # Return
+    ///
+    /// A YCSB request generator.
+    fn new(config: &config::ClientConfig, port: T) -> YcsbSend<T> {
+        YcsbSend {
+            workload: RefCell::new(Ycsb::new(
+                config.key_len,
+                config.value_len,
+                config.n_keys,
+                config.put_pct,
+                config.skew,
+            )),
+            sender: dispatch::Sender::new(config, port),
+            requests: 16 * 1000 * 1000,
+            sent: 0,
+            rate_inv: 1 * 1000,
+            start: precise_time_ns(),
+            next: 0,
+            native: !config.use_invoke,
+        }
+    }
+}
+
+// The Executable trait allowing YcsbSend to be scheduled by Netbricks.
+impl<T> Executable for YcsbSend<T>
+where
+    T: PacketTx + PacketRx + Display + Clone + 'static,
+{
+    // Called internally by Netbricks.
+    fn execute(&mut self) {
+        // Return if there are no more requests to generate.
+        if self.requests <= self.sent {
+            return;
+        }
+
+        let curr = precise_time_ns();
+
+        // If it is either time to send out a request, or if a request has never been sent out,
+        // then, do so.
+        if curr >= self.next || self.next == 0 {
+            self.workload.borrow_mut().abc(
+                |key| self.sender.send_get(1, 1, key, curr),
+                |key, val| self.sender.send_put(1, 1, key, val, curr),
+            );
+
+            // Update the time stamp at which the next request should be generated, assuming that
+            // the first request was sent out at self.start.
+            self.sent += 1;
+            self.next = self.start + self.sent * self.rate_inv;
+        }
+    }
+
+    fn dependencies(&mut self) -> Vec<usize> {
+        vec![]
+    }
+}
+
+/// Receives responses to YCSB requests sent out by YcsbSend.
+struct YcsbRecv<T>
+where
+    T: PacketTx + PacketRx + Display + Clone + 'static,
+{
+    // The network stack required to receives RPC response packets from a network port.
+    receiver: dispatch::Receiver<T>,
+
+    // The number of response packets to wait for before printing out statistics.
+    responses: u64,
+
+    // Time stamp at which measurement started. Required to calculate observed throughput of the
+    // Sandstorm server.
+    start: u64,
+
+    // The total number of responses received so far.
+    recvd: u64,
+
+    // Vector of sampled request latencies. Required to calculate distributions once all responses
+    // have been received.
+    latencies: Vec<u64>,
+}
+
+// Implementation of methods on YcsbRecv.
+impl<T> YcsbRecv<T>
+where
+    T: PacketTx + PacketRx + Display + Clone + 'static,
+{
+    /// Constructs a YcsbRecv.
+    ///
+    /// # Arguments
+    ///
+    /// * `port`: Network port on which responses will be polled for.
+    ///
+    /// # Return
+    ///
+    /// A YCSB response receiver that measures the median latency and throughput of a Sandstorm
+    /// server.
+    fn new(port: T) -> YcsbRecv<T> {
+        YcsbRecv {
+            receiver: dispatch::Receiver::new(port),
+            responses: 10 * 1000 * 1000,
+            start: precise_time_ns(),
+            recvd: 0,
+            latencies: Vec::with_capacity(1 * 1000 * 1000),
+        }
+    }
+}
+
+// Executable trait allowing YcsbRecv to be scheduled by Netbricks.
+impl<T> Executable for YcsbRecv<T>
+where
+    T: PacketTx + PacketRx + Display + Clone + 'static,
+{
+    // Called internally by Netbricks.
+    fn execute(&mut self) {
+        // Do nothing if all responses have been received.
+        if self.responses <= self.recvd {
+            return;
+        }
+
+        // Try to receive packets from the network port. If there are packets, sample the latency
+        // of the Sandstorm server.
+        if let Some(mut packets) = self.receiver.recv_res() {
+            while let Some(packet) = packets.pop() {
+                self.recvd += 1;
+
+                // While sampling, read the time-stamp at which the request was generated from the
+                // received packet's payload.
+                if self.recvd & 0xf == 0 {
+                    let curr = precise_time_ns();
+
+                    let sent = &packet.get_payload()[1..9];
+                    let sent = 0 | sent[0] as u64 | (sent[1] as u64) << 8 | (sent[2] as u64) << 16
+                        | (sent[3] as u64) << 24
+                        | (sent[4] as u64) << 32
+                        | (sent[5] as u64) << 40
+                        | (sent[6] as u64) << 48
+                        | (sent[7] as u64) << 56;
+
+                    self.latencies.push(curr - sent);
+                }
+
+                packet.free_packet();
+            }
+        }
+
+        // The moment all response packets have been received, output the measured latency
+        // distribution and throughput.
+        if self.responses <= self.recvd {
+            let stop = precise_time_ns();
+
+            self.latencies.sort();
+            let median = self.latencies[self.latencies.len() / 2];
+
+            println!(
+                "Median(ns): {}, Throughput(Kops/s): {}",
+                median,
+                (self.recvd * 1000 * 1000) / (stop - self.start)
+            );
+        }
+    }
+
+    fn dependencies(&mut self) -> Vec<usize> {
+        vec![]
+    }
+}
+
+/// Sets up YcsbSend by adding it to a Netbricks scheduler.
+///
+/// # Arguments
+///
+/// * `config`:    Network related configuration such as the MAC and IP address.
+/// * `ports`:     Network port on which packets will be sent.
+/// * `scheduler`: Netbricks scheduler to which YcsbSend will be added.
+fn setup_send<T, S>(config: &config::ClientConfig, ports: Vec<T>, scheduler: &mut S)
+where
+    T: PacketTx + PacketRx + Display + Clone + 'static,
+    S: Scheduler + Sized,
+{
+    if ports.len() != 1 {
+        error!("Client should be configured with exactly 1 port!");
+        std::process::exit(1);
+    }
+
+    // Add the sender to a netbricks pipeline.
+    match scheduler.add_task(YcsbSend::new(config, ports[0].clone())) {
+        Ok(_) => {
+            info!("Successfully added YcsbSend to a Netbricks pipeline.");
+        }
+
+        Err(ref err) => {
+            error!("Error while adding to Netbricks pipeline {}", err);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Sets up YcsbRecv by adding it to a Netbricks scheduler.
+///
+/// # Arguments
+///
+/// * `ports`:     Network port on which packets will be sent.
+/// * `scheduler`: Netbricks scheduler to which YcsbRecv will be added.
+fn setup_recv<T, S>(ports: Vec<T>, scheduler: &mut S)
+where
+    T: PacketTx + PacketRx + Display + Clone + 'static,
+    S: Scheduler + Sized,
+{
+    if ports.len() != 1 {
+        error!("Client should be configured with exactly 1 port!");
+        std::process::exit(1);
+    }
+
+    // Add the receiver to a netbricks pipeline.
+    match scheduler.add_task(YcsbRecv::new(ports[0].clone())) {
+        Ok(_) => {
+            info!("Successfully added YcsbRecv to a Netbricks pipeline.");
+        }
+
+        Err(ref err) => {
+            error!("Error while adding to Netbricks pipeline {}", err);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn main() {
+    db::env_logger::init().expect("ERROR: failed to initialize logger!");
+
+    let config = config::ClientConfig::load();
+    info!("Starting up Sandstorm client with config {:?}", config);
+
+    // Setup Netbricks.
+    let mut net_context = setup::config_and_init_netbricks();
+
+    // Setup the client pipeline.
+    net_context.start_schedulers();
+
+    // Retrieve one port-queue from Netbricks, and setup the Receive side.
+    let port = net_context
+        .rx_queues
+        .get(&2)
+        .expect("Failed to retrieve network port!")
+        .clone();
+
+    // Setup the receive side on core 4.
+    net_context
+        .add_pipeline_to_core(
+            4,
+            Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
+                setup_recv(port.clone(), sched)
+            }),
+        )
+        .expect("Failed to initialize receive side.");
+
+    // Retrieve one port-queue from Netbricks, and setup the Send side.
+    let port = net_context
+        .rx_queues
+        .get(&2)
+        .expect("Failed to retrieve network port!")
+        .clone();
+
+    // Setup the send side on core 2.
+    net_context
+        .add_pipeline_to_core(
+            2,
+            Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
+                setup_send(&config, port.clone(), sched)
+            }),
+        )
+        .expect("Failed to initialize send side.");
+
+    // Run the client.
+    net_context.execute();
+
+    loop {}
+
+    // Stop the client.
+    // net_context.stop();
+}
+
 #[cfg(test)]
 mod test {
     use std;
     use std::thread;
+    use std::mem::transmute;
     use std::time::{Duration, Instant};
     use std::sync::{Arc, Mutex};
     use std::collections::HashMap;
@@ -114,7 +451,7 @@ mod test {
 
     #[test]
     fn ycsb_abc_basic() {
-        let n_threads = 32;
+        let n_threads = 1;
         let mut threads = Vec::with_capacity(n_threads);
         let done = Arc::new(AtomicBool::new(false));
 
@@ -126,12 +463,7 @@ mod test {
                 let mut n_puts = 0u64;
                 let start = Instant::now();
                 while !done.load(Ordering::Relaxed) {
-                    b.abc(|_key| {
-                            n_gets += 1
-                        },
-                        |_key, _value| {
-                            n_puts += 1
-                        });
+                    b.abc(|_key| n_gets += 1, |_key, _value| n_puts += 1);
                 }
                 (start.elapsed(), n_gets, n_puts)
             }));
@@ -164,13 +496,11 @@ mod test {
         );
     }
 
+    // Convert a key to u32 assuming little endian.
     fn convert_key(key: &[u8]) -> u32 {
         assert_eq!(4, key.len());
-        let mut k: u32 = 0;
-        for b in key {
-            k *= 256;
-            k += *b as u32;
-        }
+        let k: u32 = 0 | key[0] as u32 | (key[1] as u32) << 8 | (key[2] as u32) << 16
+            | (key[3] as u32) << 24;
         k
     }
 
@@ -179,7 +509,7 @@ mod test {
         let hist = Arc::new(Mutex::new(HashMap::new()));
 
         let n_keys = 20;
-        let n_threads = 32;
+        let n_threads = 1;
 
         let mut threads = Vec::with_capacity(n_threads);
         let done = Arc::new(AtomicBool::new(false));
@@ -193,18 +523,21 @@ mod test {
                 let start = Instant::now();
                 while !done.load(Ordering::Relaxed) {
                     b.abc(
-                    |key| { // get
-                        let k = convert_key(key);
-                        let mut ht = hist.lock().unwrap();
-                        ht.entry(k).or_insert((0, 0)).0 += 1;
-                        n_gets += 1
-                    },
-                    |key, _value| { // put
-                        let k = convert_key(key);
-                        let mut ht = hist.lock().unwrap();
-                        ht.entry(k).or_insert((0, 0)).1 += 1;
-                        n_puts += 1
-                    });
+                        |key| {
+                            // get
+                            let k = convert_key(key);
+                            let mut ht = hist.lock().unwrap();
+                            ht.entry(k).or_insert((0, 0)).0 += 1;
+                            n_gets += 1
+                        },
+                        |key, _value| {
+                            // put
+                            let k = convert_key(key);
+                            let mut ht = hist.lock().unwrap();
+                            ht.entry(k).or_insert((0, 0)).1 += 1;
+                            n_puts += 1
+                        },
+                    );
                 }
                 (start.elapsed(), n_gets, n_puts)
             }));
@@ -237,13 +570,15 @@ mod test {
         );
 
         let ht = hist.lock().unwrap();
-        let mut kvs : Vec<_> = ht.iter().collect();
+        let mut kvs: Vec<_> = ht.iter().collect();
         kvs.sort();
-        let v : Vec<_> = kvs.iter().map(|&(k, v)| println!("Key {:?}: {:?} gets/puts", k, v)).collect();
+        let v: Vec<_> = kvs.iter()
+            .map(|&(k, v)| println!("Key {:?}: {:?} gets/puts", k, v))
+            .collect();
         println!("Unique key count: {}", v.len());
         assert_eq!(n_keys, v.len());
 
-        let total : i64 = kvs.iter().map(|&(_, &(g, s))| (g + s) as i64).sum();
+        let total: i64 = kvs.iter().map(|&(_, &(g, s))| (g + s) as i64).sum();
 
         let mut sum = 0;
         for &(k, v) in kvs.iter() {
