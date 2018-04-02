@@ -113,13 +113,16 @@ impl Task for Container {
         if self.state == INITIALIZED || self.state == YIELDED {
             self.state = RUNNING;
 
-            match self.gen.resume() {
-                GeneratorState::Yielded(_) => {
-                    self.state = YIELDED;
-                }
+            // As of 04/02/2018, calling resume() on a generator requires an unsafe block.
+            unsafe {
+                match self.gen.resume() {
+                    GeneratorState::Yielded(_) => {
+                        self.state = YIELDED;
+                    }
 
-                GeneratorState::Complete(_) => {
-                    self.state = COMPLETED;
+                    GeneratorState::Complete(_) => {
+                        self.state = COMPLETED;
+                    }
                 }
             }
         }

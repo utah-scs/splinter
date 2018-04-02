@@ -62,8 +62,8 @@ fn main() {
         let mut ext = ext_manager.get(0, &p)
                                     .unwrap()
                                     .get(Rc::clone(&db) as Rc<DB>);
-        ext.resume();
-        ext.resume();
+        unsafe { ext.resume() };
+        unsafe { ext.resume() };
     }
 
     db.assert_messages(expected.as_slice());
@@ -82,8 +82,8 @@ fn main() {
             let mut ext = ext_manager.get(0, &p)
                                         .unwrap()
                                         .get(Rc::clone(&db) as Rc<DB>);
-            ext.resume();
-            ext.resume();
+            unsafe { ext.resume() };
+            unsafe { ext.resume() };
             c = c + 1;
         }
     }
