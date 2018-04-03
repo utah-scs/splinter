@@ -375,11 +375,13 @@ where
 
             self.latencies.sort();
             let median = self.latencies[self.latencies.len() / 2];
+            let tail = self.latencies[(self.latencies.len() * 99) / 100];
 
-            println!(
-                "Median(ns): {}, Throughput(Kops/s): {}",
+            info!(
+                "Median(ns): {} Tail(ns): {} Throughput(Kops/s): {}",
                 median,
-                (self.recvd * 1000 * 1000) / (stop - self.start)
+                tail,
+                (self.recvd * 1000 * 1000 * 1000) / (stop - self.start)
             );
         }
     }
@@ -407,7 +409,11 @@ where
     }
 
     // Add the sender to a netbricks pipeline.
-    match scheduler.add_task(YcsbSend::new(config, ports[0].clone(), config.num_reqs as u64)) {
+    match scheduler.add_task(YcsbSend::new(
+        config,
+        ports[0].clone(),
+        config.num_reqs as u64,
+    )) {
         Ok(_) => {
             info!("Successfully added YcsbSend to a Netbricks pipeline.");
         }
@@ -454,6 +460,10 @@ fn main() {
     let config = config::ClientConfig::load();
     info!("Starting up Sandstorm client with config {:?}", config);
 
+    // Based on the supplied client configuration, compute the amount of time it will take to send
+    // out `num_reqs` requests at a rate of `req_rate` requests per second.
+    let exec = config.num_reqs / config.req_rate;
+
     // Setup Netbricks.
     let mut net_context = setup::config_and_init_netbricks();
 
@@ -497,10 +507,12 @@ fn main() {
     // Run the client.
     net_context.execute();
 
-    loop {}
+    // Sleep for an amount of time approximately equal to the estimated execution time, and then
+    // shutdown the client.
+    std::thread::sleep(std::time::Duration::from_secs(exec as u64 + 10));
 
     // Stop the client.
-    // net_context.stop();
+    net_context.stop();
 }
 
 #[cfg(test)]

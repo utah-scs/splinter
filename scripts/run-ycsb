@@ -9,4 +9,16 @@ if [[ ! -f client.toml ]]; then
     exit -1
 fi
 
-RUST_LOG=debug ./target/release/ycsb
+invoke=$(cat client.toml | grep "use_invoke" | awk '{ print $NF }')
+
+rates=(100000 200000 300000 400000 500000 600000 700000 800000 900000 1000000 1100000 1200000)
+
+echo "# Offered 50% 99% Thrpt" > ../ycsb_invoke_"$invoke".out
+
+for rate in ${rates[@]}
+do
+	echo "Running for a target rate of $rate ops/sec, invoke=$invoke"
+	sed -i "s/req_rate = [1-9][0-9]*/req_rate = $rate/g" client.toml
+	RUST_LOG=debug ./target/release/ycsb 2>&1 | grep "Median(ns)" | \
+		awk "{ print $rate, \$3, \$5, \$7 }" >> ../ycsb_invoke_"$invoke".out
+done
