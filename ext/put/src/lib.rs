@@ -101,9 +101,6 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
             alloc = db.alloc(table, key, val.len() as u64);
         }
 
-        // Yield down to the database.
-        yield 0;
-
         match alloc {
             // If the allocation was successfull, write the value into it, and
             // invoke the put() interface.
@@ -137,5 +134,9 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
                 return 1;
             }
         }
+
+        // XXX: This yield is required to get the compiler to compile this closure into a
+        // generator. It is unreachable and benign.
+        yield 0;
     })
 }
