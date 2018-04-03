@@ -97,13 +97,14 @@ where
             if self.native == true {
                 self.sender.send_put(100, 100, &temp, &temp, self.puts);
             } else {
-                let mut args = Vec::new();
+                let mut payload = Vec::new();
                 let table: [u8; 8] = unsafe { transmute(100u64.to_le()) };
-                args.extend_from_slice(&table);  // Table Id
-                args.extend_from_slice(&[8, 0]); // Key Length
-                args.extend_from_slice(&temp);   // Key
-                args.extend_from_slice(&temp);   // Value
-                self.sender.send_invoke(100, "put".as_bytes(), &args, self.puts);
+                payload.extend_from_slice("put".as_bytes()); // Name
+                payload.extend_from_slice(&table); // Table Id
+                payload.extend_from_slice(&[8, 0]); // Key Length
+                payload.extend_from_slice(&temp); // Key
+                payload.extend_from_slice(&temp); // Value
+                self.sender.send_invoke(100, 3, &payload, self.puts);
             }
 
             self.puts -= 1;
@@ -119,11 +120,12 @@ where
             if self.native == true {
                 self.sender.send_get(100, 100, &temp, self.gets);
             } else {
-                let mut args = Vec::new();
+                let mut payload = Vec::new();
                 let table: [u8; 8] = unsafe { transmute(100u64.to_le()) };
-                args.extend_from_slice(&table); // Table Id
-                args.extend_from_slice(&temp);  // Key
-                self.sender.send_invoke(100, "get".as_bytes(), &args, self.gets);
+                payload.extend_from_slice("get".as_bytes()); // Name
+                payload.extend_from_slice(&table); // Table Id
+                payload.extend_from_slice(&temp); // Key
+                self.sender.send_invoke(100, 3, &payload, self.gets);
             }
 
             self.gets -= 1;

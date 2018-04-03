@@ -14,3 +14,6 @@ value_len = 96
 n_keys = 1000000
 put_pct = 5
 skew = 0.99
+
+num_reqs = 20000000
+req_rate = 500000

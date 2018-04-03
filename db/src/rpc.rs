@@ -249,8 +249,9 @@ pub fn create_put_rpc(
 /// * `ip` :      Reference to the IP header to be added to the request.
 /// * `udp`:      Reference to the UDP header to be added to the request.
 /// * `tenant`:   Id of the tenant requesting the invocation.
-/// * `name`:     The name of the extensions to be invoked inside the database.
-/// * `args`:     The arguments to be passed in to the extension.
+/// * `name_len`: Number of bytes at the head of the payload identifying the extension.
+/// * `payload`:  The RPC payload to be written into the packet. Should contain the name of the
+///               extension, followed by it's arguments.
 /// * `id`:       RPC identifier.
 ///
 /// # Return
@@ -262,33 +263,26 @@ pub fn create_invoke_rpc(
     ip: &IpHeader,
     udp: &UdpHeader,
     tenant: u32,
-    name: &[u8],
-    args: &[u8],
+    name_len: u32,
+    payload: &[u8],
     id: u64,
 ) -> Packet<IpHeader, EmptyMetadata> {
-    // The name and args length cannot be more than 32 bits. Required to construct the RPC header.
-    if name.len() > u32::max_value() as usize {
-        panic!("Name too long ({} bytes).", name.len());
-    }
-
-    if args.len() > u32::max_value() as usize {
-        panic!("Args too long ({} bytes).", args.len());
+    // The Arguments to the procedure cannot be more that 4 GB long.
+    if payload.len() - name_len as usize > u32::max_value() as usize {
+        panic!("Args too long ({} bytes).", payload.len() - name_len as usize);
     }
 
     // Allocate a packet, write the header and payload into it, and set fields on it's UDP and IP
-    // header.
+    // header. Since the payload contains both, the name and arguments in it, args_len can be
+    // calculated as payload length - name_len.
     let mut request = create_request(mac, ip, udp)
         .push_header(&InvokeRequest::new(
             tenant,
-            name.len() as u32,
-            args.len() as u32,
+            name_len,
+            (payload.len() - name_len as usize) as u32,
             id,
         ))
         .expect("Failed to push RPC header into request!");
-
-    let mut payload = Vec::with_capacity(name.len() + args.len());
-    payload.extend_from_slice(name);
-    payload.extend_from_slice(args);
 
     request
         .add_to_payload_tail(payload.len(), &payload)

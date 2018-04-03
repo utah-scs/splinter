@@ -145,6 +145,14 @@ where
     // If true, RPC requests corresponding to native get() and put() operations are sent out. If
     // false, invoke() based RPC requests are sent out.
     native: bool,
+
+    // Payload for an invoke() based get operation. Required in order to avoid making intermediate
+    // copies of the extension name, table id, and key.
+    payload_get: RefCell<Vec<u8>>,
+
+    // Payload for an invoke() based put operation. Required in order to avoid making intermediate
+    // copies of the extension name, table id, key length, key, and value.
+    payload_put: RefCell<Vec<u8>>,
 }
 
 // Implementation of methods on YcsbSend.
@@ -159,11 +167,33 @@ where
     /// * `config`: Client configuration with YCSB related (key and value length etc.) as well as
     ///             Network related (Server and Client MAC address etc.) parameters.
     /// * `port`:   Network port over which requests will be sent out.
+    /// * `reqs`:   The number of requests to be issued to the server.
     ///
     /// # Return
     ///
     /// A YCSB request generator.
-    fn new(config: &config::ClientConfig, port: T) -> YcsbSend<T> {
+    fn new(config: &config::ClientConfig, port: T, reqs: u64) -> YcsbSend<T> {
+        // The payload on an invoke() based get request consists of the extensions name ("get"),
+        // the table id to perform the lookup on, and the key to lookup.
+        let payload_len = "get".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
+        let mut payload_get = Vec::with_capacity(payload_len);
+        payload_get.extend_from_slice("get".as_bytes());
+        payload_get.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
+        payload_get.resize(payload_len, 0);
+
+        // The payload on an invoke() based put request consists of the extensions name ("put"),
+        // the table id to perform the lookup on, the length of the key to lookup, the key, and the
+        // value to be inserted into the database.
+        let payload_len = "put".as_bytes().len() + mem::size_of::<u64>() + mem::size_of::<u16>()
+            + config.key_len + config.value_len;
+        let mut payload_put = Vec::with_capacity(payload_len);
+        payload_put.extend_from_slice("put".as_bytes());
+        payload_put.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
+        payload_put.extend_from_slice(&unsafe {
+            transmute::<u16, [u8; 2]>((config.key_len as u16).to_le())
+        });
+        payload_put.resize(payload_len, 0);
+
         YcsbSend {
             workload: RefCell::new(Ycsb::new(
                 config.key_len,
@@ -173,12 +203,14 @@ where
                 config.skew,
             )),
             sender: dispatch::Sender::new(config, port),
-            requests: 16 * 1000 * 1000,
+            requests: reqs,
             sent: 0,
-            rate_inv: 1 * 1000,
+            rate_inv: (1 * 1000 * 1000 * 1000) / config.req_rate as u64,
             start: precise_time_ns(),
             next: 0,
             native: !config.use_invoke,
+            payload_get: RefCell::new(payload_get),
+            payload_put: RefCell::new(payload_put),
         }
     }
 }
@@ -195,15 +227,43 @@ where
             return;
         }
 
+        // Get the current time stamp so that we can determine if it is time to issue the next RPC.
         let curr = precise_time_ns();
 
         // If it is either time to send out a request, or if a request has never been sent out,
         // then, do so.
         if curr >= self.next || self.next == 0 {
-            self.workload.borrow_mut().abc(
-                |key| self.sender.send_get(1, 1, key, curr),
-                |key, val| self.sender.send_put(1, 1, key, val, curr),
-            );
+            if self.native == true {
+                // Configured to issue native RPCs, issue a regular get()/put() operation.
+                self.workload.borrow_mut().abc(
+                    |key| self.sender.send_get(1, 1, key, curr),
+                    |key, val| self.sender.send_put(1, 1, key, val, curr),
+                );
+            } else {
+                // Configured to issue invoke() RPCs.
+                let mut p_get = self.payload_get.borrow_mut();
+                let mut p_put = self.payload_put.borrow_mut();
+
+                // XXX Heavily dependent on how `Ycsb` creates a key. Only the first four
+                // bytes of the key matter, the rest are zero. The value is always zero.
+                self.workload.borrow_mut().abc(
+                    |key| {
+                        // First 11 bytes on the payload were already pre-populated with the
+                        // extension name (3 bytes), and the table id (8 bytes). Just write in the
+                        // first 4 bytes of the key.
+                        p_get[11..15].copy_from_slice(&key[0..4]);
+                        self.sender.send_invoke(1, 3, &p_get, curr)
+                    },
+                    |key, _val| {
+                        // First 13 bytes on the payload were already pre-populated with the
+                        // extension name (3 bytes), the table id (8 bytes), and the key length (2
+                        // bytes). Just write in the first 4 bytes of the key. The value is anyway
+                        // always zero.
+                        p_put[13..17].copy_from_slice(&key[0..4]);
+                        self.sender.send_invoke(1, 3, &p_put, curr)
+                    },
+                );
+            }
 
             // Update the time stamp at which the next request should be generated, assuming that
             // the first request was sent out at self.start.
@@ -249,16 +309,17 @@ where
     ///
     /// # Arguments
     ///
-    /// * `port`: Network port on which responses will be polled for.
+    /// * `port` : Network port on which responses will be polled for.
+    /// * `resps`: The number of responses to wait for before calculating statistics.
     ///
     /// # Return
     ///
     /// A YCSB response receiver that measures the median latency and throughput of a Sandstorm
     /// server.
-    fn new(port: T) -> YcsbRecv<T> {
+    fn new(port: T, resps: u64) -> YcsbRecv<T> {
         YcsbRecv {
             receiver: dispatch::Receiver::new(port),
-            responses: 10 * 1000 * 1000,
+            responses: resps,
             start: precise_time_ns(),
             recvd: 0,
             latencies: Vec::with_capacity(1 * 1000 * 1000),
@@ -288,6 +349,9 @@ where
                 // received packet's payload.
                 if self.recvd & 0xf == 0 {
                     let curr = precise_time_ns();
+
+                    // XXX Uncomment to print out responses.
+                    // println!("{:?}", packet.get_payload());
 
                     let sent = &packet.get_payload()[1..9];
                     let sent = 0 | sent[0] as u64 | (sent[1] as u64) << 8 | (sent[2] as u64) << 16
@@ -343,7 +407,7 @@ where
     }
 
     // Add the sender to a netbricks pipeline.
-    match scheduler.add_task(YcsbSend::new(config, ports[0].clone())) {
+    match scheduler.add_task(YcsbSend::new(config, ports[0].clone(), config.num_reqs as u64)) {
         Ok(_) => {
             info!("Successfully added YcsbSend to a Netbricks pipeline.");
         }
@@ -372,7 +436,7 @@ where
     }
 
     // Add the receiver to a netbricks pipeline.
-    match scheduler.add_task(YcsbRecv::new(ports[0].clone())) {
+    match scheduler.add_task(YcsbRecv::new(ports[0].clone(), 16 * 1000 * 1000 as u64)) {
         Ok(_) => {
             info!("Successfully added YcsbRecv to a Netbricks pipeline.");
         }

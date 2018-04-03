@@ -138,6 +138,9 @@ pub struct ClientConfig {
     pub n_keys: usize,
     pub put_pct: usize,
     pub skew: f64,
+
+    pub num_reqs: usize,
+    pub req_rate: usize,
 }
 
 impl ClientConfig {

@@ -158,18 +158,20 @@ where
     ///
     /// # Arguments
     ///
-    /// * `tenant`: Id of the tenant requesting the invocation.
-    /// * `name`:   The name of the extensions to be invoked inside the database.
-    /// * `args`:   The arguments to be passed in to the extension.
-    /// * `id`:     RPC identifier.
-    pub fn send_invoke(&self, tenant: u32, name: &[u8], args: &[u8], id: u64) {
+    /// * `tenant`:   Id of the tenant requesting the invocation.
+    /// * `name_len`: The number of bytes at the head of the payload corresponding to the
+    ///               extensions name.
+    /// * `payload`:  The RPC payload to be written into the packet. Must contain the name of the
+    ///               extension followed by it's arguments.
+    /// * `id`:       RPC identifier.
+    pub fn send_invoke(&self, tenant: u32, name_len: u32, payload: &[u8], id: u64) {
         let request = rpc::create_invoke_rpc(
             &self.req_mac_header,
             &self.req_ip_header,
             &self.req_udp_header,
             tenant,
-            name,
-            args,
+            name_len,
+            payload,
             id,
         );
 
