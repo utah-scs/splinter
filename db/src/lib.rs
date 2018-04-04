@@ -13,7 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(generators, generator_trait)]
+#![feature(generators, generator_trait, asm)]
 
 extern crate libloading;
 extern crate sandstorm;
@@ -34,6 +34,7 @@ mod alloc;
 mod common;
 mod container;
 mod context;
+mod cycles;
 mod service;
 mod task;
 mod tenant;
