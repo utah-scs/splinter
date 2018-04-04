@@ -1,24 +1,55 @@
 #!/bin/bash
+#
+# Copyright (c) 2018 University of Utah
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+# Export DPDK bindings to the current shell.
 export LD_LIBRARY_PATH=$(pwd)/net/target/native
 
 cd db
 
+# Check for a TOML file with client related configuration.
 if [[ ! -f client.toml ]]; then
     echo "Missing client.toml file (in db directory)."
     exit -1
 fi
 
+# Get the "use_invoke" field from the client configuration. The output file
+# will be markes with the value of this field, allowing to distinguish between
+# experiments run with an invoke based YCSB, and experiments run with a native
+# operation based YCSB.
 invoke=$(cat client.toml | grep "use_invoke" | awk '{ print $NF }')
 
-rates=(100000 200000 300000 400000 500000 600000 700000 800000 900000 1000000 1100000 1200000)
+# The different request rates that the YCSB client will be configured and run
+# with.
+rates=(100000 200000 300000 400000 500000 600000 700000 800000 900000 1000000 \
+        1100000 1200000)
 
-echo "# Offered 50% 99% Thrpt" > ../ycsb_invoke_"$invoke".out
+# Header for the output file. Required inorder to plot the results.
+echo "Offered 50 99 Thrpt" > ../ycsb_invoke_"$invoke".out
 
+# Run YCSB for each of the above request rates.
 for rate in ${rates[@]}
 do
-	echo "Running for a target rate of $rate ops/sec, invoke=$invoke"
-	sed -i "s/req_rate = [1-9][0-9]*/req_rate = $rate/g" client.toml
-	RUST_LOG=debug ./target/release/ycsb 2>&1 | grep "Median(ns)" | \
-		awk "{ print $rate, \$3, \$5, \$7 }" >> ../ycsb_invoke_"$invoke".out
+    echo "Running for a target rate of $rate ops/sec, invoke=$invoke"
+
+    # Configure the client TOML file with the request rate.
+    sed -i "s/req_rate = [1-9][0-9]*/req_rate = $rate/g" client.toml
+
+    # Run YCSB, and write out the median, 99th, and throughput.
+    RUST_LOG=debug ./target/release/ycsb 2>&1 | grep "Median(ns)" | \
+            awk "{ print $rate, \$3, \$5, \$7 }" >> ../ycsb_invoke_"$invoke".out
 done
+
+exit 0

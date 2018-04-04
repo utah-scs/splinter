@@ -18,6 +18,8 @@ import os
 import sys
 import subprocess
 
+"""Dictionary of different colors that can be printed to the screen.
+"""
 colors = {
     "bold": '\033[1m',
     "end" : '\033[0m',
