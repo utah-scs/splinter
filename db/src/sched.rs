@@ -13,10 +13,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::cell::Cell;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::rpc;
+use super::cycles;
 use super::task::Task;
 use super::task::TaskState::*;
 
@@ -25,13 +26,12 @@ use e2d2::headers::IpHeader;
 use e2d2::common::EmptyMetadata;
 
 use spin::RwLock;
-use time::PreciseTime;
 
 /// A simple round robin scheduler for Tasks in Sandstorm.
 pub struct RoundRobin {
     // The time-stamp at which the scheduler last ran. Required to identify whether there is an
     // uncooperative task running on the scheduler.
-    latest: Cell<PreciseTime>,
+    latest: AtomicUsize,
 
     // Run-queue of tasks waiting to execute. Tasks on this queue have either yielded, or have been
     // recently enqueued and never run before.
@@ -48,7 +48,7 @@ impl RoundRobin {
     /// trait.
     pub fn new() -> RoundRobin {
         RoundRobin {
-            latest: Cell::new(PreciseTime::now()),
+            latest: AtomicUsize::new(0),
             waiting: RwLock::new(VecDeque::new()),
             responses: RwLock::new(Vec::new()),
         }
@@ -104,14 +104,14 @@ impl RoundRobin {
 
     /// Returns the time-stamp at which the latest scheduling decision was made.
     #[inline]
-    pub fn latest(&self) -> PreciseTime {
-        self.latest.get()
+    pub fn latest(&self) -> u64 {
+        self.latest.load(Ordering::Relaxed) as u64
     }
 
     /// Picks up a task from the waiting queue, and runs it until it either yields or completes.
     pub fn poll(&self) {
         // Set the time-stamp of the latest scheduling decision.
-        self.latest.set(PreciseTime::now());
+        self.latest.store(cycles::rdtsc() as usize, Ordering::Relaxed);
 
         // If there are tasks to run, then pick one from the head of the queue, and run it until it
         // either completes or yields back.

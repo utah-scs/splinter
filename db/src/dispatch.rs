@@ -19,9 +19,8 @@ use std::str::FromStr;
 use std::net::Ipv4Addr;
 use std::option::Option;
 
-use time::{precise_time_ns, Duration, PreciseTime};
-
 use super::rpc::*;
+use super::cycles;
 use super::common;
 use super::config;
 use super::wireformat;
@@ -84,17 +83,17 @@ where
     /// the last measurement interval.
     responses_sent: u64,
 
-    /// An indicator of the start of the current measurement interval.
-    measurement_start_ns: u64,
+    /// An indicator of the start of the current measurement interval in cycles.
+    measurement_start: u64,
 
-    /// An indicator of the stop of the previous measurement interval.
-    measurement_stop_ns: u64,
+    /// An indicator of the stop of the previous measurement interval in cycles.
+    measurement_stop: u64,
 
     /// The current execution state of the Dispatch task. Can be INITIALIZED, YIELDED, or RUNNING.
     state: TaskState,
 
-    /// The total time for which the Dispatch task has executed on the CPU.
-    time: Duration,
+    /// The total time for which the Dispatch task has executed on the CPU in cycles.
+    time: u64,
 
     /// The priority of the Dispatch task. Required by the scheduler to determine when to run the
     /// task again.
@@ -182,10 +181,10 @@ where
             resp_ip_header: ip_header,
             resp_mac_header: mac_header,
             responses_sent: 0,
-            measurement_start_ns: precise_time_ns(),
-            measurement_stop_ns: 0,
+            measurement_start: cycles::rdtsc(),
+            measurement_stop: 0,
             state: TaskState::INITIALIZED,
-            time: Duration::microseconds(0),
+            time: 0,
             priority: TaskPriority::DISPATCH,
         }
     }
@@ -285,15 +284,16 @@ where
         // amount of time in nano seconds it took to do so.
         let every = 1000000;
         if self.responses_sent >= every {
-            self.measurement_stop_ns = precise_time_ns();
+            self.measurement_stop = cycles::rdtsc();
 
             info!(
                 "{:.0} K/packets/s",
                 (self.responses_sent as f64 / 1e3)
-                    / ((self.measurement_stop_ns - self.measurement_start_ns) as f64 / 1e9)
+                    / ((self.measurement_stop - self.measurement_start) as f64
+                        / (cycles::cycles_per_second() as f64))
             );
 
-            self.measurement_start_ns = self.measurement_stop_ns;
+            self.measurement_start = self.measurement_stop;
             self.responses_sent = 0;
         }
     }
@@ -578,8 +578,8 @@ where
     T: PacketRx + PacketTx + Display + Clone + 'static,
 {
     /// Refer to the `Task` trait for Documentation.
-    fn run(&mut self) -> (TaskState, Duration) {
-        let start = PreciseTime::now();
+    fn run(&mut self) -> (TaskState, u64) {
+        let start = cycles::rdtsc();
 
         // Run the dispatch task, polling for received packets and sending out pending responses.
         self.state = TaskState::RUNNING;
@@ -587,9 +587,9 @@ where
         self.state = TaskState::YIELDED;
 
         // Update the time the task spent executing and return.
-        let exec = start.to(PreciseTime::now());
+        let exec = cycles::rdtsc() - start;
 
-        self.time = exec + self.time;
+        self.time += exec;
 
         return (self.state.clone(), exec);
     }
@@ -600,7 +600,7 @@ where
     }
 
     /// Refer to the `Task` trait for Documentation.
-    fn time(&self) -> Duration {
+    fn time(&self) -> u64 {
         self.time.clone()
     }
 

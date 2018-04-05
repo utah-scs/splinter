@@ -16,14 +16,13 @@
 use std::cell::Cell;
 use std::ops::{Generator, GeneratorState};
 
+use super::cycles;
 use super::task::TaskState::*;
 use super::task::{Task, TaskPriority, TaskState};
 
 use e2d2::interface::Packet;
 use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
-
-use time::{Duration, PreciseTime};
 
 // The expected type signature on a generator for a native operation (ex: get()). The return
 // value is an optional tuple consisting of a request and response packet parsed/deparsed upto
@@ -45,8 +44,8 @@ pub struct Native {
     // execution, or whether it needs to be scheduled to run on the CPU.
     state: TaskState,
 
-    // The total amount of time for which the task has run on the CPU.
-    time: Duration,
+    // The total amount of time for which the task has run on the CPU in cycles.
+    time: u64,
 
     // The priority of the task. Required to determine when the task must be allowed to run next.
     priority: TaskPriority,
@@ -80,7 +79,7 @@ impl Native {
         // execution.
         Native {
             state: INITIALIZED,
-            time: Duration::microseconds(0),
+            time: 0,
             priority: prio,
             gen: generator,
             res: Cell::new(None),
@@ -91,8 +90,8 @@ impl Native {
 // Implementation of the Task trait on Native.
 impl Task for Native {
     /// Refer to the Task trait for documentation.
-    fn run(&mut self) -> (TaskState, Duration) {
-        let start = PreciseTime::now();
+    fn run(&mut self) -> (TaskState, u64) {
+        let start = cycles::rdtsc();
 
         // Run the generator if need be.
         if self.state == INITIALIZED || self.state == YIELDED {
@@ -114,10 +113,10 @@ impl Task for Native {
         }
 
         // Get the continuous time this task executed for.
-        let exec = start.to(PreciseTime::now());
+        let exec = cycles::rdtsc() - start;
 
         // Update the total time this task has executed for and return.
-        self.time = exec + self.time;
+        self.time += exec;
 
         return (self.state.clone(), exec);
     }
@@ -128,7 +127,7 @@ impl Task for Native {
     }
 
     /// Refer to the Task trait for documentation.
-    fn time(&self) -> Duration {
+    fn time(&self) -> u64 {
         self.time.clone()
     }
 

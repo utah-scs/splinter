@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use time::Duration;
-
 use e2d2::interface::Packet;
 use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
@@ -62,8 +60,8 @@ pub trait Task {
     ///
     /// A tuple whose first member consists of the current state of the task
     /// (`TaskState`), and whose second member consists of the amount of time
-    /// the task continuously ran for during this call to run().
-    fn run(&mut self) -> (TaskState, Duration);
+    /// in cycles the task continuously ran for during this call to run().
+    fn run(&mut self) -> (TaskState, u64);
 
     /// When called, this method should return the current state of the task.
     ///
@@ -77,8 +75,8 @@ pub trait Task {
     ///
     /// # Return
     ///
-    /// The total time for which the task has run (`Duration`).
-    fn time(&self) -> Duration;
+    /// The total time for which the task has run in cycles.
+    fn time(&self) -> u64;
 
     /// When called, this method should return the priority of the task.
     ///

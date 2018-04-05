@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::cell::Cell;
 use std::ops::{Generator, GeneratorState};
 
+use super::cycles;
 use super::ext::Extension;
 use super::context::Context;
 use super::task::TaskState::*;
@@ -29,7 +30,6 @@ use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
 
 use sandstorm::db::DB;
-use time::{Duration, PreciseTime};
 
 /// A container for untrusted code that can be scheduled by the database.
 pub struct Container {
@@ -41,9 +41,9 @@ pub struct Container {
     // be run next, if it has not completed already.
     priority: TaskPriority,
 
-    // The total amount of time the task has run for. Required to determine
-    // when the task should be run next, and for accounting purposes.
-    time: Duration,
+    // The total amount of time in cycles the task has run for. Required to
+    // determine when the task should be run next, and for accounting purposes.
+    time: u64,
 
     // An execution context for the task that implements the DB trait. Required
     // for the task to interact with the database.
@@ -82,7 +82,7 @@ impl Container {
         Container {
             state: INITIALIZED,
             priority: prio,
-            time: Duration::microseconds(0),
+            time: 0,
             db: Cell::new(Some(context)),
             ext: ext,
             gen: Box::new(|| {
@@ -96,8 +96,8 @@ impl Container {
 // Implementation of the Task trait for Container.
 impl Task for Container {
     /// Refer to the Task trait for Documentation.
-    fn run(&mut self) -> (TaskState, Duration) {
-        let start = PreciseTime::now();
+    fn run(&mut self) -> (TaskState, u64) {
+        let start = cycles::rdtsc();
 
         // If the task has never run before, retrieve the generator for the
         // extension first.
@@ -127,11 +127,11 @@ impl Task for Container {
             }
         }
 
-        // Calculate the amount of time the task executed for.
-        let exec = start.to(PreciseTime::now());
+        // Calculate the amount of time the task executed for in cycles.
+        let exec = cycles::rdtsc() - start;
 
         // Update the total execution time of the task.
-        self.time = exec + self.time;
+        self.time += exec;
 
         // Return the state and the amount of time the task executed for.
         return (self.state, exec);
@@ -143,7 +143,7 @@ impl Task for Container {
     }
 
     /// Refer to the Task trait for Documentation.
-    fn time(&self) -> Duration {
+    fn time(&self) -> u64 {
         self.time.clone()
     }
 
