@@ -28,11 +28,12 @@ use std::cell::RefCell;
 use std::mem::transmute;
 
 use db::log::*;
+use db::cycles;
 use db::config;
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
 
-use time::precise_time_ns;
+use time::Duration;
 use zipf::ZipfDistribution;
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
@@ -133,13 +134,13 @@ where
     sent: u64,
 
     // The inverse of the rate at which requests are to be generated. Basically, the time interval
-    // between two request generations in nanoseconds.
+    // between two request generations in cycles.
     rate_inv: u64,
 
-    // The time stamp at which the workload started generating requests.
+    // The time stamp at which the workload started generating requests in cycles.
     start: u64,
 
-    // The time stamp at which the next request must be issued.
+    // The time stamp at which the next request must be issued in cycles.
     next: u64,
 
     // If true, RPC requests corresponding to native get() and put() operations are sent out. If
@@ -205,8 +206,8 @@ where
             sender: dispatch::Sender::new(config, port),
             requests: reqs,
             sent: 0,
-            rate_inv: (1 * 1000 * 1000 * 1000) / config.req_rate as u64,
-            start: precise_time_ns(),
+            rate_inv: cycles::cycles_per_second() / config.req_rate as u64,
+            start: cycles::rdtsc(),
             next: 0,
             native: !config.use_invoke,
             payload_get: RefCell::new(payload_get),
@@ -228,7 +229,7 @@ where
         }
 
         // Get the current time stamp so that we can determine if it is time to issue the next RPC.
-        let curr = precise_time_ns();
+        let curr = cycles::rdtsc();
 
         // If it is either time to send out a request, or if a request has never been sent out,
         // then, do so.
@@ -288,8 +289,8 @@ where
     // The number of response packets to wait for before printing out statistics.
     responses: u64,
 
-    // Time stamp at which measurement started. Required to calculate observed throughput of the
-    // Sandstorm server.
+    // Time stamp in cycles at which measurement started. Required to calculate observed
+    // throughput of the Sandstorm server.
     start: u64,
 
     // The total number of responses received so far.
@@ -320,7 +321,7 @@ where
         YcsbRecv {
             receiver: dispatch::Receiver::new(port),
             responses: resps,
-            start: precise_time_ns(),
+            start: cycles::rdtsc(),
             recvd: 0,
             latencies: Vec::with_capacity(1 * 1000 * 1000),
         }
@@ -348,7 +349,7 @@ where
                 // While sampling, read the time-stamp at which the request was generated from the
                 // received packet's payload.
                 if self.recvd & 0xf == 0 {
-                    let curr = precise_time_ns();
+                    let curr = cycles::rdtsc();
 
                     // XXX Uncomment to print out responses.
                     // println!("{:?}", packet.get_payload());
@@ -371,7 +372,7 @@ where
         // The moment all response packets have been received, output the measured latency
         // distribution and throughput.
         if self.responses <= self.recvd {
-            let stop = precise_time_ns();
+            let stop = cycles::rdtsc();
 
             self.latencies.sort();
             let median = self.latencies[self.latencies.len() / 2];
@@ -379,9 +380,9 @@ where
 
             info!(
                 "Median(ns): {} Tail(ns): {} Throughput(Kops/s): {}",
-                median,
-                tail,
-                (self.recvd * 1000 * 1000 * 1000) / (stop - self.start)
+                cycles::to_seconds(median) * 1e9,
+                cycles::to_seconds(tail) * 1e9,
+                self.recvd as f64 / cycles::to_seconds(stop - self.start)
             );
         }
     }

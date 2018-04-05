@@ -34,7 +34,6 @@ mod alloc;
 mod common;
 mod container;
 mod context;
-mod cycles;
 mod service;
 mod task;
 mod tenant;
@@ -42,6 +41,7 @@ mod native;
 
 // Public modules for binaries.
 pub mod rpc;
+pub mod cycles;
 pub mod config;
 pub mod dispatch;
 pub mod ext;

@@ -9,9 +9,9 @@ server_udp_port = 0
 use_invoke = false
 
 use_ycsb = true
-key_len = 4
-value_len = 96
-n_keys = 1000000
+key_len = 30
+value_len = 100
+n_keys = 10000000
 put_pct = 5
 skew = 0.99
 
