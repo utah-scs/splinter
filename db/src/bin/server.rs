@@ -25,6 +25,7 @@ use db::log::*;
 use db::e2d2::scheduler::*;
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::Executable;
+use db::e2d2::allocators::CacheAligned;
 use db::e2d2::scheduler::NetBricksContext as NetbricksContext;
 use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
 
@@ -73,13 +74,12 @@ impl Executable for Server {
 
 /// This function sets up a Sandstorm server's dispatch thread on top
 /// of Netbricks.
-fn setup_server<T, S>(
+fn setup_server<S>(
     config: &config::ServerConfig,
-    ports: Vec<T>,
+    ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
     master: &Arc<Master>,
 ) where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
     S: Scheduler + Sized,
 {
     if ports.len() != 1 {
@@ -89,7 +89,13 @@ fn setup_server<T, S>(
 
     // Create a scheduler and a dispatcher for the server.
     let sched = Arc::new(RoundRobin::new());
-    let dispatch = Dispatch::new(config, ports[0].clone(), Arc::clone(master), Arc::clone(&sched));
+    let dispatch = Dispatch::new(
+        config,
+        ports[0].clone(),
+        Arc::clone(master),
+        Arc::clone(&sched),
+        ports[0].rxq(),
+    );
     sched.enqueue(Box::new(dispatch));
 
     // Add the server to a netbricks pipeline.
@@ -121,7 +127,7 @@ fn get_default_netbricks_config(config: &config::ServerConfig) -> NetbricksConfi
     let net_config_name = String::from("server");
     let dpdk_secondary: bool = false;
     let net_primary_core: i32 = 31;
-    let net_cores: Vec<i32> = vec![0, 1];
+    let net_cores: Vec<i32> = vec![0, 2];
     let net_strict_cores: bool = true;
     let net_pool_size: u32 = 2048 - 1;
     let net_cache_size: u32 = 64;

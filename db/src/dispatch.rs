@@ -98,6 +98,9 @@ where
     /// The priority of the Dispatch task. Required by the scheduler to determine when to run the
     /// task again.
     priority: TaskPriority,
+
+    /// Unique identifier for a Dispatch task. Currently required for measurement purposes.
+    id: i32,
 }
 
 impl<T> Dispatch<T>
@@ -115,6 +118,7 @@ where
     /// * `master`:   A reference to a Master which will be used to construct tasks from received
     ///               packets.
     /// * `sched`:    A reference to a scheduler on which tasks will be enqueued.
+    /// * `id`:       The identifier of the dispatcher.
     ///
     /// # Return
     ///
@@ -124,6 +128,7 @@ where
         net_port: T,
         master: Arc<Master>,
         sched: Arc<RoundRobin>,
+        id: i32,
     ) -> Dispatch<T> {
         let rx_batch_size: u8 = 32;
         let tx_batch_size: u8 = 32;
@@ -159,6 +164,7 @@ where
         ip_header.set_version(ip_version);
         ip_header.set_ihl(ip_ihl);
         ip_header.set_length(ip_length);
+        ip_header.set_protocol(0x11);
 
         // Create a common mac header for response packets.
         let mac_src_addr: MacAddress = config.parse_mac();
@@ -186,6 +192,7 @@ where
             state: TaskState::INITIALIZED,
             time: 0,
             priority: TaskPriority::DISPATCH,
+            id: id,
         }
     }
 
@@ -287,7 +294,8 @@ where
             self.measurement_stop = cycles::rdtsc();
 
             info!(
-                "{:.0} K/packets/s",
+                "Dispatcher {}: {:.0} K/packets/s",
+                self.id,
                 (self.responses_sent as f64 / 1e3)
                     / ((self.measurement_stop - self.measurement_start) as f64
                         / (cycles::cycles_per_second() as f64))
