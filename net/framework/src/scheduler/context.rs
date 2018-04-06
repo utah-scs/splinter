@@ -186,23 +186,23 @@ impl NetBricksContext {
 
     /// Stop all schedulers, safely shutting down the system.
     pub fn stop(&mut self) {
-        for (core, channel) in &self.scheduler_channels {
+        for (_core, channel) in &self.scheduler_channels {
             channel.send(SchedulerCommand::Shutdown).unwrap();
-            println!("Issued shutdown for core {}", core);
+            // println!("Issued shutdown for core {}", core);
         }
-        for (core, join_handle) in self.scheduler_handles.drain() {
+        for (_core, join_handle) in self.scheduler_handles.drain() {
             join_handle.join().unwrap();
-            println!("Core {} has shutdown", core);
+            // println!("Core {} has shutdown", core);
         }
-        println!("System shutdown");
+        // println!("System shutdown");
     }
 
     pub fn wait(&mut self) {
-        for (core, join_handle) in self.scheduler_handles.drain() {
+        for (_core, join_handle) in self.scheduler_handles.drain() {
             join_handle.join().unwrap();
-            println!("Core {} has shutdown", core);
+            // println!("Core {} has shutdown", core);
         }
-        println!("System shutdown");
+        // println!("System shutdown");
     }
 
     /// Shutdown all schedulers.

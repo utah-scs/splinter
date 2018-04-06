@@ -118,10 +118,10 @@ impl StandaloneScheduler {
         {
             self.handle_request(cmd)
         }
-        println!(
-            "Scheduler exiting {}",
-            thread::current().name().unwrap_or_else(|| "unknown-name")
-        );
+        // println!(
+        //     "Scheduler exiting {}",
+        //     thread::current().name().unwrap_or_else(|| "unknown-name")
+        // );
     }
 
     #[inline]
