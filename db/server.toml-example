@@ -1,6 +1,7 @@
 mac_address = "01:02:03:04:05:06"
 ip_address = "192.168.0.2"
 udp_port = 0
+nic_pci = "0000:04:00.1"
 
 client_mac = "01:02:03:04:05:06"
 client_ip = "192.168.0.1"

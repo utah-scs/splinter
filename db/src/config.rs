@@ -90,6 +90,7 @@ pub struct ServerConfig {
     mac_address: String,
     pub ip_address: String,
     pub udp_port: u16,
+    pub nic_pci: String,
     client_mac: String,
     pub client_ip: String,
 }

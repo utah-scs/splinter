@@ -51,9 +51,7 @@ impl Server {
     ///
     /// A Server that can be added to a Netbricks pipeline.
     pub fn new(sched: Arc<RoundRobin>) -> Server {
-        Server {
-            scheduler: sched,
-        }
+        Server { scheduler: sched }
     }
 }
 
@@ -75,8 +73,12 @@ impl Executable for Server {
 
 /// This function sets up a Sandstorm server's dispatch thread on top
 /// of Netbricks.
-fn setup_server<T, S>(config: &config::ServerConfig, ports: Vec<T>, scheduler: &mut S)
-where
+fn setup_server<T, S>(
+    config: &config::ServerConfig,
+    ports: Vec<T>,
+    scheduler: &mut S,
+    master: &Arc<Master>,
+) where
     T: PacketTx + PacketRx + Display + Clone + 'static,
     S: Scheduler + Sized,
 {
@@ -85,19 +87,9 @@ where
         std::process::exit(1);
     }
 
-    // Create a test tenant with a table containing 10 million objects, and with a set of
-    // test extensions.
-    let master = Arc::new(Master::new());
-    info!("Populating test data table and extensions...");
-    master.fill_test(1, 1, 10 * 1000 * 1000);
-    master.fill_test(100, 100, 0);
-    master.load_test(1);
-    master.load_test(100);
-    info!("Finished populating data and extensions");
-
     // Create a scheduler and a dispatcher for the server.
     let sched = Arc::new(RoundRobin::new());
-    let dispatch = Dispatch::new(config, ports[0].clone(), master, Arc::clone(&sched));
+    let dispatch = Dispatch::new(config, ports[0].clone(), Arc::clone(master), Arc::clone(&sched));
     sched.enqueue(Box::new(dispatch));
 
     // Add the server to a netbricks pipeline.
@@ -124,19 +116,19 @@ where
 /// receive descriptors, and 256 transmit descriptors will be made available to
 /// Netbricks. Loopback, hardware transmit segementation offload, and hardware
 /// checksum offload will be disabled on this port.
-fn get_default_netbricks_config() -> NetbricksConfiguration {
+fn get_default_netbricks_config(config: &config::ServerConfig) -> NetbricksConfiguration {
     // General arguments supplied to netbricks.
     let net_config_name = String::from("server");
     let dpdk_secondary: bool = false;
-    let net_primary_core: i32 = 0;
-    let net_cores: Vec<i32> = vec![1];
+    let net_primary_core: i32 = 31;
+    let net_cores: Vec<i32> = vec![0, 1];
     let net_strict_cores: bool = true;
     let net_pool_size: u32 = 2048 - 1;
     let net_cache_size: u32 = 64;
     let net_dpdk_args: Option<String> = None;
 
     // Port configuration. Required to configure the physical network interface.
-    let net_port_name = String::from("0000:04:00.1");
+    let net_port_name = config.nic_pci.clone();
     let net_port_rx_queues: Vec<i32> = net_cores.clone();
     let net_port_tx_queues: Vec<i32> = net_cores.clone();
     let net_port_rxd: i32 = 256;
@@ -146,15 +138,15 @@ fn get_default_netbricks_config() -> NetbricksConfiguration {
     let net_port_csum_offload: bool = false;
 
     let net_port_config = PortConfiguration {
-                              name: net_port_name,
-                              rx_queues: net_port_rx_queues,
-                              tx_queues: net_port_tx_queues,
-                              rxd: net_port_rxd,
-                              txd: net_port_txd,
-                              loopback: net_port_loopback,
-                              tso: net_port_tcp_tso,
-                              csum: net_port_csum_offload,
-                          };
+        name: net_port_name,
+        rx_queues: net_port_rx_queues,
+        tx_queues: net_port_tx_queues,
+        rxd: net_port_rxd,
+        txd: net_port_txd,
+        loopback: net_port_loopback,
+        tso: net_port_tcp_tso,
+        csum: net_port_csum_offload,
+    };
 
     // The set of ports used by netbricks.
     let net_ports: Vec<PortConfiguration> = vec![net_port_config];
@@ -177,8 +169,8 @@ fn get_default_netbricks_config() -> NetbricksConfiguration {
 ///
 /// Returns a Netbricks context which can be used to setup and start the
 /// server/client.
-fn config_and_init_netbricks() -> NetbricksContext {
-    let net_config: NetbricksConfiguration = get_default_netbricks_config();
+fn config_and_init_netbricks(config: &config::ServerConfig) -> NetbricksContext {
+    let net_config: NetbricksConfiguration = get_default_netbricks_config(config);
 
     // Initialize Netbricks and return a handle.
     match initialize_system(&net_config) {
@@ -196,28 +188,36 @@ fn config_and_init_netbricks() -> NetbricksContext {
 
 fn main() {
     // Basic setup and initialization.
-    db::env_logger::init()
-                .expect("ERROR: failed to initialize logger!");
+    db::env_logger::init().expect("ERROR: failed to initialize logger!");
 
     let config = config::ServerConfig::load();
     info!("Starting up Sandstorm server with config {:?}", config);
 
     // Setup Netbricks.
-    let mut net_context: NetbricksContext = config_and_init_netbricks();
+    let mut net_context: NetbricksContext = config_and_init_netbricks(&config);
+
+    // Create a test tenant with a table containing 10 million objects, and with a set of
+    // test extensions.
+    let master = Arc::new(Master::new());
+    info!("Populating test data table and extensions...");
+    master.fill_test(1, 1, 10 * 1000 * 1000);
+    master.fill_test(100, 100, 0);
+    master.load_test(1);
+    master.load_test(100);
+    info!("Finished populating data and extensions");
 
     // Setup the server pipeline.
     net_context.start_schedulers();
     net_context.add_pipeline_to_run(Arc::new(
-            move | ports, scheduler: &mut StandaloneScheduler |
-            setup_server(&config, ports, scheduler)
-            ));
+        move |ports, scheduler: &mut StandaloneScheduler| {
+            setup_server(&config, ports, scheduler, &master)
+        },
+    ));
 
     // Run the server.
     net_context.execute();
 
-    loop {
-        ;
-    }
+    loop {}
 
     // Stop the server.
     // net_context.stop();

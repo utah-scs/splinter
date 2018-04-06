@@ -470,12 +470,10 @@ where
             // This block borrows the UDP header from the parsed packet, and
             // checks if it is valid. A packet is considered valid if:
             //      - It is not long enough,
-            //      - It's destination port matches that of the server.
             {
                 const MIN_LENGTH_UDP: u16 = common::PACKET_UDP_LEN + 2;
                 let udp_header: &UdpHeader = packet.get_header();
-                valid = (udp_header.length() >= MIN_LENGTH_UDP)
-                    && (udp_header.dst_port() == self.resp_udp_header.src_port());
+                valid = udp_header.length() >= MIN_LENGTH_UDP;
             }
 
             match valid {
