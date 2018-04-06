@@ -82,7 +82,7 @@ fn set_numa_domain() {
             -1
         } else {
             let domain = libnuma::numa_preferred();
-            println!("Running on node {}", domain);
+            // println!("Running on node {}", domain);
             domain
         }
     };
@@ -94,9 +94,9 @@ pub fn init_thread(tid: i32, core: i32) {
     let numa = unsafe { zcsi::init_thread(tid, core) };
     NUMA_DOMAIN.with(|f| { f.set(numa); });
     if numa == -1 {
-        println!("No NUMA information found, support disabled");
+        // println!("No NUMA information found, support disabled");
     } else {
-        println!("Running on node {}", numa);
+        // println!("Running on node {}", numa);
     };
 }
 

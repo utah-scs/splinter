@@ -153,9 +153,9 @@ impl NetBricksContext {
 
     /// Start scheduling pipelines.
     pub fn execute(&mut self) {
-        for (core, channel) in &self.scheduler_channels {
+        for (_core, channel) in &self.scheduler_channels {
             channel.send(SchedulerCommand::Execute).unwrap();
-            println!("Starting scheduler on {}", core);
+            // println!("Starting scheduler on {}", core);
         }
     }
 

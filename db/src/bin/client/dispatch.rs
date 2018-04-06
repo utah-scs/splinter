@@ -58,19 +58,20 @@ where
     ///
     /// # Arguments
     ///
-    /// * `config`: Network related configuration such as the MAC and IP address.
-    /// * `port`:   Network port on which packets will be sent.
+    /// * `config`:  Network related configuration such as the MAC and IP address.
+    /// * `port`:    Network port on which packets will be sent.
+    /// * `udp_dst`: Udp destination port to send packets to.
     ///
     /// # Return
     ///
     /// A Sender that can be used to send RPC requests to a Sandstorm server.
-    pub fn new(config: &config::ClientConfig, port: T) -> Sender<T> {
+    pub fn new(config: &config::ClientConfig, port: T, udp_dst: u16) -> Sender<T> {
         // Create UDP, IP, and MAC headers that are placed on all outgoing packets.
         // Length fields are tweaked on a request-by-request basis in the outgoing
         // packets.
         let mut udp_header: UdpHeader = UdpHeader::new();
         udp_header.set_src_port(config.udp_port);
-        udp_header.set_dst_port(config.server_udp_port);
+        udp_header.set_dst_port(udp_dst);
         udp_header.set_length(8);
         udp_header.set_checksum(0);
 
@@ -89,6 +90,7 @@ where
         ip_header.set_version(4);
         ip_header.set_ihl(5);
         ip_header.set_length(20);
+        ip_header.set_protocol(0x11);
 
         // Create a common mac header.
         let mut mac_header: MacHeader = MacHeader::new();

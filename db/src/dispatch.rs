@@ -62,10 +62,6 @@ where
     /// network interface in a single burst.
     max_rx_packets: u8,
 
-    /// The maximum number of packets that the dispatched can transmit on the
-    /// network interface in a single burst.
-    max_tx_packets: u8,
-
     /// The UDP header that will be appended to every response packet (cached
     /// here to avoid wasting time creating a new one for every response
     /// packet).
@@ -131,7 +127,6 @@ where
         id: i32,
     ) -> Dispatch<T> {
         let rx_batch_size: u8 = 32;
-        let tx_batch_size: u8 = 32;
 
         // Create a common udp header for response packets.
         let udp_src_port: u16 = config.udp_port;
@@ -182,7 +177,6 @@ where
             network_port: net_port.clone(),
             network_ip_addr: ip_src_addr,
             max_rx_packets: rx_batch_size,
-            max_tx_packets: tx_batch_size,
             resp_udp_header: udp_header,
             resp_ip_header: ip_header,
             resp_mac_header: mac_header,

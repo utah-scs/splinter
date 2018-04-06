@@ -295,7 +295,7 @@ impl PmdPort {
         let cannonical_spec = PmdPort::cannonicalize_pci(spec);
         let port = unsafe { attach_pmd_device((cannonical_spec[..]).as_ptr()) };
         if port >= 0 {
-            println!("Going to try and use port {}", port);
+            // println!("Going to try and use port {}", port);
             PmdPort::init_dpdk_port(
                 port,
                 rxqs,

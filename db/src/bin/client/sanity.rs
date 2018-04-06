@@ -69,7 +69,7 @@ where
     /// A SanitySend that can issue simple get() and put() RPCs to a remote Sandstorm server.
     fn new(config: &config::ClientConfig, port: T) -> SanitySend<T> {
         SanitySend {
-            sender: dispatch::Sender::new(config, port),
+            sender: dispatch::Sender::new(config, port, 0),
             puts: 1 * 1000,
             gets: 1 * 1000,
             native: !config.use_invoke,
@@ -264,14 +264,14 @@ fn main() {
     // Retrieve one port-queue from Netbricks, and setup the Send side.
     let port = net_context
         .rx_queues
-        .get(&2)
+        .get(&0)
         .expect("Failed to retrieve network port!")
         .clone();
 
-    // Setup the send side on core 2.
+    // Setup the send side on core 0.
     net_context
         .add_pipeline_to_core(
-            2,
+            0,
             Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
                 setup_send(&config, port.clone(), sched)
             }),
@@ -281,14 +281,14 @@ fn main() {
     // Retrieve one port-queue from Netbricks, and setup the Receive side.
     let port = net_context
         .rx_queues
-        .get(&2)
+        .get(&0)
         .expect("Failed to retrieve network port!")
         .clone();
 
-    // Setup the receive side on core 4.
+    // Setup the receive side on core 2.
     net_context
         .add_pipeline_to_core(
-            4,
+            2,
             Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
                 setup_recv(port.clone(), sched)
             }),

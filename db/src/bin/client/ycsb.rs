@@ -13,6 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#![feature(use_extern_macros)]
+
 extern crate db;
 extern crate rand;
 extern crate time;
@@ -21,19 +23,19 @@ extern crate zipf;
 mod setup;
 mod dispatch;
 
+use std::mem;
 use std::sync::Arc;
-use std::{mem, slice};
 use std::fmt::Display;
 use std::cell::RefCell;
 use std::mem::transmute;
 
-use db::log::*;
 use db::cycles;
 use db::config;
+use db::log::*;
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
+use db::e2d2::allocators::*;
 
-use time::Duration;
 use zipf::ZipfDistribution;
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
@@ -165,15 +167,16 @@ where
     ///
     /// # Arguments
     ///
-    /// * `config`: Client configuration with YCSB related (key and value length etc.) as well as
-    ///             Network related (Server and Client MAC address etc.) parameters.
-    /// * `port`:   Network port over which requests will be sent out.
-    /// * `reqs`:   The number of requests to be issued to the server.
+    /// * `config`:  Client configuration with YCSB related (key and value length etc.) as well as
+    ///              Network related (Server and Client MAC address etc.) parameters.
+    /// * `port`:    Network port over which requests will be sent out.
+    /// * `reqs`:    The number of requests to be issued to the server.
+    /// * `udp_dst`: The UDP destination port to send packets to.
     ///
     /// # Return
     ///
     /// A YCSB request generator.
-    fn new(config: &config::ClientConfig, port: T, reqs: u64) -> YcsbSend<T> {
+    fn new(config: &config::ClientConfig, port: T, reqs: u64, udp_dst: u16) -> YcsbSend<T> {
         // The payload on an invoke() based get request consists of the extensions name ("get"),
         // the table id to perform the lookup on, and the key to lookup.
         let payload_len = "get".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
@@ -203,7 +206,7 @@ where
                 config.put_pct,
                 config.skew,
             )),
-            sender: dispatch::Sender::new(config, port),
+            sender: dispatch::Sender::new(config, port, udp_dst),
             requests: reqs,
             sent: 0,
             rate_inv: cycles::cycles_per_second() / config.req_rate as u64,
@@ -399,9 +402,11 @@ where
 /// * `config`:    Network related configuration such as the MAC and IP address.
 /// * `ports`:     Network port on which packets will be sent.
 /// * `scheduler`: Netbricks scheduler to which YcsbSend will be added.
-fn setup_send<T, S>(config: &config::ClientConfig, ports: Vec<T>, scheduler: &mut S)
-where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
+fn setup_send<S>(
+    config: &config::ClientConfig,
+    ports: Vec<CacheAligned<PortQueue>>,
+    scheduler: &mut S,
+) where
     S: Scheduler + Sized,
 {
     if ports.len() != 1 {
@@ -414,6 +419,7 @@ where
         config,
         ports[0].clone(),
         config.num_reqs as u64,
+        ports[0].txq() as u16,
     )) {
         Ok(_) => {
             info!("Successfully added YcsbSend to a Netbricks pipeline.");
@@ -432,9 +438,8 @@ where
 ///
 /// * `ports`:     Network port on which packets will be sent.
 /// * `scheduler`: Netbricks scheduler to which YcsbRecv will be added.
-fn setup_recv<T, S>(ports: Vec<T>, scheduler: &mut S)
+fn setup_recv<S>(ports: Vec<CacheAligned<PortQueue>>, scheduler: &mut S)
 where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
     S: Scheduler + Sized,
 {
     if ports.len() != 1 {
@@ -474,33 +479,36 @@ fn main() {
     // Retrieve one port-queue from Netbricks, and setup the Receive side.
     let port = net_context
         .rx_queues
-        .get(&2)
+        .get(&0)
         .expect("Failed to retrieve network port!")
         .clone();
 
-    // Setup the receive side on core 4.
+    // Setup the receive side on core 2.
     net_context
         .add_pipeline_to_core(
-            4,
+            2,
             Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
                 setup_recv(port.clone(), sched)
             }),
         )
         .expect("Failed to initialize receive side.");
 
-    // Retrieve one port-queue from Netbricks, and setup the Send side.
-    let port = net_context
-        .rx_queues
-        .get(&2)
-        .expect("Failed to retrieve network port!")
-        .clone();
-
-    // Setup the send side on core 2.
+    // Setup the send side on core 0.
     net_context
         .add_pipeline_to_core(
-            2,
-            Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
-                setup_send(&config, port.clone(), sched)
+            0,
+            Arc::new(move |ports, sched: &mut StandaloneScheduler| {
+                setup_send(&config, ports, sched)
+            }),
+        )
+        .expect("Failed to initialize send side.");
+
+    // Setup the send side on core 1.
+    net_context
+        .add_pipeline_to_core(
+            1,
+            Arc::new(move |ports, sched: &mut StandaloneScheduler| {
+                setup_send(&config::ClientConfig::load(), ports, sched)
             }),
         )
         .expect("Failed to initialize send side.");

@@ -18,7 +18,6 @@
 extern crate db;
 
 use std::sync::Arc;
-use std::fmt::Display;
 
 use db::log::*;
 
