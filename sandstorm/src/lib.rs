@@ -21,6 +21,7 @@ pub mod db;
 pub mod buf;
 pub mod null;
 pub mod mock;
+pub mod pack;
 
 /// This type indicates to a procedure whether a call to the database
 /// succeeded or failed.
