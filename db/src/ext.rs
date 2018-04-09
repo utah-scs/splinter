@@ -25,8 +25,11 @@ use sandstorm::db::DB;
 use libloading::Library;
 use libloading::os::unix::Symbol;
 
+// Number of buckets in the `extensions` hashmap in Extension Manager.
+const EXT_BUCKETS: usize = 32;
+
 // The type signature of the function that will be searched for inside an so.
-type Proc = unsafe extern fn(Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>>;
+type Proc = unsafe extern "C" fn(Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>>;
 
 /// This type represents an extension that has been successfully loaded into
 /// the database. As long as this type is not dropped, the extension will exist
@@ -82,9 +85,9 @@ impl Extension {
             // If the init function was unwrapped, return an extension.
             if let Some(procedure) = procedure {
                 return Some(Extension {
-                                library: lib,
-                                procedure: procedure,
-                            });
+                    library: lib,
+                    procedure: procedure,
+                });
             }
         }
 
@@ -103,7 +106,7 @@ impl Extension {
     /// # Return
     ///
     /// A generator that can be scheduled by the database.
-    pub fn get(&self, db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
+    pub fn get(&self, db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
         // Call into the procedure, and return the generator.
         unsafe { (self.procedure)(db) }
     }
@@ -113,7 +116,7 @@ impl Extension {
 /// in the database, and the tenants that own them.
 pub struct ExtensionManager {
     // A simple map from tenants and extension names to extensions.
-    extensions: RwLock<HashMap<(TenantId, String), Arc<Extension>>>,
+    extensions: [RwLock<HashMap<(TenantId, String), Arc<Extension>>>; EXT_BUCKETS],
 }
 
 // Implementation of methods on ExtensionManager.
@@ -126,7 +129,41 @@ impl ExtensionManager {
     /// An `ExtensionManager`.
     pub fn new() -> ExtensionManager {
         ExtensionManager {
-            extensions: RwLock::new(HashMap::new()),
+            // Can't use the copy constructor because of the Arc<Extension>.
+            extensions: [
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+            ],
         }
     }
 
@@ -148,9 +185,11 @@ impl ExtensionManager {
         // Try to load the extension from the supplied path.
         Extension::load(path)
                     // If the extension was loaded successfully, write it into
-                    // the extension manager.
+                    // the extension manager. The bucket is determined by the
+                    // least significant byte of the tenant id.
                     .and_then(| ext | {
-                        self.extensions.write()
+                        let bucket = (tenant & 0xff) as usize & (EXT_BUCKETS - 1);
+                        self.extensions[bucket].write()
                                         .insert((tenant, String::from(name)),
                                                 Arc::new(ext));
                         Some(()) })
@@ -170,10 +209,38 @@ impl ExtensionManager {
     /// A ref-counted handle to the extension if it was found.
     pub fn get(&self, tenant: TenantId, name: &str) -> Option<Arc<Extension>> {
         // Lookup the extension, if it exists, bump up it's refcount, and
-        // return it.
-        self.extensions.read()
-                        .get(&(tenant, String::from(name)))
-                        .and_then(| ext | { Some(Arc::clone(&ext)) })
+        // return it. The bucket is determined by the least significant byte
+        // of the tenant id.
+        let bucket = (tenant & 0xff) as usize & (EXT_BUCKETS - 1);
+        self.extensions[bucket]
+            .read()
+            .get(&(tenant, String::from(name)))
+            .and_then(|ext| Some(Arc::clone(&ext)))
+    }
+
+    /// Shares a previously loaded extension with another tenant.
+    ///
+    /// # Arguments
+    ///
+    /// * `owner`: The tenant that owns the extension.
+    /// * `share`: The tenant the extension must be shared with.
+    /// * `name`:  The name of the extension to be shared.
+    ///
+    /// # Return
+    ///
+    /// True, if the extension was successfully shared. False, if it was not found.
+    pub fn share(&self, owner: TenantId, share: TenantId, name: &str) -> bool {
+        // First, try to retrieve a copy (Arc) of the extension from the owner.
+        // If successfull, then share it with the tenant identified by `share`.
+        self.get(owner, name)
+            .and_then(|ext| {
+                let bucket = (share & 0xff) as usize & (EXT_BUCKETS - 1);
+                self.extensions[bucket]
+                    .write()
+                    .insert((share, String::from(name)), ext);
+                Some(())
+            })
+            .is_some()
     }
 }
 
@@ -191,8 +258,7 @@ mod tests {
     #[test]
     fn test_ext_load() {
         // Load and retrieve a generator from a test extension.
-        let ext = Extension::load("../ext/test/target/release/libtest.so")
-                                .unwrap();
+        let ext = Extension::load("../ext/test/target/release/libtest.so").unwrap();
         let mut gen = ext.get(Rc::new(NullDB::new()));
 
         // Assert that the test extension has one yield statement.

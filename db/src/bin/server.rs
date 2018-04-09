@@ -100,7 +100,10 @@ fn setup_server<S>(
     // Add the server to a netbricks pipeline.
     match scheduler.add_task(Server::new(sched)) {
         Ok(_) => {
-            info!("Successfully added server to a Netbricks pipeline.");
+            info!(
+                "Successfully added scheduler with rx,tx queues {:?}.",
+                (ports[0].rxq(), ports[0].txq())
+            );
         }
 
         Err(ref err) => {
@@ -126,10 +129,10 @@ fn get_default_netbricks_config(config: &config::ServerConfig) -> NetbricksConfi
     let net_config_name = String::from("server");
     let dpdk_secondary: bool = false;
     let net_primary_core: i32 = 31;
-    let net_cores: Vec<i32> = vec![0, 2];
+    let net_cores: Vec<i32> = vec![0, 2, 4, 6, 8, 10, 12, 14];
     let net_strict_cores: bool = true;
-    let net_pool_size: u32 = 2048 - 1;
-    let net_cache_size: u32 = 64;
+    let net_pool_size: u32 = 8192 - 1;
+    let net_cache_size: u32 = 128;
     let net_dpdk_args: Option<String> = None;
 
     // Port configuration. Required to configure the physical network interface.
@@ -201,14 +204,19 @@ fn main() {
     // Setup Netbricks.
     let mut net_context: NetbricksContext = config_and_init_netbricks(&config);
 
-    // Create a test tenant with a table containing 10 million objects, and with a set of
-    // test extensions.
     let master = Arc::new(Master::new());
     info!("Populating test data table and extensions...");
-    master.fill_test(1, 1, 10 * 1000 * 1000);
-    master.fill_test(100, 100, 0);
-    master.load_test(1);
+
+    // Create tenants with data and extensions for YCSB.
+    for tenant in 0..8 {
+        master.fill_test(tenant, 1, 10 * 1000 * 1000);
+        master.load_test(tenant);
+    }
+
+    // Create tenants with data and extensions for Sanity 
     master.load_test(100);
+    master.fill_test(100, 100, 0);
+
     info!("Finished populating data and extensions");
 
     // Setup the server pipeline.

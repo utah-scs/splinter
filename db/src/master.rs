@@ -35,13 +35,16 @@ use e2d2::common::EmptyMetadata;
 
 use spin::RwLock;
 
+// The number of buckets in the `tenants` hashtable inside of Master.
+const TENANT_BUCKETS: usize = 32;
+
 /// The primary service in Sandstorm. Master is responsible managing tenants, extensions, and
 /// the database. It implements the Service trait, allowing it to generate schedulable tasks
 /// for data and extension related RPC requests.
 pub struct Master {
     // A Map of all tenants in the system. Since Sandstorm is a multi-tenant system, most RPCs
     // will require a lookup on this map.
-    tenants: RwLock<HashMap<TenantId, Arc<Tenant>>>,
+    tenants: [RwLock<HashMap<TenantId, Arc<Tenant>>>; TENANT_BUCKETS],
 
     // An extension manager maintaining state concerning extensions loaded into the system.
     // Required to retrieve and determine if an extension belongs to a particular tenant while
@@ -61,7 +64,41 @@ impl Master {
     /// A Master service capable of creating schedulable tasks out of RPC requests.
     pub fn new() -> Master {
         Master {
-            tenants: RwLock::new(HashMap::new()),
+            // Cannot use copy constructor because of the Arc<Tenant>.
+            tenants: [
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+                RwLock::new(HashMap::new()),
+            ],
             extensions: ExtensionManager::new(),
             heap: Arc::new(Allocator::new()),
         }
@@ -85,17 +122,15 @@ impl Master {
             .get_table(table_id)
             .expect("Failed to init test table.");
 
+        let mut key = vec![0; 30];
+        let mut val = vec![0; 100];
+
         // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
         // and a 100 Byte value.
-        for i in 0..num {
-            let mut key = Vec::with_capacity(30);
-            let mut val = Vec::with_capacity(100);
-
+        for i in 1..(num + 1) {
             let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
-            key.extend_from_slice(&temp);
-            key.extend_from_slice(&[0; 26]);
-            val.extend_from_slice(&temp);
-            val.extend_from_slice(&[0; 96]);
+            &key[0..4].copy_from_slice(&temp);
+            &val[0..4].copy_from_slice(&temp);
 
             let obj = self.heap
                 .object(tenant_id, table_id, &key, &val)
@@ -132,6 +167,34 @@ impl Master {
         }
     }
 
+    /// Loads the get(), put(), and tao() extensions once, and shares them across multiple tenants.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenants`: The number of tenants that should share the above three extensions.
+    pub fn load_test_shared(&self, tenants: u32) {
+        // First, load up the get, put, and tao extensions for tenant 1.
+        self.load_test(0);
+
+        // Next, share these extensions with the other tenants.
+        for tenant in 1..tenants {
+            // Share the get() extension.
+            if self.extensions.share(0, tenant, "get") == false {
+                panic!("Failed to share get() extension.");
+            }
+
+            // Share the put() extension.
+            if self.extensions.share(0, tenant, "put") == false {
+                panic!("Failed to share put() extension.");
+            }
+
+            // Share the tao() extension.
+            if self.extensions.share(0, tenant, "tao") == false {
+                panic!("Failed to share tao() extension.");
+            }
+        }
+    }
+
     /// This method returns a handle to a tenant if it exists.
     ///
     /// # Arguments
@@ -142,8 +205,10 @@ impl Master {
     ///
     /// An atomic reference counted handle to the tenant if it exists.
     fn get_tenant(&self, tenant_id: TenantId) -> Option<Arc<Tenant>> {
-        // Acquire a read lock.
-        let map = self.tenants.read();
+        // Acquire a read lock. The bucket is determined by the least significant byte of the
+        // tenant id.
+        let bucket = (tenant_id & 0xff) as usize & (TENANT_BUCKETS - 1);
+        let map = self.tenants[bucket].read();
 
         // Lookup, and return the tenant if it exists.
         map.get(&tenant_id)
@@ -156,8 +221,10 @@ impl Master {
     ///
     /// * `tenant`: The tenant to be added.
     fn insert_tenant(&self, tenant: Tenant) {
-        // Acquire a write lock.
-        let mut map = self.tenants.write();
+        // Acquire a write lock. The bucket is determined by the least significant byte of the
+        // tenant id.
+        let bucket = (tenant.id() & 0xff) as usize & (TENANT_BUCKETS - 1);
+        let mut map = self.tenants[bucket].write();
 
         // Insert the tenant and return.
         map.insert(tenant.id(), Arc::new(tenant));
