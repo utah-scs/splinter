@@ -79,6 +79,12 @@ impl DB for MockDB {
         return true;
     }
 
+    fn del(&self, table: u64, key: &[u8]) {
+        self.debug_log(&format!(
+                            "Invoked del() on table {} for key {:?}",
+                            table, key));
+    }
+
     fn args(&self) -> &[u8] {
         self.debug_log(&format!("Invoked args()"));
 

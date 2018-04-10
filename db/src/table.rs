@@ -164,11 +164,27 @@ impl Table {
 
         // Next, remove the key from the hash map if it already exists.
         if map.contains_key(&key) {
-            let _ = map.remove(&key);
+            let _val = map.remove(&key);
         }
 
         // Perform the insert.
-        let _ = map.insert(key, object);
+        let _obj = map.insert(key, object);
+    }
+
+    /// This function deletes an object from a table.
+    ///
+    /// # Arguments
+    ///
+    /// * `key`: The key of the object to be deleted, passed in as a slice of bytes.
+    pub fn delete(&self, key: &[u8]) {
+        // First, identify the bucket the key falls into.
+        let bucket: usize = key[0] as usize & (N_BUCKETS - 1);
+        let mut map = self.maps[bucket].write();
+
+        // Next, remove the key from the hash map if it already exists.
+        if map.contains_key(key) {
+            let _val = map.remove(key);
+        }
     }
 }
 
@@ -270,5 +286,30 @@ mod tests {
                 panic!("get() request on table returned None.");
             }
         }
+    }
+
+    // This function tests that once deleted from a table, an object cannot be accessed again.
+    #[test]
+    fn test_delete() {
+        let table = Table::default();
+
+        let key: &[u8] = &[0; 30];
+        let val: &[u8] = &[1; 30];
+
+        // Create the object that will go into the table.
+        let mut obj: BytesMut = BytesMut::with_capacity(key.len() + val.len());
+        obj.put_slice(key);
+        obj.put_slice(val);
+        let mut obj: Bytes = obj.freeze();
+
+        // Add the object to the table.
+        let key_ref: Bytes = obj.split_to(key.len());
+        table.put(key_ref, obj);
+
+        // Next, delete the key from the table.
+        table.delete(key);
+
+        // Assert that the key was deleted.
+        assert_eq!(None, table.get(key));
     }
 }

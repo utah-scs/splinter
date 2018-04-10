@@ -47,6 +47,8 @@ impl DB for NullDB {
         return false;
     }
 
+    fn del(&self, _table: u64, _key: &[u8]) {}
+
     fn args(&self) -> &[u8] {
         return &[];
     }

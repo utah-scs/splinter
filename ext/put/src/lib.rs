@@ -35,6 +35,7 @@ use sandstorm::db::DB;
 ///
 /// A coroutine that can be run inside the database.
 #[no_mangle]
+#[allow(unreachable_code)]
 #[allow(unused_assignments)]
 pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
     Box::new(move || {

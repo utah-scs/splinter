@@ -70,6 +70,15 @@ pub trait DB {
     /// False otherwise.
     fn put(&self, buf: WriteBuf) -> bool;
 
+    /// This method will delete a key-value pair from the database if it exists.
+    ///
+    /// # Arguments
+    ///
+    /// * `table`: An identifier of the data table the key-value pair
+    ///            belongs to.
+    /// * `key`:   A slice of bytes over the key of the object to be deleted.
+    fn del(&self, table: u64, key: &[u8]);
+
     /// This method will return a serialized version of the arguments that were
     /// passed in by the tenant invoking the extension.
     ///

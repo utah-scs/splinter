@@ -158,6 +158,14 @@ impl DB for Context {
     }
 
     /// Lookup the `DB` trait for documentation on this method.
+    fn del(&self, table_id: u64, key: &[u8]) {
+        // Delete the key-value pair from the database
+        if let Some(table) = self.tenant.get_table(table_id) {
+            table.delete(key);
+        }
+    }
+
+    /// Lookup the `DB` trait for documentation on this method.
     fn args(&self) -> &[u8] {
         // Return a slice to the arguments off the request packet/buffer's
         // payload.
