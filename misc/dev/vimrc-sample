@@ -1,0 +1,110 @@
+set backspace=indent,eol,start
+set nocompatible
+set ruler
+set number
+
+set list listchars=tab:>-,trail:.,extends:>
+set showmatch
+
+set wildmode=longest,list
+
+"set incsearch
+set hlsearch
+
+set mouse=a
+
+set nojoinspaces
+set nolinebreak
+set nowrap
+set sidescrolloff=3
+nmap j gj
+nmap <Down> gj
+nmap k gk
+nmap <Up> gk
+vmap j gj
+vmap <Down> gj
+vmap k gk
+vmap <Up> gk
+nmap K kJ
+map Y y$
+
+nmap go o<Esc>
+nmap gO O<Esc>
+
+nmap <F5> :w<CR>:make<CR>
+imap <F5> <Esc><F5>
+
+set splitbelow
+set splitright
+
+set t_Co=256
+set guioptions-=m
+set guioptions-=T
+if has("gui_running")
+  colorscheme desert
+endif
+syntax on
+
+if has("autocmd")
+  autocmd BufRead,BufNewFile series set syntax=config
+  autocmd BufRead,BufNewFile *.m set tabstop=2 shiftwidth=2 autoindent smartindent expandtab cinwords=if,else,elseif,for,while smarttab
+  autocmd BufRead,BufNewFile *.tex set textwidth=72
+  autocmd BufRead,BufNewFile *.c set smarttab ai
+  autocmd BufRead,BufNewFile *.py set smartindent cinwords=if,elif,else,for,while,try,except,finally,def,class tabstop=4 shiftwidth=4 smarttab expandtab softtabstop=4 autoindent
+  autocmd BufRead,BufNewFile *.hs set smartindent cinwords=if,elif,else,for,while,try,except,finally,def,class tabstop=4 shiftwidth=4 smarttab expandtab softtabstop=4 autoindent
+  autocmd BufRead,BufNewFile *.java set smartindent tabstop=4 shiftwidth=4 smarttab expandtab softtabstop=4 autoindent
+  autocmd BufRead,BufNewFile *.stx set filetype=stx2any wrap nolist linebreak spell
+  autocmd BufRead,BufNewFile *.txt set spell
+
+  autocmd BufRead *.vala set efm=%f:%l.%c-%[%^:]%#:\ %t%[%^:]%#:\ %m
+  autocmd BufRead *.vapi set efm=%f:%l.%c-%[%^:]%#:\ %t%[%^:]%#:\ %m
+  autocmd BufRead,BufNewFile *.vala            setfiletype vala
+  autocmd BufRead,BufNewFile *.vapi            setfiletype vala
+
+  autocmd BufReadPost *
+    \ if line("'\"") > 0 && line("'\"") <= line("$") |
+    \   exe "normal g`\"zz" |
+    \ endif
+endif
+
+let g:openssl_backup = 1
+
+function! GuiTabLabel()
+  " buffer_number[+] buffer_name [(number_windows)]
+
+  " Add buffer number
+  let label = v:lnum
+
+  " Add '+' if one of the buffers in the tab page is modified
+  let bufnrlist = tabpagebuflist(v:lnum)
+  for bufnr in bufnrlist
+    if getbufvar(bufnr, "&modified")
+      let label .= '+'
+      break
+    endif
+  endfor
+
+  " Append the buffer name
+  let label .= ' ' . bufname(bufnrlist[tabpagewinnr(v:lnum) - 1])
+
+  " Append the number of windows in the tab page if more than one
+  let wincount = tabpagewinnr(v:lnum, '$')
+  if wincount > 1
+    let label .= ' (' . wincount . ')'
+  endif
+
+  return label
+endfunction
+
+set guitablabel=%{GuiTabLabel()}
+set tabpagemax=1000
+
+call plug#begin('~/.vim/plugged')
+
+Plug 'rust-lang/rust.vim'
+
+Plug 'cespare/vim-toml'
+
+call plug#end()
+
+" vim: set ts=2 sw=2 ai si et :

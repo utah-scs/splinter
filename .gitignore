@@ -22,4 +22,3 @@ db/client.toml
 net/native/*
 net/3rdparty/dpdk/*
 net/3rdparty/dpdk.tar.gz
-.installed_rust
