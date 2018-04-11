@@ -341,8 +341,8 @@ impl TAO {
     ///
     /// # Arguments
     /// * `id` - id of the object to be created.
-    pub fn object_delete(&self, _id: &[u8]) -> bool {
-        //return self.client.delete_key(self.object_table_id, &id);
+    pub fn object_delete(&self, id: &[u8]) -> bool {
+        self.client.del(self.object_table_id, id);
         return true;
     }
 
@@ -406,7 +406,6 @@ impl TAO {
             list_key.extend_from_slice(id1);
             list_key.extend_from_slice(association_type);
 
-
             let mut list = match self.client.get(self.association_table_id, list_key.as_slice()){
                 Some(list_serialized) => {
                     match AssociationList::deserialize(list_serialized.read()) {
@@ -414,7 +413,10 @@ impl TAO {
                         Err(_) => return false,
                     }
                 },
-                None => return false, //TODO: Create a new AssociationList if one does not already exist.
+                None => {
+                    // Create a new AssociationList.
+                    AssociationList::new()
+                },
             };
 
             list.add(new_assoc);
@@ -476,7 +478,7 @@ impl TAO {
             assoc_key.extend_from_slice(id1);
             assoc_key.extend_from_slice(association_type);
             assoc_key.extend_from_slice(id2);
-            // self.client.delete_key(self.association_table_id, assoc_key.as_slice());
+            self.client.del(self.association_table_id, assoc_key.as_slice());
             return true;
         }
         else {
@@ -638,7 +640,8 @@ impl AssociationList {
 
     /// Returns the space in memory required to serialize this struct.
     fn size(&self) -> usize {
-        (self.len() as usize) * std::mem::size_of::<Association>()
+        // (self.len() as usize) * std::mem::size_of::<Association>()
+        (self.len() as usize) * Association::size()
     }
 
     /// Returns the association at the given index.
