@@ -471,7 +471,7 @@ fn main() {
     let exec = config.num_reqs / config.req_rate;
 
     // Setup Netbricks.
-    let mut net_context = setup::config_and_init_netbricks();
+    let mut net_context = setup::config_and_init_netbricks(&config);
 
     // Setup the client pipeline.
     net_context.start_schedulers();

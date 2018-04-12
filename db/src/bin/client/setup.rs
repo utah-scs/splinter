@@ -13,6 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use db::config::ClientConfig;
+
 use db::e2d2::scheduler::*;
 use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
 
@@ -27,7 +29,7 @@ use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
 /// receive descriptors, and 256 transmit descriptors will be made available to
 /// Netbricks. Loopback, hardware transmit segementation offload, and hardware
 /// checksum offload will be disabled on this port.
-fn get_default_netbricks_config() -> NetbricksConfiguration {
+fn get_default_netbricks_config(config: &ClientConfig) -> NetbricksConfiguration {
     // General arguments supplied to netbricks.
     let net_config_name = String::from("client");
     let dpdk_secondary: bool = false;
@@ -39,7 +41,7 @@ fn get_default_netbricks_config() -> NetbricksConfiguration {
     let net_dpdk_args: Option<String> = None;
 
     // Port configuration. Required to configure the physical network interface.
-    let net_port_name = String::from("0000:04:00.1");
+    let net_port_name = config.nic_pci.clone();
     let net_port_rx_queues: Vec<i32> = net_cores.clone();
     let net_port_tx_queues: Vec<i32> = net_cores.clone();
     let net_port_rxd: i32 = 256;
@@ -81,8 +83,8 @@ fn get_default_netbricks_config() -> NetbricksConfiguration {
 /// # Return
 ///
 /// Netbricks context which can be used to setup and start the client.
-pub fn config_and_init_netbricks() -> NetBricksContext {
+pub fn config_and_init_netbricks(config: &ClientConfig) -> NetBricksContext {
     // Initialize Netbricks and return a handle.
-    let net_config = get_default_netbricks_config();
+    let net_config = get_default_netbricks_config(config);
     initialize_system(&net_config).expect("Failed to initialize Netbricks")
 }

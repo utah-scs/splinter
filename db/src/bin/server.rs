@@ -208,7 +208,7 @@ fn main() {
     info!("Populating test data table and extensions...");
 
     // Create tenants with data and extensions for YCSB.
-    for tenant in 0..8 {
+    for tenant in 0..config.num_tenants {
         master.fill_test(tenant, 1, 10 * 1000 * 1000);
         master.load_test(tenant);
     }

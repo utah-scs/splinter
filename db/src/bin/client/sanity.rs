@@ -256,7 +256,7 @@ fn main() {
     info!("Starting up Sandstorm client with config {:?}", config);
 
     // Setup Netbricks.
-    let mut net_context = setup::config_and_init_netbricks();
+    let mut net_context = setup::config_and_init_netbricks(&config);
 
     // Setup the client pipeline.
     net_context.start_schedulers();
