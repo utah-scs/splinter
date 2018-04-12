@@ -39,15 +39,30 @@ def setupDpdk():
 
     print ""
     printColor("bold", "=============== Binding NIC to DPDK ==================")
-    # First, find the PCI-ID of the 10 GigE NIC.
+    # First, find the PCI-ID of the first active 10 GigE NIC.
     cmd = "./net/3rdparty/dpdk/usertools/dpdk-devbind.py --status-dev=net |" + \
-            " grep 10GbE | grep Active | awk '{ print $1 }'"
+            " grep 10GbE | grep Active | tail -1 | awk '{ print $1 }'"
     pci = subprocess.check_output(cmd, shell=True)
 
     # Next, load the necessary kernel modules.
     cmd = "sudo insmod ./net/3rdparty/dpdk/build/kmod/igb_uio.ko"
     subprocess.check_call("sudo modprobe uio", shell=True)
     subprocess.check_call(cmd, shell=True)
+
+    # Print out the PCI and MAC address of the NIC.
+    cmd = "ls /sys/bus/pci/devices/" + str(pci).rstrip() + "/net/"
+    net = subprocess.check_output(cmd, shell=True)
+    cmd = "ethtool -P " + str(net).rstrip() + " | awk '{ print $3 }'"
+    mac = subprocess.check_output(cmd, shell=True)
+    printColor("bold", "NIC PCI ADDRESS: " + str(pci).rstrip())
+    printColor("bold", "NIC MAC ADDRESS: " + str(mac).rstrip())
+
+    # Write out the PCI and MAC addresses to a file.
+    subprocess.check_output("rm -Rf ./nic_info", shell=True)
+    subprocess.check_output("echo \"pci: " + str(pci).rstrip() + \
+                            "\" >> ./nic_info", shell=True)
+    subprocess.check_output("echo \"mac: " + str(mac).rstrip() + \
+                            "\" >> ./nic_info", shell=True)
 
     # Then, bind the NIC to igb_uio.
     cmd = "sudo ./net/3rdparty/dpdk/usertools/dpdk-devbind.py --force -b " + \
@@ -56,36 +71,29 @@ def setupDpdk():
 
     return
 
-"""This function updates Rust to the nightly build.
+"""This function sets up the vim editor.
 """
-def setRustNightly():
-    printColor("bold", "=============== Setting Rust to Nightly ==============")
-    subprocess.check_call("rustup install nightly", shell=True)
-    subprocess.check_call("rustup default nightly", shell=True)
-    return
+def setupDevEnvt():
+    printColor("bold", "=============== Setting up Dev Environment ===========")
+    subprocess.check_call("cp ./misc/dev/vimrc-sample ~/.vimrc", shell=True)
+    subprocess.check_call("cp -r ./misc/dev/vim ~/.vim", shell=True)
 
-"""This function installs the stable version of Rust.
+"""This function installs the nightly version of Rust.
 """
 def installRust():
     printColor("bold", "=============== Installing Rust ======================")
-    subprocess.check_call("curl https://sh.rustup.rs -sSf | sh", shell=True)
-
-    print "\n"
-    printColor("bold", "Run \'source $HOME/.cargo/env\', and then" + \
-               " re-run this script.")
+    subprocess.check_call("curl -s https://static.rust-lang.org/rustup.sh | " +\
+                          "sh -s -- --channel=nightly", shell=True)
     return
 
 if __name__ == "__main__":
-    # First, check if stable rust needs to be installed. If it already exists,
-    # then set rustc to the nightly version, else, install it.
-    if os.path.isfile(".installed_rust"):
-        setRustNightly()
+    # First, install Rust.
+    installRust()
 
-        # Next, setup DPDK.
-        setupDpdk()
-    else:
-        installRust()
-        # Future invocations need not install stable rust again.
-        subprocess.check_call("touch .installed_rust", shell=True)
+    # Then, setup the development environment.
+    setupDevEnvt()
+
+    # Next, setup DPDK.
+    setupDpdk()
 
     sys.exit(0)

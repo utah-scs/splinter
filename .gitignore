@@ -17,6 +17,7 @@ Cargo.lock
 # Ignore config files
 db/server.toml
 db/client.toml
+nic_info
 
 # Ignore NetBricks objects
 net/native/*
