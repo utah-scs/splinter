@@ -13,25 +13,25 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::sync::Arc;
 use std::fmt::Display;
-use std::str::FromStr;
 use std::net::Ipv4Addr;
 use std::option::Option;
+use std::str::FromStr;
+use std::sync::Arc;
 
-use super::rpc::*;
-use super::cycles;
 use super::common;
 use super::config;
-use super::wireformat;
+use super::cycles;
 use super::master::Master;
-use super::service::Service;
+use super::rpc::*;
 use super::sched::RoundRobin;
+use super::service::Service;
 use super::task::{Task, TaskPriority, TaskState};
+use super::wireformat;
 
+use super::e2d2::common::EmptyMetadata;
 use super::e2d2::headers::*;
 use super::e2d2::interface::*;
-use super::e2d2::common::EmptyMetadata;
 
 /// This type represents a requests-dispatcher in Sandstorm. When added to a
 /// Netbricks scheduler, this dispatcher polls a network port for RPCs,
@@ -519,6 +519,11 @@ where
                 .expect("ERROR: Failed to add response IP header")
                 .push_header(&self.resp_udp_header)
                 .expect("ERROR: Failed to add response UDP header");
+
+            // Set the destination port on the response UDP header.
+            response
+                .get_mut_header()
+                .set_dst_port(request.get_header().src_port());
 
             if parse_rpc_service(&request) == wireformat::Service::MasterService {
                 // The request is for Master, get it's opcode, and call into Master.
