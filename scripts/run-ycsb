@@ -25,6 +25,18 @@ if [[ ! -f client.toml ]]; then
     exit -1
 fi
 
+# If a command line argument was provided, use it as a request rate for YCSB.
+if [ $# -eq 1 ]
+then
+    # Configure the client TOML file with the request rate.
+    sed -i "s/req_rate = [1-9][0-9]*/req_rate = $1/g" client.toml
+
+    # Run YCSB.
+    RUST_LOG=debug ./target/release/ycsb
+
+    exit 0
+fi
+
 # Get the "use_invoke" field from the client configuration. The output file
 # will be markes with the value of this field, allowing to distinguish between
 # experiments run with an invoke based YCSB, and experiments run with a native

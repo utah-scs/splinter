@@ -20,25 +20,25 @@ extern crate rand;
 extern crate time;
 extern crate zipf;
 
-mod setup;
 mod dispatch;
+mod setup;
 
-use std::mem;
-use std::sync::Arc;
-use std::fmt::Display;
 use std::cell::RefCell;
+use std::fmt::Display;
+use std::mem;
 use std::mem::transmute;
+use std::sync::Arc;
 
-use db::cycles;
 use db::config;
-use db::log::*;
+use db::cycles;
+use db::e2d2::allocators::*;
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
-use db::e2d2::allocators::*;
+use db::log::*;
 
-use zipf::ZipfDistribution;
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
+use zipf::ZipfDistribution;
 
 // YCSB A, B, and C benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
@@ -53,6 +53,7 @@ pub struct Ycsb {
     put_pct: usize,
     rng: Box<Rng>,
     key_rng: Box<ZipfDistribution>,
+    tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,
     value_buf: Vec<u8>,
 }
@@ -67,9 +68,19 @@ impl Ycsb {
     //  - n_keys: Number of keys from which random keys are drawn.
     //  - put_pct: Number between 0 and 100 indicating percent of ops that are sets.
     //  - skew: Zipfian skew parameter. 0.99 is YCSB default.
+    //  - n_tenants: The number of tenants from which the tenant id is chosen.
+    //  - tenant_skew: The skew in the Zipfian distribution from which tenant id's are drawn.
     // # Return
     //  A new instance of YCSB that threads can call `abc()` on to run.
-    fn new(key_len: usize, value_len: usize, n_keys: usize, put_pct: usize, skew: f64) -> Ycsb {
+    fn new(
+        key_len: usize,
+        value_len: usize,
+        n_keys: usize,
+        put_pct: usize,
+        skew: f64,
+        n_tenants: u32,
+        tenant_skew: f64,
+    ) -> Ycsb {
         let seed: [u32; 4] = rand::random::<[u32; 4]>();
 
         let mut key_buf: Vec<u8> = Vec::with_capacity(key_len);
@@ -82,6 +93,10 @@ impl Ycsb {
             rng: Box::new(XorShiftRng::from_seed(seed)),
             key_rng: Box::new(
                 ZipfDistribution::new(n_keys, skew).expect("Couldn't create key RNG."),
+            ),
+            tenant_rng: Box::new(
+                ZipfDistribution::new(n_tenants as usize, tenant_skew)
+                    .expect("Couldn't create tenant RNG."),
             ),
             key_buf: key_buf,
             value_buf: value_buf,
@@ -100,10 +115,13 @@ impl Ycsb {
     //  number of gets it performed, and the number of puts it performed.
     pub fn abc<G, P, R>(&mut self, mut get: G, mut put: P) -> R
     where
-        G: FnMut(&[u8]) -> R,
-        P: FnMut(&[u8], &[u8]) -> R,
+        G: FnMut(u32, &[u8]) -> R,
+        P: FnMut(u32, &[u8], &[u8]) -> R,
     {
         let is_get = (self.rng.gen::<u32>() % 100) >= self.put_pct as u32;
+
+        // Sample a tenant.
+        let t = self.tenant_rng.sample(&mut self.rng) as u32;
 
         // Sample a key, and convert into a little endian byte array.
         let k = self.key_rng.sample(&mut self.rng) as u32;
@@ -111,23 +129,20 @@ impl Ycsb {
         self.key_buf[0..mem::size_of::<u32>()].copy_from_slice(&k);
 
         if is_get {
-            get(self.key_buf.as_slice())
+            get(t, self.key_buf.as_slice())
         } else {
-            put(self.key_buf.as_slice(), self.value_buf.as_slice())
+            put(t, self.key_buf.as_slice(), self.value_buf.as_slice())
         }
     }
 }
 
 /// Sends out YCSB based RPC requests to a Sandstorm server.
-struct YcsbSend<T>
-where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
-{
+struct YcsbSend {
     // The actual YCSB workload. Required to generate keys and values for get() and put() requests.
     workload: RefCell<Ycsb>,
 
     // Network stack required to actually send RPC requests out the network.
-    sender: dispatch::Sender<T>,
+    sender: dispatch::Sender,
 
     // Total number of requests to be sent out.
     requests: u64,
@@ -159,24 +174,26 @@ where
 }
 
 // Implementation of methods on YcsbSend.
-impl<T> YcsbSend<T>
-where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
-{
+impl YcsbSend {
     /// Constructs a YcsbSend.
     ///
     /// # Arguments
     ///
-    /// * `config`:  Client configuration with YCSB related (key and value length etc.) as well as
-    ///              Network related (Server and Client MAC address etc.) parameters.
-    /// * `port`:    Network port over which requests will be sent out.
-    /// * `reqs`:    The number of requests to be issued to the server.
-    /// * `udp_dst`: The UDP destination port to send packets to.
+    /// * `config`:    Client configuration with YCSB related (key and value length etc.) as well as
+    ///                Network related (Server and Client MAC address etc.) parameters.
+    /// * `port`:      Network port over which requests will be sent out.
+    /// * `reqs`:      The number of requests to be issued to the server.
+    /// * `dst_ports`: The total number of UDP ports the server is listening on.
     ///
     /// # Return
     ///
     /// A YCSB request generator.
-    fn new(config: &config::ClientConfig, port: T, reqs: u64, udp_dst: u16) -> YcsbSend<T> {
+    fn new(
+        config: &config::ClientConfig,
+        port: CacheAligned<PortQueue>,
+        reqs: u64,
+        dst_ports: u16,
+    ) -> YcsbSend {
         // The payload on an invoke() based get request consists of the extensions name ("get"),
         // the table id to perform the lookup on, and the key to lookup.
         let payload_len = "get".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
@@ -205,8 +222,10 @@ where
                 config.n_keys,
                 config.put_pct,
                 config.skew,
+                config.num_tenants,
+                config.tenant_skew,
             )),
-            sender: dispatch::Sender::new(config, port, udp_dst),
+            sender: dispatch::Sender::new(config, port, dst_ports),
             requests: reqs,
             sent: 0,
             rate_inv: cycles::cycles_per_second() / config.req_rate as u64,
@@ -220,10 +239,7 @@ where
 }
 
 // The Executable trait allowing YcsbSend to be scheduled by Netbricks.
-impl<T> Executable for YcsbSend<T>
-where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
-{
+impl Executable for YcsbSend {
     // Called internally by Netbricks.
     fn execute(&mut self) {
         // Return if there are no more requests to generate.
@@ -240,8 +256,8 @@ where
             if self.native == true {
                 // Configured to issue native RPCs, issue a regular get()/put() operation.
                 self.workload.borrow_mut().abc(
-                    |key| self.sender.send_get(1, 1, key, curr),
-                    |key, val| self.sender.send_put(1, 1, key, val, curr),
+                    |tenant, key| self.sender.send_get(tenant, 1, key, curr),
+                    |tenant, key, val| self.sender.send_put(tenant, 1, key, val, curr),
                 );
             } else {
                 // Configured to issue invoke() RPCs.
@@ -251,20 +267,20 @@ where
                 // XXX Heavily dependent on how `Ycsb` creates a key. Only the first four
                 // bytes of the key matter, the rest are zero. The value is always zero.
                 self.workload.borrow_mut().abc(
-                    |key| {
+                    |tenant, key| {
                         // First 11 bytes on the payload were already pre-populated with the
                         // extension name (3 bytes), and the table id (8 bytes). Just write in the
                         // first 4 bytes of the key.
                         p_get[11..15].copy_from_slice(&key[0..4]);
-                        self.sender.send_invoke(1, 3, &p_get, curr)
+                        self.sender.send_invoke(tenant, 3, &p_get, curr)
                     },
-                    |key, _val| {
+                    |tenant, key, _val| {
                         // First 13 bytes on the payload were already pre-populated with the
                         // extension name (3 bytes), the table id (8 bytes), and the key length (2
                         // bytes). Just write in the first 4 bytes of the key. The value is anyway
                         // always zero.
                         p_put[13..17].copy_from_slice(&key[0..4]);
-                        self.sender.send_invoke(1, 3, &p_put, curr)
+                        self.sender.send_invoke(tenant, 3, &p_put, curr)
                     },
                 );
             }
@@ -419,10 +435,13 @@ fn setup_send<S>(
         config,
         ports[0].clone(),
         config.num_reqs as u64,
-        ports[0].txq() as u16,
+        config.server_udp_ports as u16,
     )) {
         Ok(_) => {
-            info!("Successfully added YcsbSend to a Netbricks pipeline.");
+            info!(
+                "Successfully added YcsbSend with tx queue {}.",
+                ports[0].txq()
+            );
         }
 
         Err(ref err) => {
@@ -450,7 +469,10 @@ where
     // Add the receiver to a netbricks pipeline.
     match scheduler.add_task(YcsbRecv::new(ports[0].clone(), 16 * 1000 * 1000 as u64)) {
         Ok(_) => {
-            info!("Successfully added YcsbRecv to a Netbricks pipeline.");
+            info!(
+                "Successfully added YcsbRecv with rx queue {}.",
+                ports[0].rxq()
+            );
         }
 
         Err(ref err) => {
@@ -476,42 +498,42 @@ fn main() {
     // Setup the client pipeline.
     net_context.start_schedulers();
 
-    // Retrieve one port-queue from Netbricks, and setup the Receive side.
-    let port = net_context
-        .rx_queues
-        .get(&0)
-        .expect("Failed to retrieve network port!")
-        .clone();
+    // The core id's which will run the sender and receiver threads.
+    // XXX The following two arrays heavily depend on the set of cores
+    // configured in setup.rs
+    let senders = [0, 4, 8, 12, 16, 20, 24, 28];
+    let receive = [2, 6, 10, 14, 18, 22, 26, 30];
+    assert!((senders.len() == 8) && (receive.len() == 8));
 
-    // Setup the receive side on core 2.
-    net_context
-        .add_pipeline_to_core(
-            2,
-            Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
-                setup_recv(port.clone(), sched)
-            }),
-        )
-        .expect("Failed to initialize receive side.");
+    // Setup 8 senders, and 8 receivers.
+    for i in 0..8 {
+        // First, retrieve a tx-rx queue pair from Netbricks
+        let port = net_context
+            .rx_queues
+            .get(&senders[i])
+            .expect("Failed to retrieve network port!")
+            .clone();
 
-    // Setup the send side on core 0.
-    net_context
-        .add_pipeline_to_core(
-            0,
-            Arc::new(move |ports, sched: &mut StandaloneScheduler| {
-                setup_send(&config, ports, sched)
-            }),
-        )
-        .expect("Failed to initialize send side.");
+        // Setup the receive side.
+        net_context
+            .add_pipeline_to_core(
+                receive[i],
+                Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
+                    setup_recv(port.clone(), sched)
+                }),
+            )
+            .expect("Failed to initialize receive side.");
 
-    // Setup the send side on core 1.
-    net_context
-        .add_pipeline_to_core(
-            1,
-            Arc::new(move |ports, sched: &mut StandaloneScheduler| {
-                setup_send(&config::ClientConfig::load(), ports, sched)
-            }),
-        )
-        .expect("Failed to initialize send side.");
+        // Setup the send side.
+        net_context
+            .add_pipeline_to_core(
+                senders[i],
+                Arc::new(move |ports, sched: &mut StandaloneScheduler| {
+                    setup_send(&config::ClientConfig::load(), ports, sched)
+                }),
+            )
+            .expect("Failed to initialize send side.");
+    }
 
     // Run the client.
     net_context.execute();
@@ -527,12 +549,12 @@ fn main() {
 #[cfg(test)]
 mod test {
     use std;
-    use std::thread;
-    use std::mem::transmute;
-    use std::time::{Duration, Instant};
-    use std::sync::{Arc, Mutex};
     use std::collections::HashMap;
+    use std::mem::transmute;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn ycsb_abc_basic() {
@@ -548,7 +570,7 @@ mod test {
                 let mut n_puts = 0u64;
                 let start = Instant::now();
                 while !done.load(Ordering::Relaxed) {
-                    b.abc(|_key| n_gets += 1, |_key, _value| n_puts += 1);
+                    b.abc(|_t, _key| n_gets += 1, |_t, _key, _value| n_puts += 1);
                 }
                 (start.elapsed(), n_gets, n_puts)
             }));
@@ -608,14 +630,14 @@ mod test {
                 let start = Instant::now();
                 while !done.load(Ordering::Relaxed) {
                     b.abc(
-                        |key| {
+                        |_t, key| {
                             // get
                             let k = convert_key(key);
                             let mut ht = hist.lock().unwrap();
                             ht.entry(k).or_insert((0, 0)).0 += 1;
                             n_gets += 1
                         },
-                        |key, _value| {
+                        |_t, key, _value| {
                             // put
                             let k = convert_key(key);
                             let mut ht = hist.lock().unwrap();

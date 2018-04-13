@@ -15,8 +15,8 @@
 
 use db::config::ClientConfig;
 
-use db::e2d2::scheduler::*;
 use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
+use db::e2d2::scheduler::*;
 
 /// Returns a struct of type NetbricksConfiguration which can be used to
 /// initialize Netbricks with a default set of parameters.
@@ -34,10 +34,10 @@ fn get_default_netbricks_config(config: &ClientConfig) -> NetbricksConfiguration
     let net_config_name = String::from("client");
     let dpdk_secondary: bool = false;
     let net_primary_core: i32 = 31;
-    let net_cores: Vec<i32> = vec![0, 1, 2];
+    let net_cores: Vec<i32> = vec![0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30];
     let net_strict_cores: bool = true;
-    let net_pool_size: u32 = 2048 - 1;
-    let net_cache_size: u32 = 64;
+    let net_pool_size: u32 = 8192 - 1;
+    let net_cache_size: u32 = 128;
     let net_dpdk_args: Option<String> = None;
 
     // Port configuration. Required to configure the physical network interface.

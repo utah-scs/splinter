@@ -1,21 +1,62 @@
-mac_address = "01:02:03:04:05:07"
-ip_address = "192.168.0.1"
-udp_port = 0
+############################### CLIENT N/W CONFIG ##############################
+
+# The PCI address of the NIC the client is going to transmit and receive
+# packets on.
 nic_pci = "0000:04:00.1"
 
-server_mac_address = "01:02:03:04:05:06"
-server_ip_address = "192.168.0.2"
-server_udp_port = 0
-num_tenants = 1
+# The MAC address of the NIC the client is going to transmit and receive
+# packets on.
+mac_address = "01:02:03:04:05:07"
 
+# The IP address of the client (Not the one reported by ifconfig).
+ip_address = "192.168.0.1"
+
+############################### SERVER N/W CONFIG ##############################
+
+# The MAC address of the NIC the server is going to transmit and receive
+# packets on.
+server_mac_address = "01:02:03:04:05:06"
+
+# The IP address of the server (Not the one reported by ifconfig).
+server_ip_address = "192.168.0.2"
+
+# The number of server UDP ports to send requests to.
+server_udp_ports = 8
+
+############################### GENERIC CLIENT CONFIG ##########################
+
+# If true, client's send invoke() based RPC requests to the server. If false,
+# regular get() and put() operations are used. Ignored for the tao client.
 use_invoke = false
 
-use_ycsb = true
-key_len = 30
-value_len = 100
-n_keys = 10000000
-put_pct = 5
-skew = 0.99
+# The number of tenants to generate requests for. The exact tenant id for a
+# particular request should be generated from a Zipfian distribution.
+num_tenants = 8
 
+# The skew parameter for the Zipfian distribution used to generate tenant id's
+# for RPC requests.
+tenant_skew = 0.1
+
+# The number of RPC requests that the client must generate.
 num_reqs = 20000000
+
+# The rate at which the client must issue RPC requests.
 req_rate = 500000
+
+############################### YCSB CLIENT CONFIG #############################
+
+# The length of the key to issue YCSB reads and writes for.
+key_len = 30
+
+# The length of the value to issue YCSB writes for.
+value_len = 100
+
+# The number of keys in the YCSB table on the server. Required to initialize the
+# Zipfian distribution from which the key for each request is sampled.
+n_keys = 10000000
+
+# The percentage of operations that are puts/writes.
+put_pct = 5
+
+# The skew of the Zipfian distribution from which keys are sampled.
+skew = 0.99

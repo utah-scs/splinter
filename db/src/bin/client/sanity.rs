@@ -19,25 +19,23 @@
 
 extern crate db;
 
-mod setup;
 mod dispatch;
+mod setup;
 
-use std::sync::Arc;
 use std::fmt::Display;
 use std::mem::transmute;
+use std::sync::Arc;
 
 use db::config;
-use db::log::*;
+use db::e2d2::allocators::*;
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
+use db::log::*;
 
 /// Send side logic for a simple client that issues put() and get() requests.
-struct SanitySend<T>
-where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
-{
+struct SanitySend {
     // RPC request generator required to send RPC requests to a Sandstorm server.
-    sender: dispatch::Sender<T>,
+    sender: dispatch::Sender,
 
     // Number of put() requests remaining to be issued. Once all of these have been issued,
     // SanitySend will flip over to get() requests.
@@ -53,10 +51,7 @@ where
 }
 
 // Implementation of methods on SanitySend.
-impl<T> SanitySend<T>
-where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
-{
+impl SanitySend {
     /// Constructs a SanitySend.
     ///
     /// # Arguments
@@ -67,9 +62,9 @@ where
     /// # Return
     ///
     /// A SanitySend that can issue simple get() and put() RPCs to a remote Sandstorm server.
-    fn new(config: &config::ClientConfig, port: T) -> SanitySend<T> {
+    fn new(config: &config::ClientConfig, port: CacheAligned<PortQueue>) -> SanitySend {
         SanitySend {
-            sender: dispatch::Sender::new(config, port, 0),
+            sender: dispatch::Sender::new(config, port, 1),
             puts: 1 * 1000,
             gets: 1 * 1000,
             native: !config.use_invoke,
@@ -78,10 +73,7 @@ where
 }
 
 // Executable trait allowing SanitySend to be scheduled on Netbricks.
-impl<T> Executable for SanitySend<T>
-where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
-{
+impl Executable for SanitySend {
     /// Called by a Netbricks scheduler.
     fn execute(&mut self) {
         // Throttle. Sleep for 1 micro-second before issuing a request.
@@ -197,9 +189,11 @@ where
 /// * `config`:    Network related configuration such as the MAC and IP address.
 /// * `ports`:     Network port on which packets will be sent.
 /// * `scheduler`: Netbricks scheduler to which SanitySend will be added.
-fn setup_send<T, S>(config: &config::ClientConfig, ports: Vec<T>, scheduler: &mut S)
-where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
+fn setup_send<S>(
+    config: &config::ClientConfig,
+    ports: Vec<CacheAligned<PortQueue>>,
+    scheduler: &mut S,
+) where
     S: Scheduler + Sized,
 {
     if ports.len() != 1 {

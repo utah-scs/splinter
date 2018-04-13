@@ -126,22 +126,21 @@ impl ServerConfig {
 pub struct ClientConfig {
     mac_address: String,
     pub ip_address: String,
-    pub udp_port: u16,
     pub nic_pci: String,
 
     server_mac_address: String,
     pub server_ip_address: String,
-    pub server_udp_port: u16,
+    pub server_udp_ports: u16,
     pub num_tenants: u32,
 
     pub use_invoke: bool,
 
-    pub use_ycsb: bool,
     pub key_len: usize,
     pub value_len: usize,
     pub n_keys: usize,
     pub put_pct: usize,
     pub skew: f64,
+    pub tenant_skew: f64,
 
     pub num_reqs: usize,
     pub req_rate: usize,

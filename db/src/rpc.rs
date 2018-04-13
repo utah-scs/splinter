@@ -17,9 +17,9 @@ use std::mem::{size_of, transmute};
 
 use super::wireformat::*;
 
-use e2d2::interface::*;
 use e2d2::common::EmptyMetadata;
 use e2d2::headers::{IpHeader, MacHeader, UdpHeader};
+use e2d2::interface::*;
 
 /// This function looks into a packet corresponding to an RPC request, and
 /// reads it's service (assumed to be the first byte after the end of the
@@ -88,6 +88,7 @@ pub fn parse_rpc_opcode(request: &Packet<UdpHeader, EmptyMetadata>) -> OpCode {
 /// * `mac`: Reference to the MAC header to be added to the request.
 /// * `ip` : Reference to the IP header to be added to the request.
 /// * `udp`: Reference to the UDP header to be added to the request.
+/// * `dst`: The destination port to be written into the UDP header.
 ///
 /// # Return
 ///
@@ -97,15 +98,21 @@ fn create_request(
     mac: &MacHeader,
     ip: &IpHeader,
     udp: &UdpHeader,
+    dst: u16,
 ) -> Packet<UdpHeader, EmptyMetadata> {
-    new_packet()
+    let mut packet = new_packet()
         .expect("Failed to allocate packet for request!")
         .push_header(mac)
         .expect("Failed to push MAC header into request!")
         .push_header(ip)
         .expect("Failed to push IP header into request!")
         .push_header(udp)
-        .expect("Failed to push UDP header into request!")
+        .expect("Failed to push UDP header into request!");
+
+    // Write the destination port into the UDP header.
+    packet.get_mut_header().set_dst_port(dst);
+
+    return packet;
 }
 
 /// Sets the length fields on the UDP and IP headers of a packet.
@@ -150,6 +157,7 @@ pub fn fixup_header_length_fields(
 /// * `table_id`: Id of the table from which the key is looked up.
 /// * `key`:      Byte string of key whose value is to be fetched. Limit 64 KB.
 /// * `id`:       RPC identifier.
+/// * `dst`:      The UDP port on the server the RPC is destined for.
 ///
 /// # Return
 ///
@@ -163,6 +171,7 @@ pub fn create_get_rpc(
     table_id: u64,
     key: &[u8],
     id: u64,
+    dst: u16,
 ) -> Packet<IpHeader, EmptyMetadata> {
     // Key length cannot be more than 16 bits. Required to construct the RPC header.
     if key.len() > u16::max_value() as usize {
@@ -171,7 +180,7 @@ pub fn create_get_rpc(
 
     // Allocate a packet, write the header and payload into it, and set fields on it's UDP and IP
     // header.
-    let mut request = create_request(mac, ip, udp)
+    let mut request = create_request(mac, ip, udp, dst)
         .push_header(&GetRequest::new(tenant, table_id, key.len() as u16, id))
         .expect("Failed to push RPC header into request!");
 
@@ -199,6 +208,7 @@ pub fn create_get_rpc(
 /// * `key`:      Byte string of key whose value is to be inserted. Limit 64 KB.
 /// * `val`:      Byte string of the value to be inserted.
 /// * `id`:       RPC identifier.
+/// * `dst`:      The UDP port on the server the RPC is destined for.
 ///
 /// # Return
 ///
@@ -213,6 +223,7 @@ pub fn create_put_rpc(
     key: &[u8],
     val: &[u8],
     id: u64,
+    dst: u16,
 ) -> Packet<IpHeader, EmptyMetadata> {
     // Key length cannot be more than 16 bits. Required to construct the RPC header.
     if key.len() > u16::max_value() as usize {
@@ -221,7 +232,7 @@ pub fn create_put_rpc(
 
     // Allocate a packet, write the header and payload into it, and set fields on it's UDP and IP
     // header.
-    let mut request = create_request(mac, ip, udp)
+    let mut request = create_request(mac, ip, udp, dst)
         .push_header(&PutRequest::new(tenant, table_id, key.len() as u16, id))
         .expect("Failed to push RPC header into request!");
 
@@ -253,6 +264,7 @@ pub fn create_put_rpc(
 /// * `payload`:  The RPC payload to be written into the packet. Should contain the name of the
 ///               extension, followed by it's arguments.
 /// * `id`:       RPC identifier.
+/// * `dst`:      The destination port on the server the RPC is destined for.
 ///
 /// # Return
 ///
@@ -266,16 +278,20 @@ pub fn create_invoke_rpc(
     name_len: u32,
     payload: &[u8],
     id: u64,
+    dst: u16,
 ) -> Packet<IpHeader, EmptyMetadata> {
     // The Arguments to the procedure cannot be more that 4 GB long.
     if payload.len() - name_len as usize > u32::max_value() as usize {
-        panic!("Args too long ({} bytes).", payload.len() - name_len as usize);
+        panic!(
+            "Args too long ({} bytes).",
+            payload.len() - name_len as usize
+        );
     }
 
     // Allocate a packet, write the header and payload into it, and set fields on it's UDP and IP
     // header. Since the payload contains both, the name and arguments in it, args_len can be
     // calculated as payload length - name_len.
-    let mut request = create_request(mac, ip, udp)
+    let mut request = create_request(mac, ip, udp, dst)
         .push_header(&InvokeRequest::new(
             tenant,
             name_len,
