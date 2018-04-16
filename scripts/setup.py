@@ -83,7 +83,8 @@ def setupDevEnvt():
 def installRust():
     printColor("bold", "=============== Installing Rust ======================")
     subprocess.check_call("curl -s https://static.rust-lang.org/rustup.sh | " +\
-                          "sh -s -- --channel=nightly", shell=True)
+                          "sh -s -- --channel=nightly --date=2018-04-11",
+                          shell=True)
     return
 
 if __name__ == "__main__":
