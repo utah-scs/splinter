@@ -16,6 +16,7 @@
 #![feature(use_extern_macros)]
 
 extern crate db;
+extern crate spin;
 
 use std::sync::Arc;
 
@@ -32,6 +33,8 @@ use db::config;
 use db::master::Master;
 use db::sched::RoundRobin;
 use db::dispatch::Dispatch;
+
+use spin::RwLock;
 
 /// A simple wrapper around the scheduler, allowing it to be added to a Netbricks pipeline.
 struct Server {
@@ -75,9 +78,10 @@ impl Executable for Server {
 /// of Netbricks.
 fn setup_server<S>(
     config: &config::ServerConfig,
-    ports: Vec<CacheAligned<PortQueue>>,
+    ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>,
     scheduler: &mut S,
     master: &Arc<Master>,
+    sibling_ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>,
 ) where
     S: Scheduler + Sized,
 {
@@ -88,12 +92,17 @@ fn setup_server<S>(
 
     // Create a scheduler and a dispatcher for the server.
     let sched = Arc::new(RoundRobin::new());
+
+    // Acquire write lock
+    let port = ports[0].read();
+
     let dispatch = Dispatch::new(
         config,
         ports[0].clone(),
         Arc::clone(master),
         Arc::clone(&sched),
-        ports[0].rxq(),
+        port.rxq(),
+        sibling_ports.clone(),
     );
     sched.enqueue(Box::new(dispatch));
 
@@ -102,7 +111,7 @@ fn setup_server<S>(
         Ok(_) => {
             info!(
                 "Successfully added scheduler with rx,tx queues {:?}.",
-                (ports[0].rxq(), ports[0].txq())
+                (port.rxq(), port.txq())
             );
         }
 
@@ -222,8 +231,8 @@ fn main() {
     // Setup the server pipeline.
     net_context.start_schedulers();
     net_context.add_pipeline_to_run(Arc::new(
-        move |ports, scheduler: &mut StandaloneScheduler| {
-            setup_server(&config, ports, scheduler, &master)
+        move |ports, scheduler: &mut StandaloneScheduler, sibling_queues| {
+            setup_server(&config, ports, scheduler, &master, sibling_queues)
         },
     ));
 

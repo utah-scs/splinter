@@ -41,6 +41,8 @@ extern crate uuid;
 // For cache aware allocation
 extern crate alloc;
 
+extern crate spin;
+
 // Better error handling.
 #[macro_use]
 extern crate error_chain;
