@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::thread::{self, JoinHandle, Thread};
+use spin::RwLock;
 
 type AlignedPortQueue = CacheAligned<PortQueue>;
 type AlignedVirtualQueue = CacheAligned<VirtualQueue>;
@@ -35,7 +36,8 @@ impl<'a> BarrierHandle<'a> {
 #[derive(Default)]
 pub struct NetBricksContext {
     pub ports: HashMap<String, Arc<PmdPort>>,
-    pub rx_queues: HashMap<i32, Vec<CacheAligned<PortQueue>>>,
+    pub rx_queues: HashMap<i32, Vec<Arc<RwLock<CacheAligned<PortQueue>>>>>,
+    pub sibling_queues: HashMap<i32, Vec<Arc<RwLock<CacheAligned<PortQueue>>>>>,
     pub active_cores: Vec<i32>,
     pub virtual_ports: HashMap<i32, Arc<VirtualPort>>,
     scheduler_channels: HashMap<i32, SyncSender<SchedulerCommand>>,
@@ -71,17 +73,30 @@ impl NetBricksContext {
     /// Run a function (which installs a pipeline) on all schedulers in the system.
     pub fn add_pipeline_to_run<T>(&mut self, run: Arc<T>)
     where
-        T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler) + Send + Sync + 'static,
+        T: Fn(Vec<Arc<RwLock<AlignedPortQueue>>>, &mut StandaloneScheduler, Vec<Arc<RwLock<AlignedPortQueue>>>) + Send + Sync + 'static,
     {
         for (core, channel) in &self.scheduler_channels {
             let ports = match self.rx_queues.get(core) {
                 Some(v) => v.clone(),
                 None => vec![],
             };
+            // Populate siblings.
+            let mut siblings: Vec<Arc<RwLock<AlignedPortQueue>>> = Vec::new();
+            for x in 0..8 {
+                let c: i32 = (x as i32) * 2;
+                if c != *core {
+                    let sibling_ports = match self.rx_queues.get(&c) {
+                        Some(v) => v.clone(),
+                        None => vec![],
+                    };
+                    siblings.push(sibling_ports[0].clone());
+                }
+            }
+
             let boxed_run = run.clone();
             channel
                 .send(SchedulerCommand::Run(
-                    Arc::new(move |s| boxed_run(ports.clone(), s)),
+                    Arc::new(move |s| boxed_run(ports.clone(), s, siblings.clone())),
                 ))
                 .unwrap();
         }
@@ -129,7 +144,7 @@ impl NetBricksContext {
     }
 
     /// Install a pipeline on a particular core.
-    pub fn add_pipeline_to_core<T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler) + Send + Sync + 'static>(
+    pub fn add_pipeline_to_core<T: Fn(Vec<Arc<RwLock<AlignedPortQueue>>>, &mut StandaloneScheduler) + Send + Sync + 'static>(
         &mut self,
         core: i32,
         run: Arc<T>,
@@ -244,7 +259,7 @@ pub fn initialize_system(configuration: &NetbricksConfiguration) -> Result<NetBr
                 let rx_q = rx_q as i32;
                 match PmdPort::new_queue_pair(port_instance, rx_q, rx_q) {
                     Ok(q) => {
-                        ctx.rx_queues.entry(*core).or_insert_with(|| vec![]).push(q);
+                        ctx.rx_queues.entry(*core).or_insert_with(|| vec![]).push(Arc::new(RwLock::new(q)));
                     }
                     Err(e) => {
                         return Err(

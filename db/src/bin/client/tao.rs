@@ -19,6 +19,7 @@ extern crate db;
 extern crate rand;
 extern crate time;
 extern crate zipf;
+extern crate spin;
 
 mod setup;
 mod dispatch;
@@ -37,6 +38,7 @@ use db::e2d2::allocators::*;
 use std::str;
 use std::mem;
 
+use spin::RwLock;
 
 /// Sends out Tao based RPC requests to a Sandstorm server.
 struct TaoSend {
@@ -59,7 +61,7 @@ impl TaoSend {
     /// # Return
     ///
     /// A Tao request generator.
-    fn new(config: &config::ClientConfig, port: CacheAligned<PortQueue>) -> TaoSend {
+    fn new(config: &config::ClientConfig, port: Arc<RwLock<CacheAligned<PortQueue>>>) -> TaoSend {
         TaoSend {
             sender: dispatch::Sender::new(config, port, 0),
         }
@@ -254,7 +256,7 @@ where
     ///
     /// A Tao response receiver that measures the median latency and throughput of a Sandstorm
     /// server.
-    fn new(port: T, resps: u64) -> TaoRecv<T> {
+    fn new(port: Arc<RwLock<T>>, resps: u64) -> TaoRecv<T> {
         TaoRecv {
             receiver: dispatch::Receiver::new(port),
         }
@@ -314,7 +316,7 @@ fn convert_from_slice(val: &[u8]) -> u64{
 /// * `scheduler`: Netbricks scheduler to which TaoSend will be added.
 fn setup_send<S>(
     config: &config::ClientConfig,
-    ports: Vec<CacheAligned<PortQueue>>,
+    ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>,
     scheduler: &mut S,
 ) where
     S: Scheduler + Sized,
@@ -343,7 +345,7 @@ fn setup_send<S>(
 ///
 /// * `ports`:     Network port on which packets will be sent.
 /// * `scheduler`: Netbricks scheduler to which TaoRecv will be added.
-fn setup_recv<S>(ports: Vec<CacheAligned<PortQueue>>, scheduler: &mut S)
+fn setup_recv<S>(ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>, scheduler: &mut S)
 where
     S: Scheduler + Sized,
 {
