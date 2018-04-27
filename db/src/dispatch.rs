@@ -41,6 +41,7 @@ use spin::RwLock;
 /// Netbricks scheduler, this dispatcher polls a network port for RPCs,
 /// dispatches them to a service, and sends out responses on the same network
 /// port.
+#[allow(dead_code)]
 pub struct Dispatch {
     /// A ref counted pointer to a master service. The master service
     /// implements the primary interface to the database.
@@ -326,6 +327,7 @@ impl Dispatch
     ///
     /// A vector of packets wrapped up in Netbrick's Packet<NullHeader, EmptyMetadata> type if
     /// there was anything received at the network port.
+    #[allow(dead_code)]
     fn try_steal_packets(&self) -> Option<Vec<Packet<NullHeader, EmptyMetadata>>> {
         // Allocate a vector of mutable MBuf pointers into which packets will
         // be received.
@@ -645,6 +647,7 @@ impl Dispatch
     /// usize which can be used to index sibling port in
     /// sibling_network_ports.
     #[inline]
+    #[allow(dead_code)]
     fn select_sibling(&mut self) -> usize {
         // Randomly pick a sibling.
         // To experiment vanilla "power of two choices", change sibling_1
@@ -689,30 +692,6 @@ impl Dispatch
 
             // Dispatch these packets to the appropriate service.
             self.dispatch_requests(packets);
-        } else {
-            // Select a sibling.
-            self.last_selected_sibling = self.select_sibling();
-
-            // Try to receive packets on last_selected_sibling's port.
-            if let Some(packets) = self.try_steal_packets() {
-                // Since packets were stolen, these packets were not received
-                // by sibling port. These packets are added to this port's
-                // queue depth.
-                let update = self.queue_stats[self.id as usize]
-                    .stats
-                    .load(Ordering::Relaxed) + packets.len();
-                self.queue_stats[self.id as usize]
-                    .stats
-                    .store(update, Ordering::Relaxed);
-
-                // Perform basic network processing on the received packets.
-                let mut packets = self.parse_mac_headers(packets);
-                let mut packets = self.parse_ip_headers(packets);
-                let mut packets = self.parse_udp_headers(packets);
-
-                // Dispatch these packets to the appropriate service.
-                self.dispatch_requests(packets);
-            }
         }
     }
 }
