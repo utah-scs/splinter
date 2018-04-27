@@ -13,19 +13,19 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::cell::RefCell;
 use std::str;
 use std::sync::Arc;
-use std::cell::RefCell;
 
-use super::tenant::Tenant;
 use super::alloc::Allocator;
+use super::tenant::Tenant;
 use super::wireformat::{InvokeRequest, InvokeResponse};
 
-use sandstorm::db::DB;
 use sandstorm::buf::{ReadBuf, WriteBuf};
+use sandstorm::db::DB;
 
-use e2d2::interface::Packet;
 use e2d2::common::EmptyMetadata;
+use e2d2::interface::Packet;
 
 /// This type is passed into the init method of every extension. The methods
 /// on this type form the interface allowing extensions to read and write
@@ -81,12 +81,14 @@ impl Context {
     ///
     /// # Result
     /// A context that can be used to invoke an extension.
-    pub fn new(req: Packet<InvokeRequest, EmptyMetadata>,
-               args_off: usize, args_len: usize,
-               res: Packet<InvokeResponse, EmptyMetadata>,
-               tenant: Arc<Tenant>, alloc: Arc<Allocator>)
-               -> Context
-    {
+    pub fn new(
+        req: Packet<InvokeRequest, EmptyMetadata>,
+        args_off: usize,
+        args_len: usize,
+        res: Packet<InvokeResponse, EmptyMetadata>,
+        tenant: Arc<Tenant>,
+        alloc: Arc<Allocator>,
+    ) -> Context {
         Context {
             request: req,
             args_offset: args_off,
@@ -105,9 +107,12 @@ impl Context {
     /// A tupule whose first member is the request packet/buffer for the
     /// extension, and whose second member is the response packet/buffer
     /// that can be sent back to the tenant.
-    pub unsafe fn commit(self) -> (Packet<InvokeRequest, EmptyMetadata>,
-                                   Packet<InvokeResponse, EmptyMetadata>)
-    {
+    pub unsafe fn commit(
+        self,
+    ) -> (
+        Packet<InvokeRequest, EmptyMetadata>,
+        Packet<InvokeResponse, EmptyMetadata>,
+    ) {
         return (self.request, self.response.into_inner());
     }
 }
@@ -128,17 +133,13 @@ impl DB for Context {
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn alloc(&self, table_id: u64, key: &[u8], val_len: u64)
-             -> Option<WriteBuf>
-    {
+    fn alloc(&self, table_id: u64, key: &[u8], val_len: u64) -> Option<WriteBuf> {
         // Check if the tenant owns a table with the requested identifier.
         // If it does, perform and return an allocation.
-        self.tenant.get_table(table_id)
-                    .and_then(| _table | { self.heap.raw(self.tenant.id(),
-                                                         table_id,
-                                                         key, val_len) })
-                    .and_then(| buf | {
-                        unsafe { Some(WriteBuf::new(table_id, buf)) } })
+        self.tenant
+            .get_table(table_id)
+            .and_then(|_table| self.heap.raw(self.tenant.id(), table_id, key, val_len))
+            .and_then(|buf| unsafe { Some(WriteBuf::new(table_id, buf)) })
     }
 
     /// Lookup the `DB` trait for documentation on this method.
@@ -148,10 +149,10 @@ impl DB for Context {
 
         // If the table exists, write to the database.
         if let Some(table) = self.tenant.get_table(table_id) {
-            return self.heap.resolve(buf.clone())
-                            .map_or(false, | (k, _v) | {
-                                table.put(k, buf);
-                                true });
+            return self.heap.resolve(buf.clone()).map_or(false, |(k, _v)| {
+                table.put(k, buf);
+                true
+            });
         }
 
         return false;
@@ -169,21 +170,23 @@ impl DB for Context {
     fn args(&self) -> &[u8] {
         // Return a slice to the arguments off the request packet/buffer's
         // payload.
-        self.request.get_payload()
-                    .split_at(self.args_offset).1
-                    .split_at(self.args_length).0
+        self.request
+            .get_payload()
+            .split_at(self.args_offset)
+            .1
+            .split_at(self.args_length)
+            .0
     }
 
     /// Lookup the `DB` trait for documentation on this method.
     fn resp(&self, data: &[u8]) {
         // Write the passed in data to the response packet/buffer.
-        self.response.borrow_mut()
-                        .add_to_payload_tail(data.len(), data)
-                        .unwrap();
+        self.response
+            .borrow_mut()
+            .add_to_payload_tail(data.len(), data)
+            .unwrap();
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn debug_log(&self, _msg: &str) {
-        ;
-    }
+    fn debug_log(&self, _msg: &str) {}
 }

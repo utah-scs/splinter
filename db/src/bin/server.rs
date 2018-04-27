@@ -22,17 +22,17 @@ use std::sync::Arc;
 
 use db::log::*;
 
-use db::e2d2::scheduler::*;
+use db::e2d2::allocators::CacheAligned;
+use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::Executable;
-use db::e2d2::allocators::CacheAligned;
 use db::e2d2::scheduler::NetBricksContext as NetbricksContext;
-use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
+use db::e2d2::scheduler::*;
 
 use db::config;
+use db::dispatch::Dispatch;
 use db::master::Master;
 use db::sched::RoundRobin;
-use db::dispatch::Dispatch;
 
 use spin::RwLock;
 
@@ -81,7 +81,8 @@ fn setup_server<S>(
     ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>,
     scheduler: &mut S,
     master: &Arc<Master>,
-    sibling_ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>,
+    siblings: Vec<(i32, Arc<RwLock<CacheAligned<PortQueue>>>)>,
+    stats: Vec<Arc<CacheAligned<PortStats>>>,
 ) where
     S: Scheduler + Sized,
 {
@@ -93,16 +94,14 @@ fn setup_server<S>(
     // Create a scheduler and a dispatcher for the server.
     let sched = Arc::new(RoundRobin::new());
 
-    // Acquire write lock
-    let port = ports[0].read();
-
     let dispatch = Dispatch::new(
         config,
         ports[0].clone(),
         Arc::clone(master),
         Arc::clone(&sched),
-        port.rxq(),
-        sibling_ports.clone(),
+        ports[0].read().rxq(),
+        siblings.clone(),
+        stats,
     );
     sched.enqueue(Box::new(dispatch));
 
@@ -110,8 +109,9 @@ fn setup_server<S>(
     match scheduler.add_task(Server::new(sched)) {
         Ok(_) => {
             info!(
-                "Successfully added scheduler with rx,tx queues {:?}.",
-                (port.rxq(), port.txq())
+                "Successfully added scheduler with rx,tx queues {:?}, siblings {:?}.",
+                (ports[0].read().rxq(), ports[0].read().txq()),
+                siblings.iter().map(|sibling| sibling.0).collect::<Vec<i32>>(),
             );
         }
 
@@ -210,9 +210,6 @@ fn main() {
     let config = config::ServerConfig::load();
     info!("Starting up Sandstorm server with config {:?}", config);
 
-    // Setup Netbricks.
-    let mut net_context: NetbricksContext = config_and_init_netbricks(&config);
-
     let master = Arc::new(Master::new());
     info!("Populating test data table and extensions...");
 
@@ -222,17 +219,20 @@ fn main() {
         master.load_test(tenant);
     }
 
-    // Create tenants with data and extensions for Sanity 
+    // Create tenants with data and extensions for Sanity
     master.load_test(100);
     master.fill_test(100, 100, 0);
 
     info!("Finished populating data and extensions");
 
+    // Setup Netbricks.
+    let mut net_context: NetbricksContext = config_and_init_netbricks(&config);
+
     // Setup the server pipeline.
     net_context.start_schedulers();
     net_context.add_pipeline_to_run(Arc::new(
-        move |ports, scheduler: &mut StandaloneScheduler, sibling_queues| {
-            setup_server(&config, ports, scheduler, &master, sibling_queues)
+        move |ports, scheduler: &mut StandaloneScheduler, siblings, stats| {
+            setup_server(&config, ports, scheduler, &master, siblings, stats)
         },
     ));
 

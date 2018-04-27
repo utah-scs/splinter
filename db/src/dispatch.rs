@@ -13,12 +13,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-extern crate rand;
-
-use std::fmt::Display;
 use std::net::Ipv4Addr;
 use std::option::Option;
 use std::str::FromStr;
+use std::sync::atomic::*;
 use std::sync::Arc;
 
 use super::common;
@@ -31,22 +29,19 @@ use super::service::Service;
 use super::task::{Task, TaskPriority, TaskState};
 use super::wireformat;
 
+use super::e2d2::allocators::CacheAligned;
 use super::e2d2::common::EmptyMetadata;
 use super::e2d2::headers::*;
 use super::e2d2::interface::*;
 
-use self::rand::Rng;
+use rand::*;
 use spin::RwLock;
-use super::e2d2::allocators::CacheAligned;
 
 /// This type represents a requests-dispatcher in Sandstorm. When added to a
 /// Netbricks scheduler, this dispatcher polls a network port for RPCs,
 /// dispatches them to a service, and sends out responses on the same network
 /// port.
-pub struct Dispatch
-//where
-//    T: PacketRx + PacketTx + Display + Clone + 'static,
-{
+pub struct Dispatch {
     /// A ref counted pointer to a master service. The master service
     /// implements the primary interface to the database.
     master_service: Arc<Master>,
@@ -61,9 +56,9 @@ pub struct Dispatch
 
     /// The network ports/interfaces of other dispatchers on which this
     /// dispatcher can receive RPC requests when it wants to steal work.
-    sibling_network_ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>,
+    sibling_network_ports: Vec<(i32, Arc<RwLock<CacheAligned<PortQueue>>>)>,
 
-    /// This identifies the last selected sibling from the vector of 
+    /// This identifies the last selected sibling from the vector of
     /// sibling_network_ports.
     last_selected_sibling: usize,
 
@@ -111,6 +106,8 @@ pub struct Dispatch
 
     /// Unique identifier for a Dispatch task. Currently required for measurement purposes.
     id: i32,
+
+    queue_stats: Vec<Arc<CacheAligned<PortStats>>>,
 }
 
 impl Dispatch
@@ -139,7 +136,8 @@ impl Dispatch
         master: Arc<Master>,
         sched: Arc<RoundRobin>,
         id: i32,
-        sibling_net_ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>,
+        sibling_net_ports: Vec<(i32, Arc<RwLock<CacheAligned<PortQueue>>>)>,
+        stats: Vec<Arc<CacheAligned<PortStats>>>,
     ) -> Dispatch {
         let rx_batch_size: u8 = 32;
 
@@ -186,6 +184,9 @@ impl Dispatch
         mac_header.dst = mac_dst_addr;
         mac_header.set_etype(mac_etype);
 
+        // Initialize the last/previous sibling to a random queue.
+        let init_last_sibling = thread_rng().gen_range::<usize>(0, sibling_net_ports.len());
+
         Dispatch {
             master_service: master,
             scheduler: sched,
@@ -203,7 +204,8 @@ impl Dispatch
             priority: TaskPriority::DISPATCH,
             id: id,
             sibling_network_ports: sibling_net_ports.clone(),
-            last_selected_sibling: 0,
+            last_selected_sibling: init_last_sibling,
+            queue_stats: stats,
         }
     }
 
@@ -225,16 +227,8 @@ impl Dispatch
         unsafe {
             mbuf_vector.set_len(self.max_rx_packets as usize);
 
-            let result;
-            // Acquire lock
-            {
-                let net_port = self.network_port.write();
-                result = net_port.recv(&mut mbuf_vector[..]);
-            }
-            // lock released
-
             // Try to receive packets from the network port.
-            match result {
+            match self.network_port.write().recv(&mut mbuf_vector[..]) {
                 // The receive call returned successfully.
                 Ok(num_received) => {
                     if num_received == 0 {
@@ -290,16 +284,8 @@ impl Dispatch
                 mbufs.push(packet.get_mbuf());
             }
 
-            let result;
-            // Acquire lock
-            {
-                let net_port = self.network_port.write();
-                result = net_port.send(&mut mbufs);
-            }
-            // lock released
-
             // Send out the above MBuf's.
-            match result {
+            match self.network_port.write().send(&mut mbufs) {
                 Ok(sent) => {
                     if sent < num_packets as u32 {
                         warn!("Was able to send only {} of {} packets.", sent, num_packets);
@@ -351,68 +337,51 @@ impl Dispatch
         unsafe {
             mbuf_vector.set_len(self.max_rx_packets as usize);
 
-            let result;
-            //Try to acquire lock
-            match self.sibling_network_ports[self.last_selected_sibling].try_write() {
-                Some(mut sibling_network_port) => {
-                    // Set steal flag so queue depth of sibling port remains unchanged.
-                    sibling_network_port.set_steal_flag(true);
-                    
-                    // Try to receive packets from sibling's network port.
-                    result = sibling_network_port.recv(&mut mbuf_vector[..]);
+            // Try to acquire a lock on the sibling's receive queue.
+            if let Some(mut sibling) = self.sibling_network_ports[self.last_selected_sibling]
+                .1
+                .try_write()
+            {
+                // Set steal flag so queue depth of sibling port remains unchanged.
+                sibling.set_steal_flag(true);
 
+                // Try to receive packets from sibling's network port.
+                if let Ok(num_received) = sibling.recv(&mut mbuf_vector[..]) {
                     // Unset steal flag so future queue_depth stats are correct on this port.
-                    sibling_network_port.set_steal_flag(false);
-                },
-                None => {
-                    //info!("Tried to acquire lock on sibling queue but failed.");
-                    return None;
-                },
-            };
+                    sibling.set_steal_flag(false);
 
-            match result {
-                // The receive call returned successfully.
-                Ok(num_received) => {
-		    if num_received == 0 {
-		        // No packets were available for receive.
-		        return None;
-		    }
-
-                    // Acquire lock on this port
-                    {
-                        let net_port = self.network_port.write();
-                        // Since packets were stolen, these packets were not received
-                        // by sibling port. These packets are added to this port's
-                        // queue depth.
-                        net_port.increment_queue_depth(num_received as usize);
+                    if num_received == 0 {
+                        // No packets were available for receive.
+                        return None;
                     }
 
-		    // Allocate a vector for the received packets.
-		    let mut recvd_packets = Vec::<Packet<NullHeader, EmptyMetadata>>::with_capacity(
-				    self.max_rx_packets as usize,
-				    );
+                    // Allocate a vector for the received packets.
+                    let mut recvd_packets = Vec::<Packet<NullHeader, EmptyMetadata>>::with_capacity(
+                        self.max_rx_packets as usize,
+                    );
 
-		    // Clear out any dangling pointers in mbuf_vector.
-		    for _dangling in num_received..self.max_rx_packets as u32 {
-	                mbuf_vector.pop();
-		    }
+                    // Clear out any dangling pointers in mbuf_vector.
+                    for _dangling in num_received..self.max_rx_packets as u32 {
+                        mbuf_vector.pop();
+                    }
 
-		    // Wrap up the received Mbuf's into Packets. The refcount
-		    // on the mbuf's were set by DPDK, and do not need to be
-		    // bumped up here. Hence, the call to
-		    // packet_from_mbuf_no_increment().
-		    for mbuf in mbuf_vector.iter_mut() {
-	                recvd_packets.push(packet_from_mbuf_no_increment(*mbuf, 0));
-		    }
+                    // Wrap up the received Mbuf's into Packets. The refcount
+                    // on the mbuf's were set by DPDK, and do not need to be
+                    // bumped up here. Hence, the call to
+                    // packet_from_mbuf_no_increment().
+                    for mbuf in mbuf_vector.iter_mut() {
+                        recvd_packets.push(packet_from_mbuf_no_increment(*mbuf, 0));
+                    }
 
-		    return Some(recvd_packets);
-		}
+                    return Some(recvd_packets);
+                } else {
+                    // Unset steal flag so future queue_depth stats are correct on this port.
+                    sibling.set_steal_flag(false);
 
-		// There was an error during receive.
-		Err(ref err) => {
-			error!("Failed to receive packet: {}", err);
-			return None;
-		}
+                    return None;
+                }
+            } else {
+                return None;
             }
         }
     }
@@ -682,31 +651,21 @@ impl Dispatch
         // to be equal to a random number.
         // Assuming we have 8 cores. Change this to number of cores.
         //let sibling_1 = self.last_selected_sibling;
-        let sibling_1 = rand::thread_rng().gen_range::<usize>(0,7);
+        let one = thread_rng().gen_range::<usize>(0, self.sibling_network_ports.len());
+        let two = thread_rng().gen_range::<usize>(0, self.sibling_network_ports.len());
 
-        let s1_queue_depth: usize;
-        let s2_queue_depth: usize;
-        // Try to acquire read lock on sibling 1.
-        match self.sibling_network_ports[sibling_1].try_read() {
-            Some(s1) => {
-                s1_queue_depth = s1.get_queue_depth();
-            },
-            None => return self.last_selected_sibling
-        }
+        let s1_queue_depth = self.queue_stats[self.sibling_network_ports[one].0 as usize]
+            .stats
+            .load(Ordering::Relaxed);
 
-        let sibling_2 = rand::thread_rng().gen_range::<usize>(0, 7);
-        // Try to acquire read lock on sibling 2.
-        match self.sibling_network_ports[sibling_2].try_read() {
-            Some(s2) => {
-                s2_queue_depth = s2.get_queue_depth();
-            },
-            None => return self.last_selected_sibling
-        }
+        let s2_queue_depth = self.queue_stats[self.sibling_network_ports[two].0 as usize]
+            .stats
+            .load(Ordering::Relaxed);
+
         if s1_queue_depth >= s2_queue_depth {
-            sibling_1
-        }
-        else {
-            sibling_2
+            one
+        } else {
+            two
         }
     }
 
@@ -730,11 +689,22 @@ impl Dispatch
 
             // Dispatch these packets to the appropriate service.
             self.dispatch_requests(packets);
-        }
-        else {
+        } else {
+            // Select a sibling.
             self.last_selected_sibling = self.select_sibling();
+
             // Try to receive packets on last_selected_sibling's port.
             if let Some(packets) = self.try_steal_packets() {
+                // Since packets were stolen, these packets were not received
+                // by sibling port. These packets are added to this port's
+                // queue depth.
+                let update = self.queue_stats[self.id as usize]
+                    .stats
+                    .load(Ordering::Relaxed) + packets.len();
+                self.queue_stats[self.id as usize]
+                    .stats
+                    .store(update, Ordering::Relaxed);
+
                 // Perform basic network processing on the received packets.
                 let mut packets = self.parse_mac_headers(packets);
                 let mut packets = self.parse_ip_headers(packets);
@@ -749,10 +719,7 @@ impl Dispatch
 
 // Implementation of the Task trait for Dispatch. This will allow Dispatch to be scheduled by the
 // database.
-impl Task for Dispatch
-//where
-//    T: PacketRx + PacketTx + Display + Clone + 'static,
-{
+impl Task for Dispatch {
     /// Refer to the `Task` trait for Documentation.
     fn run(&mut self) -> (TaskState, u64) {
         let start = cycles::rdtsc();

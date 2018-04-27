@@ -20,7 +20,7 @@ pub struct PmdPort {
     port: i32,
     rxqs: i32,
     txqs: i32,
-    stats_rx: Vec<Arc<CacheAligned<PortStats>>>,
+    pub stats_rx: Vec<Arc<CacheAligned<PortStats>>>,
     stats_tx: Vec<Arc<CacheAligned<PortStats>>>,
 }
 
@@ -31,11 +31,9 @@ pub struct PortQueue {
     // scope.
     pub port: Arc<PmdPort>,
     queue_depth: Arc<CacheAligned<PortStats>>,
-    //stats_tx: Arc<CacheAligned<PortStats>>,
     port_id: i32,
     txq: i32,
     rxq: i32,
-    //if true, packets are being stolen.
     steal: bool,
 }
 
@@ -177,7 +175,6 @@ impl PmdPort {
                 txq: txq,
                 rxq: rxq,
                 queue_depth: port.stats_rx[rxq as usize].clone(),
-                //stats_tx: port.stats_tx[txq as usize].clone(),
                 steal: false,
             }))
         }

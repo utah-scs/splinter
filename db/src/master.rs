@@ -13,25 +13,25 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::collections::HashMap;
+use std::mem::transmute;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::mem::transmute;
-use std::collections::HashMap;
 
-use super::ext::*;
-use super::wireformat::*;
-use super::native::Native;
-use super::tenant::Tenant;
-use super::service::Service;
-use super::context::Context;
 use super::alloc::Allocator;
-use super::container::Container;
-use super::task::{Task, TaskPriority};
 use super::common::{TableId, TenantId, PACKET_UDP_LEN};
+use super::container::Container;
+use super::context::Context;
+use super::ext::*;
+use super::native::Native;
+use super::service::Service;
+use super::task::{Task, TaskPriority};
+use super::tenant::Tenant;
+use super::wireformat::*;
 
-use e2d2::interface::Packet;
-use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
+use e2d2::headers::UdpHeader;
+use e2d2::interface::Packet;
 
 use spin::RwLock;
 

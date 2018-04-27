@@ -13,12 +13,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-extern crate spin;
-
 use std::cell::Cell;
 use std::fmt::Display;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use db::config;
 use db::e2d2::allocators::*;
@@ -28,8 +27,7 @@ use db::e2d2::interface::*;
 use db::log::*;
 use db::rpc;
 
-use std::sync::Arc;
-use self::spin::RwLock;
+use spin::RwLock;
 
 /// A simple RPC request generator for Sandstorm.
 pub struct Sender {
@@ -78,11 +76,7 @@ impl Sender {
         // packets.
         let mut udp_header: UdpHeader = UdpHeader::new();
 
-        // Acquire write lock
-        {
-            let p = port.write();
-            udp_header.set_src_port(p.txq() as u16);
-        }
+        udp_header.set_src_port(port.read().txq() as u16);
         udp_header.set_dst_port(0);
         udp_header.set_length(8);
         udp_header.set_checksum(0);
@@ -211,10 +205,8 @@ impl Sender {
         unsafe {
             let mut pkts = [request.get_mbuf()];
 
-            //Acquire write lock
-            let network_port = self.net_port.write();
-
-            let sent = network_port
+            let sent = self.net_port
+                .write()
                 .send(&mut pkts)
                 .expect("Failed to send packet!");
 
@@ -281,11 +273,9 @@ where
         unsafe {
             mbuf_vector.set_len(self.max_rx_packets as usize);
 
-            //Acquire write lock
-            let network_port = self.net_port.write();
-
             // Try to receive packets from the network port.
-            let recvd = network_port
+            let recvd = self.net_port
+                .write()
                 .recv(&mut mbuf_vector[..])
                 .expect("Error on packet receive") as usize;
 

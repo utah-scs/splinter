@@ -441,10 +441,9 @@ fn setup_send<S>(
         config.server_udp_ports as u16,
     )) {
         Ok(_) => {
-            let port = ports[0].write();
             info!(
                 "Successfully added YcsbSend with tx queue {}.",
-                port.txq()
+                ports[0].read().txq()
             );
         }
 
@@ -473,10 +472,9 @@ where
     // Add the receiver to a netbricks pipeline.
     match scheduler.add_task(YcsbRecv::new(ports[0].clone(), 16 * 1000 * 1000 as u64)) {
         Ok(_) => {
-            let port = ports[0].write();
             info!(
                 "Successfully added YcsbRecv with rx queue {}.",
-                port.rxq()
+                ports[0].read().rxq()
             );
         }
 

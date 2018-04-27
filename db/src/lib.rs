@@ -20,9 +20,10 @@ extern crate sandstorm;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+extern crate rand;
 extern crate spin;
-extern crate toml;
 extern crate time;
+extern crate toml;
 
 pub extern crate bytes;
 pub extern crate e2d2;
@@ -34,18 +35,18 @@ mod alloc;
 mod common;
 mod container;
 mod context;
+mod native;
 mod service;
 mod task;
 mod tenant;
-mod native;
 
 // Public modules for binaries.
-pub mod rpc;
-pub mod cycles;
 pub mod config;
+pub mod cycles;
 pub mod dispatch;
 pub mod ext;
+pub mod master;
+pub mod rpc;
+pub mod sched;
 pub mod table;
 pub mod wireformat;
-pub mod master;
-pub mod sched;
