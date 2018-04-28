@@ -13,10 +13,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::fmt::Display;
 use std::net::Ipv4Addr;
 use std::option::Option;
 use std::str::FromStr;
-use std::sync::atomic::*;
 use std::sync::Arc;
 
 use super::common;
@@ -29,20 +29,18 @@ use super::service::Service;
 use super::task::{Task, TaskPriority, TaskState};
 use super::wireformat;
 
-use super::e2d2::allocators::CacheAligned;
 use super::e2d2::common::EmptyMetadata;
 use super::e2d2::headers::*;
 use super::e2d2::interface::*;
-
-use rand::*;
-use spin::RwLock;
 
 /// This type represents a requests-dispatcher in Sandstorm. When added to a
 /// Netbricks scheduler, this dispatcher polls a network port for RPCs,
 /// dispatches them to a service, and sends out responses on the same network
 /// port.
-#[allow(dead_code)]
-pub struct Dispatch {
+pub struct Dispatch<T>
+where
+    T: PacketRx + PacketTx + Display + Clone + 'static,
+{
     /// A ref counted pointer to a master service. The master service
     /// implements the primary interface to the database.
     master_service: Arc<Master>,
@@ -53,15 +51,7 @@ pub struct Dispatch {
 
     /// The network port/interface on which this dispatcher receives and
     /// transmits RPC requests and responses on.
-    network_port: Arc<RwLock<CacheAligned<PortQueue>>>,
-
-    /// The network ports/interfaces of other dispatchers on which this
-    /// dispatcher can receive RPC requests when it wants to steal work.
-    sibling_network_ports: Vec<(i32, Arc<RwLock<CacheAligned<PortQueue>>>)>,
-
-    /// This identifies the last selected sibling from the vector of
-    /// sibling_network_ports.
-    last_selected_sibling: usize,
+    network_port: T,
 
     /// The IP address of the server. This is required to ensure that the
     /// server does not process packets that were destined to a different
@@ -107,13 +97,11 @@ pub struct Dispatch {
 
     /// Unique identifier for a Dispatch task. Currently required for measurement purposes.
     id: i32,
-
-    queue_stats: Vec<Arc<CacheAligned<PortStats>>>,
 }
 
-impl Dispatch
-//where
-//    T: PacketRx + PacketTx + Display + Clone + 'static,
+impl<T> Dispatch<T>
+where
+    T: PacketRx + PacketTx + Display + Clone + 'static,
 {
     /// This function creates and returns a requests-dispatcher which can be
     /// added to a Netbricks scheduler.
@@ -133,13 +121,11 @@ impl Dispatch
     /// A dispatcher of type ServerDispatch capable of receiving RPCs, and responding to them.
     pub fn new(
         config: &config::ServerConfig,
-        net_port: Arc<RwLock<CacheAligned<PortQueue>>>,
+        net_port: T,
         master: Arc<Master>,
         sched: Arc<RoundRobin>,
         id: i32,
-        sibling_net_ports: Vec<(i32, Arc<RwLock<CacheAligned<PortQueue>>>)>,
-        stats: Vec<Arc<CacheAligned<PortStats>>>,
-    ) -> Dispatch {
+    ) -> Dispatch<T> {
         let rx_batch_size: u8 = 32;
 
         // Create a common udp header for response packets.
@@ -185,9 +171,6 @@ impl Dispatch
         mac_header.dst = mac_dst_addr;
         mac_header.set_etype(mac_etype);
 
-        // Initialize the last/previous sibling to a random queue.
-        let init_last_sibling = thread_rng().gen_range::<usize>(0, sibling_net_ports.len());
-
         Dispatch {
             master_service: master,
             scheduler: sched,
@@ -204,9 +187,6 @@ impl Dispatch
             time: 0,
             priority: TaskPriority::DISPATCH,
             id: id,
-            sibling_network_ports: sibling_net_ports.clone(),
-            last_selected_sibling: init_last_sibling,
-            queue_stats: stats,
         }
     }
 
@@ -229,7 +209,7 @@ impl Dispatch
             mbuf_vector.set_len(self.max_rx_packets as usize);
 
             // Try to receive packets from the network port.
-            match self.network_port.write().recv(&mut mbuf_vector[..]) {
+            match self.network_port.recv(&mut mbuf_vector[..]) {
                 // The receive call returned successfully.
                 Ok(num_received) => {
                     if num_received == 0 {
@@ -286,7 +266,7 @@ impl Dispatch
             }
 
             // Send out the above MBuf's.
-            match self.network_port.write().send(&mut mbufs) {
+            match self.network_port.send(&mut mbufs) {
                 Ok(sent) => {
                     if sent < num_packets as u32 {
                         warn!("Was able to send only {} of {} packets.", sent, num_packets);
@@ -317,74 +297,6 @@ impl Dispatch
 
             self.measurement_start = self.measurement_stop;
             self.responses_sent = 0;
-        }
-    }
-
-    /// This function attempts to receive a batch of packets from one of the
-    /// siblings' network port.
-    ///
-    /// # Return
-    ///
-    /// A vector of packets wrapped up in Netbrick's Packet<NullHeader, EmptyMetadata> type if
-    /// there was anything received at the network port.
-    #[allow(dead_code)]
-    fn try_steal_packets(&self) -> Option<Vec<Packet<NullHeader, EmptyMetadata>>> {
-        // Allocate a vector of mutable MBuf pointers into which packets will
-        // be received.
-        let mut mbuf_vector = Vec::with_capacity(self.max_rx_packets as usize);
-
-        // This unsafe block is needed in order to populate mbuf_vector with a
-        // bunch of pointers, and subsequently manipulate these pointers. DPDK
-        // will take care of assigning these to actual MBuf's.
-        unsafe {
-            mbuf_vector.set_len(self.max_rx_packets as usize);
-
-            // Try to acquire a lock on the sibling's receive queue.
-            if let Some(mut sibling) = self.sibling_network_ports[self.last_selected_sibling]
-                .1
-                .try_write()
-            {
-                // Set steal flag so queue depth of sibling port remains unchanged.
-                sibling.set_steal_flag(true);
-
-                // Try to receive packets from sibling's network port.
-                if let Ok(num_received) = sibling.recv(&mut mbuf_vector[..]) {
-                    // Unset steal flag so future queue_depth stats are correct on this port.
-                    sibling.set_steal_flag(false);
-
-                    if num_received == 0 {
-                        // No packets were available for receive.
-                        return None;
-                    }
-
-                    // Allocate a vector for the received packets.
-                    let mut recvd_packets = Vec::<Packet<NullHeader, EmptyMetadata>>::with_capacity(
-                        self.max_rx_packets as usize,
-                    );
-
-                    // Clear out any dangling pointers in mbuf_vector.
-                    for _dangling in num_received..self.max_rx_packets as u32 {
-                        mbuf_vector.pop();
-                    }
-
-                    // Wrap up the received Mbuf's into Packets. The refcount
-                    // on the mbuf's were set by DPDK, and do not need to be
-                    // bumped up here. Hence, the call to
-                    // packet_from_mbuf_no_increment().
-                    for mbuf in mbuf_vector.iter_mut() {
-                        recvd_packets.push(packet_from_mbuf_no_increment(*mbuf, 0));
-                    }
-
-                    return Some(recvd_packets);
-                } else {
-                    // Unset steal flag so future queue_depth stats are correct on this port.
-                    sibling.set_steal_flag(false);
-
-                    return None;
-                }
-            } else {
-                return None;
-            }
         }
     }
 
@@ -640,38 +552,6 @@ impl Dispatch
         self.free_packets(ignore_packets);
     }
 
-    /// This method selects sibling based on "power of two choices".
-    ///
-    /// # Return
-    ///
-    /// usize which can be used to index sibling port in
-    /// sibling_network_ports.
-    #[inline]
-    #[allow(dead_code)]
-    fn select_sibling(&mut self) -> usize {
-        // Randomly pick a sibling.
-        // To experiment vanilla "power of two choices", change sibling_1
-        // to be equal to a random number.
-        // Assuming we have 8 cores. Change this to number of cores.
-        //let sibling_1 = self.last_selected_sibling;
-        let one = thread_rng().gen_range::<usize>(0, self.sibling_network_ports.len());
-        let two = thread_rng().gen_range::<usize>(0, self.sibling_network_ports.len());
-
-        let s1_queue_depth = self.queue_stats[self.sibling_network_ports[one].0 as usize]
-            .stats
-            .load(Ordering::Relaxed);
-
-        let s2_queue_depth = self.queue_stats[self.sibling_network_ports[two].0 as usize]
-            .stats
-            .load(Ordering::Relaxed);
-
-        if s1_queue_depth >= s2_queue_depth {
-            one
-        } else {
-            two
-        }
-    }
-
     /// This method polls the dispatchers network port for any received packets,
     /// dispatches them to the appropriate service, and sends out responses over
     /// the network port.
@@ -698,7 +578,10 @@ impl Dispatch
 
 // Implementation of the Task trait for Dispatch. This will allow Dispatch to be scheduled by the
 // database.
-impl Task for Dispatch {
+impl<T> Task for Dispatch<T>
+where
+    T: PacketRx + PacketTx + Display + Clone + 'static,
+{
     /// Refer to the `Task` trait for Documentation.
     fn run(&mut self) -> (TaskState, u64) {
         let start = cycles::rdtsc();

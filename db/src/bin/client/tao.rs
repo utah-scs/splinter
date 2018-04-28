@@ -19,7 +19,6 @@ extern crate db;
 extern crate rand;
 extern crate time;
 extern crate zipf;
-extern crate spin;
 
 mod setup;
 mod dispatch;
@@ -35,10 +34,6 @@ use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
 use db::e2d2::allocators::*;
 
-use std::str;
-use std::mem;
-
-use spin::RwLock;
 
 /// Sends out Tao based RPC requests to a Sandstorm server.
 struct TaoSend {
@@ -61,7 +56,7 @@ impl TaoSend {
     /// # Return
     ///
     /// A Tao request generator.
-    fn new(config: &config::ClientConfig, port: Arc<RwLock<CacheAligned<PortQueue>>>) -> TaoSend {
+    fn new(config: &config::ClientConfig, port: CacheAligned<PortQueue>) -> TaoSend {
         TaoSend {
             sender: dispatch::Sender::new(config, port, 0),
         }
@@ -72,159 +67,22 @@ impl TaoSend {
 impl Executable for TaoSend {
     // Called internally by Netbricks.
     fn execute(&mut self) {
-        // OBJECT_ADD
-        {
-            // Get the current time stamp so that we can determine if it is time to issue the next RPC.
-            let curr = cycles::rdtsc();
 
-            let mut payload = Vec::new();
-            //Object add = |opcode = 1|table_id = 8|obj_type = 2|value = n > 0|
-            let table_id: [u8; 8] = unsafe { transmute(100u64.to_le()) };
-            let obj_type: [u8; 2] = unsafe { transmute(1u16.to_le()) };
-            let value: [u8; 8] = unsafe { transmute(3u64.to_le()) };
-            let opcode: [u8; 1] = unsafe { transmute(1u8.to_le()) };
-            payload.extend_from_slice("tao".as_bytes());
-            payload.extend_from_slice(&opcode);
-            payload.extend_from_slice(&table_id);
-            payload.extend_from_slice(&obj_type);
-            payload.extend_from_slice(&value);
-            self.sender.send_invoke(1, 3, &payload, curr)
+        // Get the current time stamp so that we can determine if it is time to issue the next RPC.
+        let curr = cycles::rdtsc();
 
-            // Expect to get obj_id/oid back. In this case 2.
-        }
-
-        // OBJECT_GET
-        {
-            // Object get on the object we just added.
-            // TODO: read the oid from response before doing this.
-            // For now I know it will always be 2.
-            // Get the current time stamp so that we can determine if it is time to issue the next RPC.
-            let curr = cycles::rdtsc();
-
-            let mut payload = Vec::new();
-            //Object get = |opcode = 1|table_id = 8|obj_id = 8|
-            let table_id: [u8; 8] = unsafe { transmute(100u64.to_le()) };
-            let obj_id: [u8; 8] = unsafe { transmute(2u64.to_le()) };
-            let opcode: [u8; 1] = unsafe { transmute(0u8.to_le()) };
-            payload.extend_from_slice("tao".as_bytes());
-            payload.extend_from_slice(&opcode);
-            payload.extend_from_slice(&table_id);
-            payload.extend_from_slice(&obj_id);
-            self.sender.send_invoke(1, 3, &payload, curr)
-
-            // Expect to get value back. In this case, 3. (See value in OBJECT_ADD above)
-        }
-
-        // OBJECT_UPDATE
-        {
-            let curr = cycles::rdtsc();
-
-            let mut payload = Vec::new();
-            //Object update = |opcode = 1|table_id = 8|obj_id = 8|obj_type = 2|value = n > 0|
-            let table_id: [u8; 8] = unsafe { transmute(100u64.to_le()) };
-            let obj_id: [u8; 8] = unsafe { transmute(2u64.to_le()) };
-            let obj_type: [u8; 2] = unsafe { transmute(1u16.to_le()) };
-            let value: [u8; 8] = unsafe { transmute(4u64.to_le()) };
-            let opcode: [u8; 1] = unsafe { transmute(2u8.to_le()) };
-            payload.extend_from_slice("tao".as_bytes());
-            payload.extend_from_slice(&opcode);
-            payload.extend_from_slice(&table_id);
-            payload.extend_from_slice(&obj_id);
-            payload.extend_from_slice(&obj_type);
-            payload.extend_from_slice(&value);
-            self.sender.send_invoke(1, 3, &payload, curr)
-
-            // Expect to get nothing back.
-        }
-
-        // OBJECT_DELETE
-        {
-            let curr = cycles::rdtsc();
-
-            let mut payload = Vec::new();
-            //Object delete = |opcode = 1|table_id = 8|obj_id = 8|
-            let table_id: [u8; 8] = unsafe { transmute(100u64.to_le()) };
-            let obj_id: [u8; 8] = unsafe { transmute(2u64.to_le()) };
-            let opcode: [u8; 1] = unsafe { transmute(3u8.to_le()) };
-            payload.extend_from_slice("tao".as_bytes());
-            payload.extend_from_slice(&opcode);
-            payload.extend_from_slice(&table_id);
-            payload.extend_from_slice(&obj_id);
-            self.sender.send_invoke(1, 3, &payload, curr)
-
-            // Expect to get nothing back.
-        }
-
-        // ASSOC_ADD
-        // TODO: for this to work, we ned to be able to add more than one object to the table.
-        {
-            let curr = cycles::rdtsc();
-
-            let mut payload = Vec::new();
-
-            // assoc_add = |opcode = 1|table_id = 8|id1 = 8|assoc_type = 2|id2 = 8|
-            let table_id: [u8; 8] = unsafe { transmute(100u64.to_le()) };
-            let id1: [u8; 8] = unsafe { transmute(2u64.to_le()) };
-            let id2: [u8; 8] = unsafe { transmute(3u64.to_le()) };
-            let assoc_type: [u8; 2] = unsafe { transmute(1u16.to_le()) };
-            let opcode: [u8; 1] = unsafe { transmute(5u8.to_le()) };
-            payload.extend_from_slice("tao".as_bytes());
-            payload.extend_from_slice(&opcode);
-            payload.extend_from_slice(&table_id);
-            payload.extend_from_slice(&id1);
-            payload.extend_from_slice(&assoc_type);
-            payload.extend_from_slice(&id2);
-            self.sender.send_invoke(1, 3, &payload, curr)
-
-            // Expect to get nothing back.
-        }
-
-        // ASSOC_GET
-        {
-            let curr = cycles::rdtsc();
-
-            let mut payload = Vec::new();
-            // assoc_add = |opcode = 1|table_id = 8|id1 = 8|assoc_type = 2|id2 = 8|
-            let table_id: [u8; 8] = unsafe { transmute(100u64.to_le()) };
-            let id1: [u8; 8] = unsafe { transmute(2u64.to_le()) };
-            let id2: [u8; 8] = unsafe { transmute(3u64.to_le()) };
-            let assoc_type: [u8; 2] = unsafe { transmute(1u16.to_le()) };
-            let opcode: [u8; 1] = unsafe { transmute(4u8.to_le()) };
-            payload.extend_from_slice("tao".as_bytes());
-            payload.extend_from_slice(&opcode);
-            payload.extend_from_slice(&table_id);
-            payload.extend_from_slice(&id1);
-            payload.extend_from_slice(&assoc_type);
-            payload.extend_from_slice(&id2);
-            self.sender.send_invoke(1, 3, &payload, curr)
-
-            // Expect to get Association back which is {id1, time_stamp_of_creation}
-        }
-
-        // ASSOC_DELETE
-        {
-            let curr = cycles::rdtsc();
-
-            let mut payload = Vec::new();
-            // assoc_add = |opcode = 1|table_id = 8|id1 = 8|assoc_type = 2|id2 = 8|
-            let table_id: [u8; 8] = unsafe { transmute(100u64.to_le()) };
-            let id1: [u8; 8] = unsafe { transmute(2u64.to_le()) };
-            let id2: [u8; 8] = unsafe { transmute(3u64.to_le()) };
-            let assoc_type: [u8; 2] = unsafe { transmute(1u16.to_le()) };
-            let opcode: [u8; 1] = unsafe { transmute(6u8.to_le()) };
-            payload.extend_from_slice("tao".as_bytes());
-            payload.extend_from_slice(&opcode);
-            payload.extend_from_slice(&table_id);
-            payload.extend_from_slice(&id1);
-            payload.extend_from_slice(&assoc_type);
-            payload.extend_from_slice(&id2);
-            self.sender.send_invoke(1, 3, &payload, curr)
-
-            // Expect to get nothing back
-        }
-
-
-
+        let mut payload = Vec::new();
+        //Object add = |opcode = 1|table_id = 8|obj_type = 2|value = n > 0|
+        let table_id: [u8; 8] = unsafe { transmute(200000u64.to_le()) };
+        let obj_type: [u8; 2] = unsafe { transmute(1u16.to_le()) };
+        let value: [u8; 8] = unsafe { transmute(2u64.to_le()) };
+        let opcode: [u8; 1] = unsafe { transmute(0u8.to_le()) };
+        payload.extend_from_slice("tao".as_bytes());
+        payload.extend_from_slice(&opcode);
+        payload.extend_from_slice(&table_id);
+        payload.extend_from_slice(&obj_type);
+        payload.extend_from_slice(&value);
+        self.sender.send_invoke(1, 3, &payload, curr)
     }
 
     fn dependencies(&mut self) -> Vec<usize> {
@@ -256,7 +114,7 @@ where
     ///
     /// A Tao response receiver that measures the median latency and throughput of a Sandstorm
     /// server.
-    fn new(port: Arc<RwLock<T>>, resps: u64) -> TaoRecv<T> {
+    fn new(port: T, resps: u64) -> TaoRecv<T> {
         TaoRecv {
             receiver: dispatch::Receiver::new(port),
         }
@@ -275,16 +133,6 @@ where
         if let Some(mut packets) = self.receiver.recv_res() {
             while let Some(packet) = packets.pop() {
                 println!("Response: {:?}", packet.get_payload());
-
-                // Copy the payload.
-                let size = mem::size_of_val(packet.get_payload());
-                let mut payload = vec![0; size];
-                payload.clone_from_slice(&packet.get_payload());
-                // Get the OID from the slice.
-                let oid: u64 = convert_from_slice(&payload[9..]);
-                let response = str::from_utf8(&payload[9..]).unwrap();
-                println!("{}", response);
-                println!("{}", oid.to_string());
                 packet.free_packet();
             }
         }
@@ -293,18 +141,6 @@ where
     fn dependencies(&mut self) -> Vec<usize> {
         vec![]
     }
-}
-
-/// converts a slice into an u64
-///
-/// # Arguments
-/// * `val` - the slice being converted.
-fn convert_from_slice(val: &[u8]) -> u64{
-    let val: u64 = 0 | val[0] as u64 | (val[1] as u64) << 8 |
-                    (val[2] as u64) << 16 | (val[3] as u64) << 24 |
-                    (val[4] as u64) << 32 | (val[5] as u64) << 40 |
-                    (val[6] as u64) << 48 | (val[7] as u64) << 56;
-    return val;
 }
 
 /// Sets up TaoSend by adding it to a Netbricks scheduler.
@@ -316,7 +152,7 @@ fn convert_from_slice(val: &[u8]) -> u64{
 /// * `scheduler`: Netbricks scheduler to which TaoSend will be added.
 fn setup_send<S>(
     config: &config::ClientConfig,
-    ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>,
+    ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
 ) where
     S: Scheduler + Sized,
@@ -345,7 +181,7 @@ fn setup_send<S>(
 ///
 /// * `ports`:     Network port on which packets will be sent.
 /// * `scheduler`: Netbricks scheduler to which TaoRecv will be added.
-fn setup_recv<S>(ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>, scheduler: &mut S)
+fn setup_recv<S>(ports: Vec<CacheAligned<PortQueue>>, scheduler: &mut S)
 where
     S: Scheduler + Sized,
 {
@@ -413,13 +249,12 @@ fn main() {
     // Run the client.
     net_context.execute();
 
-    loop{}
-    // // Sleep for an amount of time approximately equal to the estimated execution time, and then
-    // // shutdown the client.
-    // std::thread::sleep(std::time::Duration::from_secs(exec as u64 + 10));
-    //
-    // // Stop the client.
-    // net_context.stop();
+    // Sleep for an amount of time approximately equal to the estimated execution time, and then
+    // shutdown the client.
+    std::thread::sleep(std::time::Duration::from_secs(exec as u64 + 10));
+
+    // Stop the client.
+    net_context.stop();
 }
 
 #[cfg(test)]

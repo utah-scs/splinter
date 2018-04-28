@@ -16,14 +16,14 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::cycles;
 use super::rpc;
+use super::cycles;
 use super::task::Task;
 use super::task::TaskState::*;
 
-use e2d2::common::EmptyMetadata;
-use e2d2::headers::IpHeader;
 use e2d2::interface::Packet;
+use e2d2::headers::IpHeader;
+use e2d2::common::EmptyMetadata;
 
 use spin::RwLock;
 
@@ -111,8 +111,7 @@ impl RoundRobin {
     /// Picks up a task from the waiting queue, and runs it until it either yields or completes.
     pub fn poll(&self) {
         // Set the time-stamp of the latest scheduling decision.
-        self.latest
-            .store(cycles::rdtsc() as usize, Ordering::Relaxed);
+        self.latest.store(cycles::rdtsc() as usize, Ordering::Relaxed);
 
         // If there are tasks to run, then pick one from the head of the queue, and run it until it
         // either completes or yields back.
@@ -124,9 +123,7 @@ impl RoundRobin {
                 // exist, then free the request packet, and enqueue the response packet.
                 if let Some((req, res)) = unsafe { task.tear() } {
                     req.free_packet();
-                    self.responses
-                        .write()
-                        .push(rpc::fixup_header_length_fields(res));
+                    self.responses.write().push(rpc::fixup_header_length_fields(res));
                 }
             } else {
                 // The task did not complete execution. Add it back to the waiting list so that it

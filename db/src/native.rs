@@ -20,9 +20,9 @@ use super::cycles;
 use super::task::TaskState::*;
 use super::task::{Task, TaskPriority, TaskState};
 
-use e2d2::common::EmptyMetadata;
-use e2d2::headers::UdpHeader;
 use e2d2::interface::Packet;
+use e2d2::headers::UdpHeader;
+use e2d2::common::EmptyMetadata;
 
 // The expected type signature on a generator for a native operation (ex: get()). The return
 // value is an optional tuple consisting of a request and response packet parsed/deparsed upto

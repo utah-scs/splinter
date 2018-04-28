@@ -13,11 +13,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::collections::HashMap;
 
-use super::common::{TableId, TenantId};
 use super::table::Table;
+use super::common::{TableId, TenantId};
 
 use spin::RwLock;
 
@@ -91,7 +91,6 @@ impl Tenant {
         let map = self.tables.read();
 
         // Lookup on table_id and return.
-        map.get(&table_id)
-            .and_then(|table| Some(Arc::clone(&table)))
+        map.get(&table_id).and_then(| table | { Some(Arc::clone(&table)) })
     }
 }

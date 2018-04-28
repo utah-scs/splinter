@@ -15,8 +15,8 @@
 
 use std::collections::HashMap;
 
-use bytes::Bytes;
-use spin::RwLock;
+use spin::{RwLock};
+use bytes::{Bytes};
 
 // The number of buckets in the hash table. Must be a power of two.
 // If you want to change this number, then you will also have to modify
@@ -27,7 +27,7 @@ use spin::RwLock;
 //     32 buckets: 14.4 Million ops/s (read-only), 7.2 Million ops/s (50-50)
 //     64 buckets: 17.0 Million ops/s (read-only)
 //    128 buckets: 18.5 Million ops/s (read-only), 12.3 Million ops/s (50-50)
-const N_BUCKETS: usize = 128;
+const N_BUCKETS : usize = 128;
 
 /// This struct represents a single table in Sandstorm. A table is indexed using
 /// an unordered map, which hashes an object's key to it's value. Tables can be
@@ -58,136 +58,71 @@ impl Default for Table {
     // derived for arrays with more than 32 elements.
     fn default() -> Table {
         Table {
-            maps: [
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-                RwLock::new(HashMap::new()),
-            ],
+            maps: [RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                   RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
+                ]
         }
     }
 }
@@ -212,7 +147,7 @@ impl Table {
         let map = self.maps[bucket].read();
 
         // Perform the lookup, and return.
-        return map.get(key).and_then(|value| Some(value.clone()));
+        return map.get(key).and_then(| value | { Some(value.clone()) });
     }
 
     /// This function writes an object into a table.
@@ -332,7 +267,8 @@ mod tests {
                 let new_val: &[u8] = &[2; 30];
 
                 // Create an object with the same key, but new value.
-                let mut obj: BytesMut = BytesMut::with_capacity(key.len() + new_val.len());
+                let mut obj: BytesMut = BytesMut::with_capacity(key.len() +
+                                                                new_val.len());
                 obj.put_slice(key);
                 obj.put_slice(new_val);
                 let mut obj: Bytes = obj.freeze();

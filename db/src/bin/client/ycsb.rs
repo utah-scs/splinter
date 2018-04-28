@@ -19,7 +19,6 @@ extern crate db;
 extern crate rand;
 extern crate time;
 extern crate zipf;
-extern crate spin;
 
 mod dispatch;
 mod setup;
@@ -40,8 +39,6 @@ use db::log::*;
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
 use zipf::ZipfDistribution;
-
-use spin::RwLock;
 
 // YCSB A, B, and C benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
@@ -193,7 +190,7 @@ impl YcsbSend {
     /// A YCSB request generator.
     fn new(
         config: &config::ClientConfig,
-        port: Arc<RwLock<CacheAligned<PortQueue>>>,
+        port: CacheAligned<PortQueue>,
         reqs: u64,
         dst_ports: u16,
     ) -> YcsbSend {
@@ -339,7 +336,7 @@ where
     ///
     /// A YCSB response receiver that measures the median latency and throughput of a Sandstorm
     /// server.
-    fn new(port: Arc<RwLock<T>>, resps: u64) -> YcsbRecv<T> {
+    fn new(port: T, resps: u64) -> YcsbRecv<T> {
         YcsbRecv {
             receiver: dispatch::Receiver::new(port),
             responses: resps,
@@ -423,7 +420,7 @@ where
 /// * `scheduler`: Netbricks scheduler to which YcsbSend will be added.
 fn setup_send<S>(
     config: &config::ClientConfig,
-    ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>,
+    ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
 ) where
     S: Scheduler + Sized,
@@ -443,7 +440,7 @@ fn setup_send<S>(
         Ok(_) => {
             info!(
                 "Successfully added YcsbSend with tx queue {}.",
-                ports[0].read().txq()
+                ports[0].txq()
             );
         }
 
@@ -460,7 +457,7 @@ fn setup_send<S>(
 ///
 /// * `ports`:     Network port on which packets will be sent.
 /// * `scheduler`: Netbricks scheduler to which YcsbRecv will be added.
-fn setup_recv<S>(ports: Vec<Arc<RwLock<CacheAligned<PortQueue>>>>, scheduler: &mut S)
+fn setup_recv<S>(ports: Vec<CacheAligned<PortQueue>>, scheduler: &mut S)
 where
     S: Scheduler + Sized,
 {
@@ -474,7 +471,7 @@ where
         Ok(_) => {
             info!(
                 "Successfully added YcsbRecv with rx queue {}.",
-                ports[0].read().rxq()
+                ports[0].rxq()
             );
         }
 

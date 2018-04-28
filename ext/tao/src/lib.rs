@@ -131,8 +131,6 @@ fn obj_get_dispatch(db: Rc<DB>, ops: &[u8]) {
     let (table, key) = ops.split_at(8);
     let table: u64 = convert_from_slice(table);
 
-    println!("getting object with id {}", convert_from_slice(key).to_string());
-
     let tao = TAO::new(Rc::clone(&db), table, 0);
     if tao.object_get(key, object_response_handler) == false {
         db.resp("ERROR: could not get object.".as_bytes());
@@ -162,14 +160,7 @@ fn obj_add_dispatch(db: Rc<DB>, ops: &[u8]) {
     let otype: u16 = 0 | otype[0] as u16 | (otype[1] as u16) << 8;
 
     let mut tao = TAO::new(Rc::clone(&db), table, 0);
-    let res = &tao.object_add(otype, value);
-
-    if (res.len() != 0) {
-        db.resp(res.as_slice());
-    }
-    else {
-        db.resp("ERROR: Unable to add Object.".as_bytes());
-    }
+    db.resp(tao.object_add(otype, value).as_slice());
 }
 
 /// Manages the resquest to perform an object_update. The response is empty if the call was
@@ -315,13 +306,8 @@ impl TAO {
     pub fn object_add(&mut self, otype: ObjectType, data: &[u8]) -> Vec<u8> {
         let object_id = self.allocate_unique_id();
 
-        if (self.object_update(object_id.as_slice(), otype, data)) {
-            return object_id;
-        }
-        else {
-            // not able to add the object successfully.
-            return vec![];
-        }
+        self.object_update(object_id.as_slice(), otype, data);
+        return object_id;
     }
 
     /// Updates the object with the given id and type to contain the data provided.
@@ -331,19 +317,10 @@ impl TAO {
     /// * `otype` - type of the object to be updated.
     /// * `data` - updated data to replace current data with.
     pub fn object_update(&self, id: &[u8], otype: ObjectType, data: &[u8]) -> bool {
-        println!("In object update.");
         let space_needed = ObjectHeader::size() + data.len();
 
-        let value: u64 = convert_from_slice(data);
-        println!("\tadding object with value {}", value.to_string());
-        println!("\tobject type {}", otype.to_string());
-        println!("\tattempting to alloc...");
-        //TODO: this is returning None so.. my guess is that my table_id is bad? or something needs to be done before I use it?
         let mut container = match self.client.alloc(self.object_table_id, id, space_needed as u64){
-            None => {
-                println!("\tERROR: alloc unsuccessful.");
-                return false
-            },
+            None => return false,
             Some(o) => o,
         };
 
@@ -365,7 +342,6 @@ impl TAO {
     /// # Arguments
     /// * `id` - id of the object to be created.
     pub fn object_delete(&self, id: &[u8]) -> bool {
-        println!("In object delete.");
         self.client.del(self.object_table_id, id);
         return true;
     }
@@ -378,7 +354,6 @@ impl TAO {
     /// * `data` - a container to put the data in.
     // pub fn object_get(&self, id: Id, mut data: Vec<u8>) -> ObjectType {
     pub fn object_get(&self, id: &[u8], callback: ResponseHandler) -> bool {
-        println!("In object get.");
         let obj = self.client.get(self.object_table_id, id);
 
         match obj {
@@ -404,7 +379,6 @@ impl TAO {
     /// * `association_type` - the type of this association.
     /// * `id2` - the id of the second object in this Association.
     pub fn association_add(&self, id1: &[u8], association_type: &[u8], id2: &[u8]) -> bool {
-        println!("In assoc add.");
         //Add the association to the table. (id1, atype, id2)<key> -> data<value>.
         let new_assoc = Association{
             id: convert_from_slice(id2),
@@ -468,7 +442,6 @@ impl TAO {
     /// * `association_type` - the type of this association.
     /// * `id2` - the id of the second object in this Association.
     pub fn association_delete(&self, id1: &[u8], association_type: &[u8], id2: &[u8]) -> bool{
-        println!("In assoc delete.");
         let assoc = Association{
             id: convert_from_slice(id2),
             time: 0 //This doesn't matter because we will find the assoc via the id.
@@ -520,7 +493,6 @@ impl TAO {
     /// * `association_type` - the type of this association.
     /// * `id2` - the id of the second object in this Association.
     pub fn association_get(&self, id1: &[u8], association_type: &[u8], id2: &[u8], assoc_response_handler: AssocResponseHandler) -> bool {
-        println!("In assoc get.");
         let mut assoc_key: Vec<u8> = std::vec::Vec::with_capacity(id1.len() + association_type.len() + id2.len());
         assoc_key.extend_from_slice(id1);
         assoc_key.extend_from_slice(association_type);

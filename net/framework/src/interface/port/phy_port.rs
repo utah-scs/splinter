@@ -10,7 +10,7 @@ use std::cmp::min;
 use std::ffi::CString;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{Ordering};
+use std::sync::atomic::Ordering;
 
 /// A DPDK based PMD port. Send and receive should not be called directly on this structure but on the port queue
 /// structure instead.
@@ -20,7 +20,7 @@ pub struct PmdPort {
     port: i32,
     rxqs: i32,
     txqs: i32,
-    pub stats_rx: Vec<Arc<CacheAligned<PortStats>>>,
+    stats_rx: Vec<Arc<CacheAligned<PortStats>>>,
     stats_tx: Vec<Arc<CacheAligned<PortStats>>>,
 }
 
@@ -30,11 +30,11 @@ pub struct PortQueue {
     // The Arc cost here should not affect anything, since we are really not doing anything to make it go in and out of
     // scope.
     pub port: Arc<PmdPort>,
-    queue_depth: Arc<CacheAligned<PortStats>>,
+    stats_rx: Arc<CacheAligned<PortStats>>,
+    stats_tx: Arc<CacheAligned<PortStats>>,
     port_id: i32,
     txq: i32,
     rxq: i32,
-    steal: bool,
 }
 
 impl Drop for PmdPort {
@@ -67,8 +67,8 @@ impl PortQueue {
     fn send_queue(&self, queue: i32, pkts: *mut *mut MBuf, to_send: i32) -> Result<u32> {
         unsafe {
             let sent = send_pkts(self.port_id, queue, pkts, to_send);
-            let update = self.queue_depth.stats.load(Ordering::Relaxed) - sent as usize;
-            self.queue_depth.stats.store(update, Ordering::Relaxed);
+            let update = self.stats_tx.stats.load(Ordering::Relaxed) + sent as usize;
+            self.stats_tx.stats.store(update, Ordering::Relaxed);
             Ok(sent as u32)
         }
     }
@@ -77,10 +77,8 @@ impl PortQueue {
     fn recv_queue(&self, queue: i32, pkts: *mut *mut MBuf, to_recv: i32) -> Result<u32> {
         unsafe {
             let recv = recv_pkts(self.port_id, queue, pkts, to_recv);
-            if !self.steal {
-                let update = self.queue_depth.stats.load(Ordering::Relaxed) + recv as usize;
-                self.queue_depth.stats.store(update, Ordering::Relaxed);
-            }
+            let update = self.stats_rx.stats.load(Ordering::Relaxed) + recv as usize;
+            self.stats_rx.stats.store(update, Ordering::Relaxed);
             Ok(recv as u32)
         }
     }
@@ -92,21 +90,6 @@ impl PortQueue {
     pub fn rxq(&self) -> i32 {
         self.rxq
     }
-
-    /// Increment queue depth by number of packets received.
-    pub fn increment_queue_depth(&self, recv: usize) {
-        let update = self.queue_depth.stats.load(Ordering::Relaxed) + recv;
-        self.queue_depth.stats.store(update, Ordering::Relaxed);
-    }
-
-    pub fn get_queue_depth(&self) -> usize {
-        self.queue_depth.stats.load(Ordering::Relaxed)
-    }
-
-    pub fn set_steal_flag(&mut self, steal: bool) {
-        self.steal = steal;
-    }
-
 }
 
 impl PacketTx for PortQueue {
@@ -174,8 +157,8 @@ impl PmdPort {
                 port_id: port.port,
                 txq: txq,
                 rxq: rxq,
-                queue_depth: port.stats_rx[rxq as usize].clone(),
-                steal: false,
+                stats_rx: port.stats_rx[rxq as usize].clone(),
+                stats_tx: port.stats_tx[txq as usize].clone(),
             }))
         }
     }

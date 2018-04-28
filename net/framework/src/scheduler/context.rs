@@ -1,14 +1,12 @@
 use allocators::CacheAligned;
 use config::NetbricksConfiguration;
+use interface::{PmdPort, PortQueue, VirtualQueue, VirtualPort};
 use interface::dpdk::{init_system, init_thread};
-use interface::*;
-use interface::port::PortStats;
 use scheduler::*;
-use spin::RwLock;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::Arc;
+use std::sync::mpsc::{SyncSender, sync_channel};
 use std::thread::{self, JoinHandle, Thread};
 
 type AlignedPortQueue = CacheAligned<PortQueue>;
@@ -37,8 +35,7 @@ impl<'a> BarrierHandle<'a> {
 #[derive(Default)]
 pub struct NetBricksContext {
     pub ports: HashMap<String, Arc<PmdPort>>,
-    pub rx_queues: HashMap<i32, Vec<Arc<RwLock<CacheAligned<PortQueue>>>>>,
-    pub sibling_queues: HashMap<i32, Vec<(i32, Arc<RwLock<CacheAligned<PortQueue>>>)>>,
+    pub rx_queues: HashMap<i32, Vec<CacheAligned<PortQueue>>>,
     pub active_cores: Vec<i32>,
     pub virtual_ports: HashMap<i32, Arc<VirtualPort>>,
     scheduler_channels: HashMap<i32, SyncSender<SchedulerCommand>>,
@@ -74,33 +71,18 @@ impl NetBricksContext {
     /// Run a function (which installs a pipeline) on all schedulers in the system.
     pub fn add_pipeline_to_run<T>(&mut self, run: Arc<T>)
     where
-        T: Fn(
-                Vec<Arc<RwLock<AlignedPortQueue>>>,
-                &mut StandaloneScheduler,
-                Vec<(i32, Arc<RwLock<AlignedPortQueue>>)>,
-                Vec<Arc<CacheAligned<PortStats>>>,
-            )
-            + Send
-            + Sync
-            + 'static,
+        T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler) + Send + Sync + 'static,
     {
         for (core, channel) in &self.scheduler_channels {
             let ports = match self.rx_queues.get(core) {
                 Some(v) => v.clone(),
                 None => vec![],
             };
-
-            // Get a handle to the stats for each receive queue.
-            let stats = ports[0].read().port.stats_rx.clone();
-
-            // Get the set of sibling receive queues for this core.
-            let siblings = self.sibling_queues.get(core).unwrap().clone();
-
             let boxed_run = run.clone();
             channel
-                .send(SchedulerCommand::Run(Arc::new(move |s| {
-                    boxed_run(ports.clone(), s, siblings.clone(), stats.clone())
-                })))
+                .send(SchedulerCommand::Run(
+                    Arc::new(move |s| boxed_run(ports.clone(), s)),
+                ))
                 .unwrap();
         }
     }
@@ -110,32 +92,35 @@ impl NetBricksContext {
         T: Fn(Vec<AlignedVirtualQueue>, &mut StandaloneScheduler) + Send + Sync + 'static,
     {
         for (core, channel) in &self.scheduler_channels {
-            let port = self.virtual_ports.entry(*core).or_insert(VirtualPort::new(1).unwrap());
+            let port = self.virtual_ports.entry(*core).or_insert(
+                VirtualPort::new(1).unwrap(),
+            );
             let boxed_run = run.clone();
             let queue = port.new_virtual_queue(1).unwrap();
             channel
-                .send(SchedulerCommand::Run(Arc::new(move |s| {
-                    boxed_run(vec![queue.clone()], s)
-                })))
+                .send(SchedulerCommand::Run(
+                    Arc::new(move |s| boxed_run(vec![queue.clone()], s)),
+                ))
                 .unwrap();
         }
     }
 
-    pub fn add_test_pipeline_to_core<
-        T: Fn(Vec<AlignedVirtualQueue>, &mut StandaloneScheduler) + Send + Sync + 'static,
-    >(
-        &mut self,
-        core: i32,
-        run: Arc<T>,
-    ) -> Result<()> {
+    pub fn add_test_pipeline_to_core<T: Fn(Vec<AlignedVirtualQueue>, &mut StandaloneScheduler) + Send + Sync + 'static>
+        (&mut self,
+         core: i32,
+         run: Arc<T>)
+-> Result<()>{
+
         if let Some(channel) = self.scheduler_channels.get(&core) {
-            let port = self.virtual_ports.entry(core).or_insert(VirtualPort::new(1).unwrap());
+            let port = self.virtual_ports.entry(core).or_insert(
+                VirtualPort::new(1).unwrap(),
+            );
             let boxed_run = run.clone();
             let queue = port.new_virtual_queue(1).unwrap();
             channel
-                .send(SchedulerCommand::Run(Arc::new(move |s| {
-                    boxed_run(vec![queue.clone()], s)
-                })))
+                .send(SchedulerCommand::Run(
+                    Arc::new(move |s| boxed_run(vec![queue.clone()], s)),
+                ))
                 .unwrap();
             Ok(())
         } else {
@@ -144,9 +129,7 @@ impl NetBricksContext {
     }
 
     /// Install a pipeline on a particular core.
-    pub fn add_pipeline_to_core<
-        T: Fn(Vec<Arc<RwLock<AlignedPortQueue>>>, &mut StandaloneScheduler) + Send + Sync + 'static,
-    >(
+    pub fn add_pipeline_to_core<T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler) + Send + Sync + 'static>(
         &mut self,
         core: i32,
         run: Arc<T>,
@@ -158,7 +141,9 @@ impl NetBricksContext {
             };
             let boxed_run = run.clone();
             channel
-                .send(SchedulerCommand::Run(Arc::new(move |s| boxed_run(ports.clone(), s))))
+                .send(SchedulerCommand::Run(
+                    Arc::new(move |s| boxed_run(ports.clone(), s)),
+                ))
                 .unwrap();
             Ok(())
         } else {
@@ -177,16 +162,26 @@ impl NetBricksContext {
     /// Pause all schedulers, the returned `BarrierHandle` can be used to resume.
     pub fn barrier(&mut self) -> BarrierHandle {
         // TODO: If this becomes a problem, move this to the struct itself; but make sure to fix `stop` appropriately.
-        let channels: Vec<_> = self.scheduler_handles.iter().map(|_| sync_channel(0)).collect();
+        let channels: Vec<_> = self.scheduler_handles
+            .iter()
+            .map(|_| sync_channel(0))
+            .collect();
         let receivers = channels.iter().map(|&(_, ref r)| r);
         let senders = channels.iter().map(|&(ref s, _)| s);
         for ((_, channel), sender) in self.scheduler_channels.iter().zip(senders) {
-            channel.send(SchedulerCommand::Handshake(sender.clone())).unwrap();
+            channel
+                .send(SchedulerCommand::Handshake(sender.clone()))
+                .unwrap();
         }
         for receiver in receivers {
             receiver.recv().unwrap();
         }
-        BarrierHandle::with_threads(self.scheduler_handles.values().map(|j| j.thread()).collect())
+        BarrierHandle::with_threads(
+            self.scheduler_handles
+                .values()
+                .map(|j| j.thread())
+                .collect(),
+        )
     }
 
     /// Stop all schedulers, safely shutting down the system.
@@ -233,10 +228,13 @@ pub fn initialize_system(configuration: &NetbricksConfiguration) -> Result<NetBr
                     ctx.ports.insert(port.name.clone(), p);
                 }
                 Err(e) => {
-                    return Err(ErrorKind::ConfigurationError(format!(
-                        "Port {} could not be initialized {:?}",
-                        port.name, e
-                    )).into())
+                    return Err(
+                        ErrorKind::ConfigurationError(format!(
+                            "Port {} could not be initialized {:?}",
+                            port.name,
+                            e
+                        )).into(),
+                    )
                 }
             }
 
@@ -246,17 +244,18 @@ pub fn initialize_system(configuration: &NetbricksConfiguration) -> Result<NetBr
                 let rx_q = rx_q as i32;
                 match PmdPort::new_queue_pair(port_instance, rx_q, rx_q) {
                     Ok(q) => {
-                        ctx.rx_queues
-                            .entry(*core)
-                            .or_insert_with(|| vec![])
-                            .push(Arc::new(RwLock::new(q)));
+                        ctx.rx_queues.entry(*core).or_insert_with(|| vec![]).push(q);
                     }
                     Err(e) => {
-                        return Err(ErrorKind::ConfigurationError(format!(
-                            "Queue {} on port {} could not be \
-                             initialized {:?}",
-                            rx_q, port.name, e
-                        )).into())
+                        return Err(
+                            ErrorKind::ConfigurationError(format!(
+                                "Queue {} on port {} could not be \
+                                                                          initialized {:?}",
+                                rx_q,
+                                port.name,
+                                e
+                            )).into(),
+                        )
                     }
                 }
             }
@@ -264,37 +263,23 @@ pub fn initialize_system(configuration: &NetbricksConfiguration) -> Result<NetBr
     }
     if configuration.strict {
         let other_cores: HashSet<_> = ctx.rx_queues.keys().cloned().collect();
-        let core_diff: Vec<_> = other_cores.difference(&cores).map(|c| c.to_string()).collect();
+        let core_diff: Vec<_> = other_cores
+            .difference(&cores)
+            .map(|c| c.to_string())
+            .collect();
         if !core_diff.is_empty() {
             let missing_str = core_diff.join(", ");
-            return Err(ErrorKind::ConfigurationError(format!(
-                "Strict configuration selected but core(s) {} appear \
-                 in port configuration but not in cores",
-                missing_str
-            )).into());
+            return Err(
+                ErrorKind::ConfigurationError(format!(
+                    "Strict configuration selected but core(s) {} appear \
+                                                              in port configuration but not in cores",
+                    missing_str
+                )).into(),
+            );
         }
     } else {
         cores.extend(ctx.rx_queues.keys());
     };
     ctx.active_cores = cores.into_iter().collect();
-
-    // For each active core, populate it's set of sibilings.
-    for core in ctx.active_cores.iter() {
-        let mut siblings = vec![];
-
-        for sibling in ctx.rx_queues.keys() {
-            // A core is not it's own sibling.
-            if *core == *sibling {
-                continue;
-            }
-
-            let queue = Arc::clone(&ctx.rx_queues.get(sibling).unwrap()[0]);
-            let rxq = queue.read().rxq();
-            siblings.push((rxq, queue));
-        }
-
-        ctx.sibling_queues.insert(*core, siblings);
-    }
-
     Ok(ctx)
 }

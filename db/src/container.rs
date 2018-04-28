@@ -13,21 +13,21 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::cell::Cell;
-use std::ops::{Generator, GeneratorState};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::cell::Cell;
+use std::ops::{Generator, GeneratorState};
 
-use super::common::PACKET_UDP_LEN;
-use super::context::Context;
 use super::cycles;
 use super::ext::Extension;
+use super::context::Context;
 use super::task::TaskState::*;
+use super::common::PACKET_UDP_LEN;
 use super::task::{Task, TaskPriority, TaskState};
 
-use e2d2::common::EmptyMetadata;
-use e2d2::headers::UdpHeader;
 use e2d2::interface::Packet;
+use e2d2::headers::UdpHeader;
+use e2d2::common::EmptyMetadata;
 
 use sandstorm::db::DB;
 
