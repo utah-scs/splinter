@@ -335,6 +335,9 @@ fn main() {
             // Start the new scheduler, and give it some time to boot.
             net_context.execute_core(core);
 
+            // Wait for the new scheduler to be created.
+            while temp.read().len() == 0 {};
+
             // Enqueue all tasks and response packets from the previous scheduler.
             let new = temp.write()
                 .pop()

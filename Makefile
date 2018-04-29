@@ -1,5 +1,6 @@
 all: netbricks
 	(cd db; cargo build --release)
+	(cd ext/bad; cargo build --release)
 	(cd ext/tao; cargo build --release)
 	(cd ext/get; cargo build --release)
 	(cd ext/put; cargo build --release)
@@ -27,7 +28,11 @@ netbricks:
 
 clean:
 	(cd db; cargo clean)
+	(cd ext/bad; cargo clean)
 	(cd ext/tao; cargo clean)
 	(cd ext/get; cargo clean)
+	(cd ext/put; cargo clean)
+	(cd ext/err; cargo clean)
+	(cd ext/test; cargo clean)
 	(cd sandstorm; cargo clean)
 	(cd net; ./build.sh clean)

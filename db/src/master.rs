@@ -142,7 +142,7 @@ impl Master {
         self.insert_tenant(tenant);
     }
 
-    /// Loads the get(), put(), and tao() extensions.
+    /// Loads the get(), put(), tao(), and bad() extensions.
     ///
     /// # Arguments
     ///
@@ -164,6 +164,12 @@ impl Master {
         let name = "../ext/tao/target/release/libtao.so";
         if self.extensions.load(name, tenant, "tao") == false {
             panic!("Failed to load tao() extension.");
+        }
+
+        // Load the bad() extension.
+        let name = "../ext/bad/target/release/libbad.so";
+        if self.extensions.load(name, tenant, "bad") == false {
+            panic!("Failed to load bad() extension.");
         }
     }
 
