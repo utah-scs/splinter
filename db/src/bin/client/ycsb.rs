@@ -422,6 +422,7 @@ fn setup_send<S>(
     config: &config::ClientConfig,
     ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
+    _core: i32,
 ) where
     S: Scheduler + Sized,
 {
@@ -457,7 +458,7 @@ fn setup_send<S>(
 ///
 /// * `ports`:     Network port on which packets will be sent.
 /// * `scheduler`: Netbricks scheduler to which YcsbRecv will be added.
-fn setup_recv<S>(ports: Vec<CacheAligned<PortQueue>>, scheduler: &mut S)
+fn setup_recv<S>(ports: Vec<CacheAligned<PortQueue>>, scheduler: &mut S, _core: i32)
 where
     S: Scheduler + Sized,
 {
@@ -518,8 +519,8 @@ fn main() {
         net_context
             .add_pipeline_to_core(
                 receive[i],
-                Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
-                    setup_recv(port.clone(), sched)
+                Arc::new(move |_ports, sched: &mut StandaloneScheduler, core: i32| {
+                    setup_recv(port.clone(), sched, core)
                 }),
             )
             .expect("Failed to initialize receive side.");
@@ -528,8 +529,8 @@ fn main() {
         net_context
             .add_pipeline_to_core(
                 senders[i],
-                Arc::new(move |ports, sched: &mut StandaloneScheduler| {
-                    setup_send(&config::ClientConfig::load(), ports, sched)
+                Arc::new(move |ports, sched: &mut StandaloneScheduler, core: i32| {
+                    setup_send(&config::ClientConfig::load(), ports, sched, core)
                 }),
             )
             .expect("Failed to initialize send side.");

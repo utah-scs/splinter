@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 University of Utah
+/* Copyright (c) 2018 University of Utah
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,22 +16,40 @@
 #![feature(use_extern_macros)]
 
 extern crate db;
+extern crate spin;
 
 use std::sync::Arc;
+use std::thread::sleep;
+use std::time::Duration;
 
 use db::log::*;
 
-use db::e2d2::scheduler::*;
-use db::e2d2::interface::*;
-use db::e2d2::scheduler::Executable;
 use db::e2d2::allocators::CacheAligned;
-use db::e2d2::scheduler::NetBricksContext as NetbricksContext;
 use db::e2d2::config::{NetbricksConfiguration, PortConfiguration};
+use db::e2d2::interface::*;
+use db::e2d2::native::zcsi;
+use db::e2d2::scheduler::Executable;
+use db::e2d2::scheduler::NetBricksContext as NetbricksContext;
+use db::e2d2::scheduler::*;
 
 use db::config;
+use db::cycles::*;
+use db::dispatch::Dispatch;
 use db::master::Master;
 use db::sched::RoundRobin;
-use db::dispatch::Dispatch;
+
+use spin::RwLock;
+
+/// Interval in milliseconds at which all schedulers in the system will be scanned for misbehaving
+/// tasks.
+const SCAN_INTERVAL_MS: u64 = 10;
+
+/// A scheduler is considered compromised if it has not updated it's `latest` timestamp in so many
+/// milliseconds.
+const MALICIOUS_LIMIT_MS: f64 = 100f64;
+
+/// The identifier of the core that all misbehaving schedulers will be migrated to.
+const GHETTO: u64 = 20;
 
 /// A simple wrapper around the scheduler, allowing it to be added to a Netbricks pipeline.
 struct Server {
@@ -59,10 +77,7 @@ impl Server {
 impl Executable for Server {
     /// This function is called internally by Netbricks to "execute" the server.
     fn execute(&mut self) {
-        // Never return back to Netbricks.
-        loop {
-            self.scheduler.poll();
-        }
+        self.scheduler.poll();
     }
 
     /// No clue about what this guy is meant to do.
@@ -77,7 +92,10 @@ fn setup_server<S>(
     config: &config::ServerConfig,
     ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
+    core: i32,
     master: &Arc<Master>,
+    handles: &Arc<RwLock<Vec<Arc<RoundRobin>>>>,
+    dispatch: bool,
 ) where
     S: Scheduler + Sized,
 {
@@ -86,23 +104,33 @@ fn setup_server<S>(
         std::process::exit(1);
     }
 
-    // Create a scheduler and a dispatcher for the server.
-    let sched = Arc::new(RoundRobin::new());
-    let dispatch = Dispatch::new(
-        config,
-        ports[0].clone(),
-        Arc::clone(master),
-        Arc::clone(&sched),
-        ports[0].rxq(),
-    );
-    sched.enqueue(Box::new(dispatch));
+    // Get identifier of the thread this scheduler will run on.
+    let tid = unsafe { zcsi::get_thread_id() };
+
+    // Create a dispatcher for the server if needed.
+    let sched = Arc::new(RoundRobin::new(tid, core));
+    if dispatch {
+        let dispatch = Dispatch::new(
+            config,
+            ports[0].clone(),
+            Arc::clone(master),
+            Arc::clone(&sched),
+            ports[0].rxq(),
+        );
+        sched.enqueue(Box::new(dispatch));
+    }
+
+    // Add the scheduler to the passed in `handles` vector.
+    handles.write().push(Arc::clone(&sched));
 
     // Add the server to a netbricks pipeline.
     match scheduler.add_task(Server::new(sched)) {
         Ok(_) => {
             info!(
-                "Successfully added scheduler with rx,tx queues {:?}.",
-                (ports[0].rxq(), ports[0].txq())
+                "Successfully added scheduler(TID {}) with rx,tx queues {:?} to core {}.",
+                tid,
+                (ports[0].rxq(), ports[0].txq()),
+                core
             );
         }
 
@@ -213,24 +241,105 @@ fn main() {
         master.load_test(tenant);
     }
 
-    // Create tenants with data and extensions for Sanity 
+    // Create tenants with data and extensions for Sanity
     master.load_test(100);
     master.fill_test(100, 100, 0);
 
     info!("Finished populating data and extensions");
 
+    // A handle to every scheduler for pre-emption.
+    let handles = Arc::new(RwLock::new(Vec::with_capacity(8)));
+
+    // Clone `master` and `handle` so that they are still around after the schedulers are
+    // initialized.
+    let cmaster = Arc::clone(&master);
+    let chandle = Arc::clone(&handles);
+
     // Setup the server pipeline.
     net_context.start_schedulers();
     net_context.add_pipeline_to_run(Arc::new(
-        move |ports, scheduler: &mut StandaloneScheduler| {
-            setup_server(&config, ports, scheduler, &master)
+        move |ports, scheduler: &mut StandaloneScheduler, core: i32| {
+            setup_server(&config, ports, scheduler, core, &cmaster, &chandle, true)
         },
     ));
 
-    // Run the server.
+    // Run the server, and give it some time to bootup.
     net_context.execute();
+    sleep(Duration::from_millis(1000));
 
-    loop {}
+    // Convert to cycles.
+    let limit = (MALICIOUS_LIMIT_MS / 1000f64) * (cycles_per_second() as f64);
+
+    // Check for misbehaving tasks here.
+    loop {
+        // Scan schedulers every few milliseconds.
+        sleep(Duration::from_millis(SCAN_INTERVAL_MS));
+
+        for sched in handles.write().iter_mut() {
+            // Get the current time stamp to compare scheduler time stamps against.
+            let current = rdtsc();
+
+            // Get the latest timestamp at which the scheduler executed.
+            let latest = sched.latest();
+
+            // If the scheduler executed after `current` was measured, continue checking others.
+            if latest > current {
+                continue;
+            }
+
+            // If this scheduler executed less than "MALICIOUS_LIMIT_MS" milliseconds before, then
+            // continue checking others.
+            if current - latest < limit as u64 {
+                continue;
+            }
+
+            let tid = sched.thread();
+            let core = sched.core();
+            warn!("Detected misbehaving task {} on core {}.", tid, core);
+
+            // There might be an uncooperative task on this scheduler. Dequeue it's tasks and any
+            // pending response packets.
+            let tasks = sched.dequeue_all();
+            let mut resps = sched.responses();
+
+            // Set the compromised flag on the scheduler and then migrate it.
+            sched.compromised();
+            unsafe { zcsi::set_affinity(tid, GHETTO) };
+
+            // Create and setup a new scheduler on the core.
+            let temp = Arc::new(RwLock::new(Vec::with_capacity(1)));
+            let cmaster = Arc::clone(&master);
+            let ctemp = Arc::clone(&temp);
+            net_context.start_scheduler(core);
+            let _res = net_context.add_pipeline_to_core(
+                core,
+                Arc::new(
+                    move |ports, scheduler: &mut StandaloneScheduler, core: i32| {
+                        setup_server(
+                            &config::ServerConfig::load(),
+                            ports,
+                            scheduler,
+                            core,
+                            &cmaster,
+                            &ctemp,
+                            false,
+                        )
+                    },
+                ),
+            );
+
+            // Start the new scheduler, and give it some time to boot.
+            net_context.execute_core(core);
+
+            // Enqueue all tasks and response packets from the previous scheduler.
+            let new = temp.write()
+                .pop()
+                .expect("Failed to retrieve added scheduler.");
+            *sched = new;
+            sched.enqueue_many(tasks);
+            sched.append_resps(&mut resps);
+        }
+    }
 
     // Stop the server.
     // net_context.stop();

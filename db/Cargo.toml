@@ -34,16 +34,16 @@ name = "table_bench"
 path = "src/bin/table_bench.rs"
 
 [dependencies]
-log        = "0.3"
-rand       = "0.4"
-time       = "0.1"
-spin       = "0.4" # Consider using parking lot?
-bytes      = "0.4"
-env_logger = "0.3"
-libloading = "0.3"
-serde      = "1.0"
+log          = "0.3"
+rand         = "0.4"
+time         = "0.1"
+spin         = "0.4" # Consider using parking lot?
+bytes        = "0.4"
+env_logger   = "0.3"
+libloading   = "0.3"
+serde        = "1.0"
 serde_derive = "1.0"
-toml       = "0.4"
-zipf       = "2.0"
-sandstorm  = {path = "../sandstorm"}
-e2d2       = {path = "../net/framework"}
+toml         = "0.4"
+zipf         = "2.0"
+sandstorm    = {path = "../sandstorm"}
+e2d2         = {path = "../net/framework"}

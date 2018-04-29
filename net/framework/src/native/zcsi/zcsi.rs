@@ -46,4 +46,6 @@ extern "C" {
     pub fn mbuf_free_bulk(array: *mut *mut MBuf, cnt: i32) -> i32;
     pub fn crc_hash_native(to_hash: *const u8, size: u32, iv: u32) -> u32;
     pub fn ipv4_cksum(payload: *const u8) -> u16;
+    pub fn get_thread_id() -> u64;
+    pub fn set_affinity(id: u64, core: u64) -> isize;
 }

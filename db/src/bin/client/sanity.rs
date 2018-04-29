@@ -193,6 +193,7 @@ fn setup_send<S>(
     config: &config::ClientConfig,
     ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
+    _core: i32,
 ) where
     S: Scheduler + Sized,
 {
@@ -220,7 +221,7 @@ fn setup_send<S>(
 ///
 /// * `ports`:     Network port on which packets will be sent.
 /// * `scheduler`: Netbricks scheduler to which SanityRecv will be added.
-fn setup_recv<T, S>(ports: Vec<T>, scheduler: &mut S)
+fn setup_recv<T, S>(ports: Vec<T>, scheduler: &mut S, _core: i32)
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
     S: Scheduler + Sized,
@@ -266,8 +267,8 @@ fn main() {
     net_context
         .add_pipeline_to_core(
             0,
-            Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
-                setup_send(&config, port.clone(), sched)
+            Arc::new(move |_ports, sched: &mut StandaloneScheduler, core: i32| {
+                setup_send(&config, port.clone(), sched, core)
             }),
         )
         .expect("Failed to initialize send side.");
@@ -283,8 +284,8 @@ fn main() {
     net_context
         .add_pipeline_to_core(
             2,
-            Arc::new(move |_ports, sched: &mut StandaloneScheduler| {
-                setup_recv(port.clone(), sched)
+            Arc::new(move |_ports, sched: &mut StandaloneScheduler, core: i32| {
+                setup_recv(port.clone(), sched, core)
             }),
         )
         .expect("Failed to initialize receive side.");

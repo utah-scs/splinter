@@ -52,7 +52,7 @@ impl NetBricksContext {
     }
 
     #[inline]
-    fn start_scheduler(&mut self, core: i32) {
+    pub fn start_scheduler(&mut self, core: i32) {
         let builder = thread::Builder::new();
         let (sender, receiver) = sync_channel(0);
         self.scheduler_channels.insert(core, sender);
@@ -71,17 +71,18 @@ impl NetBricksContext {
     /// Run a function (which installs a pipeline) on all schedulers in the system.
     pub fn add_pipeline_to_run<T>(&mut self, run: Arc<T>)
     where
-        T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler) + Send + Sync + 'static,
+        T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler, i32) + Send + Sync + 'static,
     {
         for (core, channel) in &self.scheduler_channels {
             let ports = match self.rx_queues.get(core) {
                 Some(v) => v.clone(),
                 None => vec![],
             };
+            let id = *core;
             let boxed_run = run.clone();
             channel
                 .send(SchedulerCommand::Run(
-                    Arc::new(move |s| boxed_run(ports.clone(), s)),
+                    Arc::new(move |s| boxed_run(ports.clone(), s, id)),
                 ))
                 .unwrap();
         }
@@ -129,7 +130,7 @@ impl NetBricksContext {
     }
 
     /// Install a pipeline on a particular core.
-    pub fn add_pipeline_to_core<T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler) + Send + Sync + 'static>(
+    pub fn add_pipeline_to_core<T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler, i32) + Send + Sync + 'static>(
         &mut self,
         core: i32,
         run: Arc<T>,
@@ -142,7 +143,7 @@ impl NetBricksContext {
             let boxed_run = run.clone();
             channel
                 .send(SchedulerCommand::Run(
-                    Arc::new(move |s| boxed_run(ports.clone(), s)),
+                    Arc::new(move |s| boxed_run(ports.clone(), s, core)),
                 ))
                 .unwrap();
             Ok(())
@@ -157,6 +158,11 @@ impl NetBricksContext {
             channel.send(SchedulerCommand::Execute).unwrap();
             // println!("Starting scheduler on {}", core);
         }
+    }
+
+    pub fn execute_core(&mut self, core: i32) {
+        let channel = self.scheduler_channels.get(&core).unwrap();
+        channel.send(SchedulerCommand::Execute).unwrap();
     }
 
     /// Pause all schedulers, the returned `BarrierHandle` can be used to resume.
