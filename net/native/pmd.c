@@ -5,6 +5,12 @@
 #include <rte_ip.h>
 #include "mempool.h"
 
+#include <pthread.h>
+
+// Set of receive spinlocks. Required to allow any core to receive packets from
+// any rx queue on the port.
+pthread_spinlock_t rx_locks[16];
+
 #define HW_RXCSUM 0
 #define HW_TXCSUM 0
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -32,6 +38,10 @@ static const struct rte_eth_conf default_eth_conf = {
         {
             .mode    = RTE_FDIR_MODE_PERFECT,
             .pballoc = RTE_FDIR_PBALLOC_64K,
+            .mask =
+                {
+                    .dst_port_mask = 0xffff,
+                },
         },
     /* No interrupt */
     .intr_conf =
@@ -111,7 +121,18 @@ int init_pmd_port(int port, int rxqs, int txqs, int rxq_core[], int txq_core[], 
     struct rte_eth_conf eth_conf;
     struct rte_eth_rxconf eth_rxconf;
     struct rte_eth_txconf eth_txconf;
-    int ret, i;
+    int ret, i, q;
+
+    // If there are more than 16 receive queues, then return because we
+    // currently support only 16 receive locks.
+    if (rxqs > 16) {
+        return -EINVAL;
+    }
+
+    // Initialize all receive locks.
+    for (q = 0; q < 16; q++) {
+        pthread_spin_init(&(rx_locks[q]), PTHREAD_PROCESS_PRIVATE);
+    }
 
     /* Need to accesss rte_eth_devices manually since DPDK currently
      * provides no other mechanism for checking whether something is
@@ -220,10 +241,25 @@ int init_pmd_port(int port, int rxqs, int txqs, int rxq_core[], int txq_core[], 
 void free_pmd_port(int port) {
     rte_eth_dev_stop(port);
     rte_eth_dev_close(port);
+
+    int q = 0;
+    // Destroy all receive locks.
+    for (q = 0; q < 16; q++) {
+        pthread_spin_destroy(&(rx_locks[q]));
+    }
 }
 
 int recv_pkts(int port, int qid, mbuf_array_t pkts, int len) {
+    // Try to acquire a receive lock. If the lock is busy, then return.
+    if (pthread_spin_trylock(&(rx_locks[qid])) != 0) {
+        return 0;
+    }
+
     int ret = rte_eth_rx_burst(port, qid, (struct rte_mbuf**)pkts, len);
+
+    // Release the spinlock.
+    pthread_spin_unlock(&(rx_locks[qid]));
+
 /* Removed prefetching since the benefit in performance for single core was
  * outweighed by the loss in performance with several cores. */
 #if 0

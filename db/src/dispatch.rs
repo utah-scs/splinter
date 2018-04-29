@@ -53,6 +53,9 @@ where
     /// transmits RPC requests and responses on.
     network_port: T,
 
+    /// The receive queue over which this dispatcher steals RPC requests from.
+    sibling_port: T,
+
     /// The IP address of the server. This is required to ensure that the
     /// server does not process packets that were destined to a different
     /// machine.
@@ -111,6 +114,7 @@ where
     /// * `config`:   A configuration consisting of the IP address, UDP port etc.
     /// * `net_port`: A network port/interface on which packets will be
     ///               received and transmitted.
+    /// * `sib_port`: A network port/interface on which packets will be stolen.
     /// * `master`:   A reference to a Master which will be used to construct tasks from received
     ///               packets.
     /// * `sched`:    A reference to a scheduler on which tasks will be enqueued.
@@ -122,6 +126,7 @@ where
     pub fn new(
         config: &config::ServerConfig,
         net_port: T,
+        sib_port: T,
         master: Arc<Master>,
         sched: Arc<RoundRobin>,
         id: i32,
@@ -175,6 +180,7 @@ where
             master_service: master,
             scheduler: sched,
             network_port: net_port.clone(),
+            sibling_port: sib_port.clone(),
             network_ip_addr: ip_src_addr,
             max_rx_packets: rx_batch_size,
             resp_udp_header: udp_header,
@@ -210,6 +216,63 @@ where
 
             // Try to receive packets from the network port.
             match self.network_port.recv(&mut mbuf_vector[..]) {
+                // The receive call returned successfully.
+                Ok(num_received) => {
+                    if num_received == 0 {
+                        // No packets were available for receive.
+                        return None;
+                    }
+
+                    // Allocate a vector for the received packets.
+                    let mut recvd_packets = Vec::<Packet<NullHeader, EmptyMetadata>>::with_capacity(
+                        self.max_rx_packets as usize,
+                    );
+
+                    // Clear out any dangling pointers in mbuf_vector.
+                    for _dangling in num_received..self.max_rx_packets as u32 {
+                        mbuf_vector.pop();
+                    }
+
+                    // Wrap up the received Mbuf's into Packets. The refcount
+                    // on the mbuf's were set by DPDK, and do not need to be
+                    // bumped up here. Hence, the call to
+                    // packet_from_mbuf_no_increment().
+                    for mbuf in mbuf_vector.iter_mut() {
+                        recvd_packets.push(packet_from_mbuf_no_increment(*mbuf, 0));
+                    }
+
+                    return Some(recvd_packets);
+                }
+
+                // There was an error during receive.
+                Err(ref err) => {
+                    error!("Failed to receive packet: {}", err);
+                    return None;
+                }
+            }
+        }
+    }
+
+    /// This function attempts to steal a batch of packets from the
+    /// dispatcher's network port.
+    ///
+    /// # Return
+    ///
+    /// A vector of packets wrapped up in Netbrick's Packet<NullHeader, EmptyMetadata> type if
+    /// there was anything received at the network port.
+    fn try_steal_packets(&self) -> Option<Vec<Packet<NullHeader, EmptyMetadata>>> {
+        // Allocate a vector of mutable MBuf pointers into which packets will
+        // be received.
+        let mut mbuf_vector = Vec::with_capacity(self.max_rx_packets as usize);
+
+        // This unsafe block is needed in order to populate mbuf_vector with a
+        // bunch of pointers, and subsequently manipulate these pointers. DPDK
+        // will take care of assigning these to actual MBuf's.
+        unsafe {
+            mbuf_vector.set_len(self.max_rx_packets as usize);
+
+            // Try to receive packets from the sibling.
+            match self.sibling_port.recv(&mut mbuf_vector[..]) {
                 // The receive call returned successfully.
                 Ok(num_received) => {
                     if num_received == 0 {
@@ -572,6 +635,17 @@ where
 
             // Dispatch these packets to the appropriate service.
             self.dispatch_requests(packets);
+        } else {
+            // There were no packets at the receive queue. Try to steal some from the sibling.
+            if let Some(stolen) = self.try_steal_packets() {
+                // Perform basic network processing on the stolen packets.
+                let mut stolen = self.parse_mac_headers(stolen);
+                let mut stolen = self.parse_ip_headers(stolen);
+                let mut stolen = self.parse_udp_headers(stolen);
+
+                // Dispatch these packets to the appropriate service.
+                self.dispatch_requests(stolen);
+            }
         }
     }
 }

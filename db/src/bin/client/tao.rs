@@ -20,20 +20,19 @@ extern crate rand;
 extern crate time;
 extern crate zipf;
 
-mod setup;
 mod dispatch;
+mod setup;
 
-use std::sync::Arc;
 use std::fmt::Display;
 use std::mem::transmute;
+use std::sync::Arc;
 
-use db::cycles;
 use db::config;
-use db::log::*;
+use db::cycles;
+use db::e2d2::allocators::*;
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
-use db::e2d2::allocators::*;
-
+use db::log::*;
 
 /// Sends out Tao based RPC requests to a Sandstorm server.
 struct TaoSend {
@@ -67,7 +66,6 @@ impl TaoSend {
 impl Executable for TaoSend {
     // Called internally by Netbricks.
     fn execute(&mut self) {
-
         // Get the current time stamp so that we can determine if it is time to issue the next RPC.
         let curr = cycles::rdtsc();
 
@@ -96,7 +94,7 @@ where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
     // The network stack required to receives RPC response packets from a network port.
-    receiver: dispatch::Receiver<T>
+    receiver: dispatch::Receiver<T>,
 }
 
 // Implementation of methods on TaoRecv.
@@ -231,9 +229,11 @@ fn main() {
     net_context
         .add_pipeline_to_core(
             2,
-            Arc::new(move |_ports, sched: &mut StandaloneScheduler, core: i32| {
-                setup_recv(port.clone(), sched, core)
-            }),
+            Arc::new(
+                move |_ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
+                    setup_recv(port.clone(), sched, core)
+                },
+            ),
         )
         .expect("Failed to initialize receive side.");
 
@@ -241,9 +241,11 @@ fn main() {
     net_context
         .add_pipeline_to_core(
             0,
-            Arc::new(move |ports, sched: &mut StandaloneScheduler, core: i32| {
-                setup_send(&config, ports, sched, core)
-            }),
+            Arc::new(
+                move |ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
+                    setup_send(&config, ports, sched, core)
+                },
+            ),
         )
         .expect("Failed to initialize send side.");
 
@@ -261,12 +263,12 @@ fn main() {
 #[cfg(test)]
 mod test {
     use std;
-    use std::thread;
-    use std::mem::transmute;
-    use std::time::{Duration, Instant};
-    use std::sync::{Arc, Mutex};
     use std::collections::HashMap;
+    use std::mem::transmute;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn Tao_abc_basic() {

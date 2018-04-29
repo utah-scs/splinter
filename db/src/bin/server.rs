@@ -92,6 +92,7 @@ impl Executable for Server {
 fn setup_server<S>(
     config: &config::ServerConfig,
     ports: Vec<CacheAligned<PortQueue>>,
+    sibling: CacheAligned<PortQueue>,
     scheduler: &mut S,
     core: i32,
     master: &Arc<Master>,
@@ -112,6 +113,7 @@ fn setup_server<S>(
     let dispatch = Dispatch::new(
         config,
         ports[0].clone(),
+        sibling.clone(),
         Arc::clone(master),
         Arc::clone(&sched),
         ports[0].rxq(),
@@ -125,9 +127,9 @@ fn setup_server<S>(
     match scheduler.add_task(Server::new(sched)) {
         Ok(_) => {
             info!(
-                "Successfully added scheduler(TID {}) with rx,tx queues {:?} to core {}.",
+                "Successfully added scheduler(TID {}) with rx,tx,sibling queues {:?} to core {}.",
                 tid,
-                (ports[0].rxq(), ports[0].txq()),
+                (ports[0].rxq(), ports[0].txq(), sibling.rxq()),
                 core
             );
         }
@@ -256,8 +258,8 @@ fn main() {
     // Setup the server pipeline.
     net_context.start_schedulers();
     net_context.add_pipeline_to_run(Arc::new(
-        move |ports, scheduler: &mut StandaloneScheduler, core: i32| {
-            setup_server(&config, ports, scheduler, core, &cmaster, &chandle)
+        move |ports, scheduler: &mut StandaloneScheduler, core: i32, sibling| {
+            setup_server(&config, ports, sibling, scheduler, core, &cmaster, &chandle)
         },
     ));
 
@@ -316,10 +318,11 @@ fn main() {
             let _res = net_context.add_pipeline_to_core(
                 core,
                 Arc::new(
-                    move |ports, scheduler: &mut StandaloneScheduler, core: i32| {
+                    move |ports, scheduler: &mut StandaloneScheduler, core: i32, sibling| {
                         setup_server(
                             &config::ServerConfig::load(),
                             ports,
+                            sibling,
                             scheduler,
                             core,
                             &cmaster,

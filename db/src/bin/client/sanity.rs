@@ -267,9 +267,11 @@ fn main() {
     net_context
         .add_pipeline_to_core(
             0,
-            Arc::new(move |_ports, sched: &mut StandaloneScheduler, core: i32| {
-                setup_send(&config, port.clone(), sched, core)
-            }),
+            Arc::new(
+                move |_ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
+                    setup_send(&config, port.clone(), sched, core)
+                },
+            ),
         )
         .expect("Failed to initialize send side.");
 
@@ -284,9 +286,11 @@ fn main() {
     net_context
         .add_pipeline_to_core(
             2,
-            Arc::new(move |_ports, sched: &mut StandaloneScheduler, core: i32| {
-                setup_recv(port.clone(), sched, core)
-            }),
+            Arc::new(
+                move |_ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
+                    setup_recv(port.clone(), sched, core)
+                },
+            ),
         )
         .expect("Failed to initialize receive side.");
 

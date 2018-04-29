@@ -37,6 +37,7 @@ pub struct NetBricksContext {
     pub ports: HashMap<String, Arc<PmdPort>>,
     pub rx_queues: HashMap<i32, Vec<CacheAligned<PortQueue>>>,
     pub active_cores: Vec<i32>,
+    pub siblings: HashMap<i32, CacheAligned<PortQueue>>,
     pub virtual_ports: HashMap<i32, Arc<VirtualPort>>,
     scheduler_channels: HashMap<i32, SyncSender<SchedulerCommand>>,
     scheduler_handles: HashMap<i32, JoinHandle<()>>,
@@ -71,7 +72,7 @@ impl NetBricksContext {
     /// Run a function (which installs a pipeline) on all schedulers in the system.
     pub fn add_pipeline_to_run<T>(&mut self, run: Arc<T>)
     where
-        T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler, i32) + Send + Sync + 'static,
+        T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler, i32, AlignedPortQueue) + Send + Sync + 'static,
     {
         for (core, channel) in &self.scheduler_channels {
             let ports = match self.rx_queues.get(core) {
@@ -79,10 +80,11 @@ impl NetBricksContext {
                 None => vec![],
             };
             let id = *core;
+            let sibling = self.siblings.get(core).unwrap().clone();
             let boxed_run = run.clone();
             channel
                 .send(SchedulerCommand::Run(Arc::new(move |s| {
-                    boxed_run(ports.clone(), s, id)
+                    boxed_run(ports.clone(), s, id, sibling.clone())
                 })))
                 .unwrap();
         }
@@ -127,7 +129,9 @@ impl NetBricksContext {
     }
 
     /// Install a pipeline on a particular core.
-    pub fn add_pipeline_to_core<T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler, i32) + Send + Sync + 'static>(
+    pub fn add_pipeline_to_core<
+        T: Fn(Vec<AlignedPortQueue>, &mut StandaloneScheduler, i32, AlignedPortQueue) + Send + Sync + 'static,
+    >(
         &mut self,
         core: i32,
         run: Arc<T>,
@@ -137,10 +141,11 @@ impl NetBricksContext {
                 Some(v) => v.clone(),
                 None => vec![],
             };
+            let sibling = self.siblings.get(&core).unwrap().clone();
             let boxed_run = run.clone();
             channel
                 .send(SchedulerCommand::Run(Arc::new(move |s| {
-                    boxed_run(ports.clone(), s, core)
+                    boxed_run(ports.clone(), s, core, sibling.clone())
                 })))
                 .unwrap();
             Ok(())
@@ -267,5 +272,20 @@ pub fn initialize_system(configuration: &NetbricksConfiguration) -> Result<NetBr
         cores.extend(ctx.rx_queues.keys());
     };
     ctx.active_cores = cores.into_iter().collect();
+
+    // Populate every core's sibling receive queue.
+    for idx in 0..(ctx.active_cores.len() - 1) {
+        // A core's sibling is it's neighbour.
+        let sibling = ctx.rx_queues.get(&ctx.active_cores[idx + 1]).unwrap();
+        ctx.siblings.insert(ctx.active_cores[idx], sibling[0].clone());
+    }
+
+    // The last core's sibling is the first core's receive queue.
+    {
+        let last = ctx.active_cores.len() - 1;
+        let sibling = ctx.rx_queues.get(&ctx.active_cores[0]).unwrap();
+        ctx.siblings.insert(ctx.active_cores[last], sibling[0].clone());
+    }
+
     Ok(ctx)
 }
