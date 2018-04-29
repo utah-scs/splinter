@@ -35,7 +35,6 @@ mod common;
 mod container;
 mod context;
 mod service;
-mod task;
 mod tenant;
 mod native;
 
@@ -49,3 +48,4 @@ pub mod table;
 pub mod wireformat;
 pub mod master;
 pub mod sched;
+pub mod task;

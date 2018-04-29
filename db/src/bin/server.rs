@@ -37,6 +37,7 @@ use db::cycles::*;
 use db::dispatch::Dispatch;
 use db::master::Master;
 use db::sched::RoundRobin;
+use db::task::TaskPriority;
 
 use spin::RwLock;
 
@@ -95,7 +96,6 @@ fn setup_server<S>(
     core: i32,
     master: &Arc<Master>,
     handles: &Arc<RwLock<Vec<Arc<RoundRobin>>>>,
-    dispatch: bool,
 ) where
     S: Scheduler + Sized,
 {
@@ -109,16 +109,14 @@ fn setup_server<S>(
 
     // Create a dispatcher for the server if needed.
     let sched = Arc::new(RoundRobin::new(tid, core));
-    if dispatch {
-        let dispatch = Dispatch::new(
-            config,
-            ports[0].clone(),
-            Arc::clone(master),
-            Arc::clone(&sched),
-            ports[0].rxq(),
-        );
-        sched.enqueue(Box::new(dispatch));
-    }
+    let dispatch = Dispatch::new(
+        config,
+        ports[0].clone(),
+        Arc::clone(master),
+        Arc::clone(&sched),
+        ports[0].rxq(),
+    );
+    sched.enqueue(Box::new(dispatch));
 
     // Add the scheduler to the passed in `handles` vector.
     handles.write().push(Arc::clone(&sched));
@@ -259,7 +257,7 @@ fn main() {
     net_context.start_schedulers();
     net_context.add_pipeline_to_run(Arc::new(
         move |ports, scheduler: &mut StandaloneScheduler, core: i32| {
-            setup_server(&config, ports, scheduler, core, &cmaster, &chandle, true)
+            setup_server(&config, ports, scheduler, core, &cmaster, &chandle)
         },
     ));
 
@@ -299,12 +297,16 @@ fn main() {
 
             // There might be an uncooperative task on this scheduler. Dequeue it's tasks and any
             // pending response packets.
-            let tasks = sched.dequeue_all();
+            let mut tasks = sched.dequeue_all();
             let mut resps = sched.responses();
 
-            // Set the compromised flag on the scheduler and then migrate it.
+            // Retain only non-dispatch tasks.
+            tasks.retain(|task| task.priority() != TaskPriority::DISPATCH);
+
+            // Set the compromised flag on the scheduler and then migrate it. Stop the scheduler.
             sched.compromised();
             unsafe { zcsi::set_affinity(tid, GHETTO) };
+            net_context.stop_core(core);
 
             // Create and setup a new scheduler on the core.
             let temp = Arc::new(RwLock::new(Vec::with_capacity(1)));
@@ -322,7 +324,6 @@ fn main() {
                             core,
                             &cmaster,
                             &ctemp,
-                            false,
                         )
                     },
                 ),

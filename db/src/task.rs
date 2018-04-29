@@ -41,7 +41,7 @@ pub enum TaskState {
 /// This enum represents the priority of a task in the system. A smaller value
 /// indicates a task with a higher priority.
 #[repr(u8)]
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum TaskPriority {
     /// The priority of a dispatch task. Highest in the system, because this
     /// task is responsible for all network processing.
