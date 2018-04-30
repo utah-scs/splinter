@@ -13,21 +13,22 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::rc::Rc;
-use std::sync::Arc;
 use std::cell::Cell;
 use std::ops::{Generator, GeneratorState};
+use std::panic::*;
+use std::rc::Rc;
+use std::sync::Arc;
 
+use super::common::PACKET_UDP_LEN;
+use super::context::Context;
 use super::cycles;
 use super::ext::Extension;
-use super::context::Context;
 use super::task::TaskState::*;
-use super::common::PACKET_UDP_LEN;
 use super::task::{Task, TaskPriority, TaskState};
 
-use e2d2::interface::Packet;
-use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
+use e2d2::headers::UdpHeader;
+use e2d2::interface::Packet;
 
 use sandstorm::db::DB;
 
@@ -115,7 +116,8 @@ impl Task for Container {
 
             // As of 04/02/2018, calling resume() on a generator requires an unsafe block.
             unsafe {
-                match self.gen.resume() {
+                // Catch any panics thrown from within the extension.
+                let res = catch_unwind(AssertUnwindSafe(|| match self.gen.resume() {
                     GeneratorState::Yielded(_) => {
                         self.state = YIELDED;
                     }
@@ -123,6 +125,12 @@ impl Task for Container {
                     GeneratorState::Complete(_) => {
                         self.state = COMPLETED;
                     }
+                }));
+
+                // If there was a panic thrown, then mark the container as COMPLETED so that it
+                // does not get run again.
+                if let Err(_) = res {
+                    self.state = COMPLETED;
                 }
             }
         }
