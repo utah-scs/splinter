@@ -272,6 +272,7 @@ pub fn initialize_system(configuration: &NetbricksConfiguration) -> Result<NetBr
         cores.extend(ctx.rx_queues.keys());
     };
     ctx.active_cores = cores.into_iter().collect();
+    ctx.active_cores.sort();
 
     // Populate every core's sibling receive queue.
     for idx in 0..(ctx.active_cores.len() - 1) {
