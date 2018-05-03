@@ -342,7 +342,7 @@ where
             responses: resps,
             start: cycles::rdtsc(),
             recvd: 0,
-            latencies: Vec::with_capacity(1 * 1000 * 1000),
+            latencies: Vec::with_capacity(2 * 1000 * 1000),
         }
     }
 }
@@ -468,7 +468,7 @@ where
     }
 
     // Add the receiver to a netbricks pipeline.
-    match scheduler.add_task(YcsbRecv::new(ports[0].clone(), 16 * 1000 * 1000 as u64)) {
+    match scheduler.add_task(YcsbRecv::new(ports[0].clone(), 32 * 1000 * 1000 as u64)) {
         Ok(_) => {
             info!(
                 "Successfully added YcsbRecv with rx queue {}.",
@@ -502,12 +502,12 @@ fn main() {
     // The core id's which will run the sender and receiver threads.
     // XXX The following two arrays heavily depend on the set of cores
     // configured in setup.rs
-    let senders = [0, 4, 8, 12, 16, 20, 24, 28];
-    let receive = [2, 6, 10, 14, 18, 22, 26, 30];
-    assert!((senders.len() == 8) && (receive.len() == 8));
+    let senders = [0, 2, 4, 6];
+    let receive = [1, 3, 5, 7];
+    assert!((senders.len() == 4) && (receive.len() == 4));
 
-    // Setup 8 senders, and 8 receivers.
-    for i in 0..8 {
+    // Setup 4 senders, and 4 receivers.
+    for i in 0..4 {
         // First, retrieve a tx-rx queue pair from Netbricks
         let port = net_context
             .rx_queues

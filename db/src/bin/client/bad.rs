@@ -40,15 +40,6 @@ use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
 use zipf::ZipfDistribution;
 
-// YCSB A, B, and C benchmark.
-// The benchmark is created and parameterized with `new()`. Many threads
-// share the same benchmark instance. Each thread can call `abc()` which
-// runs the benchmark until another thread calls `stop()`. Each thread
-// then returns their runtime and the number of gets and puts they have done.
-// This benchmark doesn't care about how get/put are implemented; it takes
-// function pointers to get/put on `new()` and just calls those as it runs.
-//
-// The tests below give an example of how to use it and how to aggregate the results.
 pub struct Ycsb {
     put_pct: usize,
     rng: Box<Rng>,
@@ -59,19 +50,6 @@ pub struct Ycsb {
 }
 
 impl Ycsb {
-    // Create a new benchmark instance.
-    //
-    // # Arguments
-    //  - key_len: Length of the keys to generate per get/put. Most bytes will be zero, since
-    //             the benchmark poplates them from a random 32-bit value.
-    //  - value_len: Length of the values to store per put. Always all zero bytes.
-    //  - n_keys: Number of keys from which random keys are drawn.
-    //  - put_pct: Number between 0 and 100 indicating percent of ops that are sets.
-    //  - skew: Zipfian skew parameter. 0.99 is YCSB default.
-    //  - n_tenants: The number of tenants from which the tenant id is chosen.
-    //  - tenant_skew: The skew in the Zipfian distribution from which tenant id's are drawn.
-    // # Return
-    //  A new instance of YCSB that threads can call `abc()` on to run.
     fn new(
         key_len: usize,
         value_len: usize,
@@ -103,22 +81,12 @@ impl Ycsb {
         }
     }
 
-    // Run YCSB A, B, or C (depending on `new()` parameters).
-    // The calling thread will not return until `done()` is called on this `Ycsb` instance.
-    //
-    // # Arguments
-    //  - get: A function that fetches the data stored under a bytestring key of `self.key_len` bytes.
-    //  - set: A function that stores the data stored under a bytestring key of `self.key_len` bytes
-    //         with a bytestring value of `self.value_len` bytes.
-    // # Return
-    //  A three tuple consisting of the duration that this thread ran the benchmark, the
-    //  number of gets it performed, and the number of puts it performed.
     pub fn abc<G, P, R>(&mut self, mut get: G, mut put: P) -> R
     where
         G: FnMut(u32, &[u8]) -> R,
         P: FnMut(u32, &[u8], &[u8]) -> R,
     {
-        let is_get = (self.rng.gen::<u32>() % 100) >= self.put_pct as u32;
+        let is_get = (self.rng.gen::<u32>() % 10000000) >= self.put_pct as u32;
 
         // Sample a tenant.
         let t = self.tenant_rng.sample(&mut self.rng) as u32;
@@ -196,29 +164,27 @@ impl YcsbSend {
     ) -> YcsbSend {
         // The payload on an invoke() based get request consists of the extensions name ("get"),
         // the table id to perform the lookup on, and the key to lookup.
-        let payload_len = "tao".as_bytes().len() + 1 + mem::size_of::<u64>() + 8;
+        let payload_len = "get".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
         let mut payload_get = Vec::with_capacity(payload_len);
-        payload_get.extend_from_slice("tao".as_bytes()); // Extension name
-        payload_get.extend_from_slice(&[0u8]); // Opcode
-        payload_get.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) }); // table
+        payload_get.extend_from_slice("get".as_bytes());
+        payload_get.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
         payload_get.resize(payload_len, 0);
 
         // The payload on an invoke() based put request consists of the extensions name ("put"),
         // the table id to perform the lookup on, the length of the key to lookup, the key, and the
         // value to be inserted into the database.
-        let payload_len = "tao".as_bytes().len() + 1 + mem::size_of::<u64>() + 18;
+        let payload_len = "bad".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
         let mut payload_put = Vec::with_capacity(payload_len);
-        payload_put.extend_from_slice("tao".as_bytes()); // Extension name
-        payload_put.extend_from_slice(&[4u8]); // Opcode
-        payload_put.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(2u64.to_le()) }); // table
+        payload_put.extend_from_slice("bad".as_bytes());
+        payload_put.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
         payload_put.resize(payload_len, 0);
 
         YcsbSend {
             workload: RefCell::new(Ycsb::new(
                 config.key_len,
                 config.value_len,
-                500000,
-                40,
+                config.n_keys,
+                config.put_pct,
                 config.skew,
                 config.num_tenants,
                 config.tenant_skew,
@@ -259,10 +225,17 @@ impl Executable for YcsbSend {
             // bytes of the key matter, the rest are zero. The value is always zero.
             self.workload.borrow_mut().abc(
                 |tenant, key| {
-                    p_get[12..16].copy_from_slice(&key[0..4]);
+                    // First 11 bytes on the payload were already pre-populated with the
+                    // extension name (3 bytes), and the table id (8 bytes). Just write in the
+                    // first 4 bytes of the key.
+                    p_get[11..15].copy_from_slice(&key[0..4]);
                     self.sender.send_invoke(tenant, 3, &p_get, curr)
                 },
                 |tenant, key, _val| {
+                    // First 13 bytes on the payload were already pre-populated with the
+                    // extension name (3 bytes), the table id (8 bytes), and the key length (2
+                    // bytes). Just write in the first 4 bytes of the key. The value is anyway
+                    // always zero.
                     p_put[12..16].copy_from_slice(&key[0..4]);
                     self.sender.send_invoke(tenant, 3, &p_put, curr)
                 },
@@ -300,9 +273,7 @@ where
 
     // Vector of sampled request latencies. Required to calculate distributions once all responses
     // have been received.
-    o_latencies: Vec<u64>,
-
-    a_latencies: Vec<u64>,
+    latencies: Vec<u64>,
 }
 
 // Implementation of methods on YcsbRecv.
@@ -327,8 +298,7 @@ where
             responses: resps,
             start: cycles::rdtsc(),
             recvd: 0,
-            o_latencies: Vec::with_capacity(2 * 1000 * 1000),
-            a_latencies: Vec::with_capacity(2 * 1000 * 1000),
+            latencies: Vec::with_capacity(4 * 1000 * 1000),
         }
     }
 }
@@ -358,19 +328,17 @@ where
 
                     // XXX Uncomment to print out responses.
                     // println!("{:?}", packet.get_payload());
+                    if packet.get_payload().len() < 500 {
+                        let sent = &packet.get_payload()[1..9];
+                        let sent = 0 | sent[0] as u64 | (sent[1] as u64) << 8
+                            | (sent[2] as u64) << 16
+                            | (sent[3] as u64) << 24
+                            | (sent[4] as u64) << 32
+                            | (sent[5] as u64) << 40
+                            | (sent[6] as u64) << 48
+                            | (sent[7] as u64) << 56;
 
-                    let sent = &packet.get_payload()[1..9];
-                    let sent = 0 | sent[0] as u64 | (sent[1] as u64) << 8 | (sent[2] as u64) << 16
-                        | (sent[3] as u64) << 24
-                        | (sent[4] as u64) << 32
-                        | (sent[5] as u64) << 40
-                        | (sent[6] as u64) << 48
-                        | (sent[7] as u64) << 56;
-
-                    if packet.get_payload().len() > 50 {
-                        self.a_latencies.push(curr - sent);
-                    } else {
-                        self.o_latencies.push(curr - sent);
+                        self.latencies.push(curr - sent);
                     }
                 }
 
@@ -383,26 +351,14 @@ where
         if self.responses <= self.recvd {
             let stop = cycles::rdtsc();
 
-            self.o_latencies.sort();
-            let o_median = self.o_latencies[self.o_latencies.len() / 2];
-            let o_tail = self.o_latencies[(self.o_latencies.len() * 99) / 100];
-            let o_mean =
-                self.o_latencies.iter().sum::<u64>() as f64 / self.o_latencies.len() as f64;
-
-            self.a_latencies.sort();
-            let a_median = self.a_latencies[self.a_latencies.len() / 2];
-            let a_tail = self.a_latencies[(self.a_latencies.len() * 99) / 100];
-            let a_mean =
-                self.a_latencies.iter().sum::<u64>() as f64 / self.a_latencies.len() as f64;
+            self.latencies.sort();
+            let median = self.latencies[self.latencies.len() / 2];
+            let tail = self.latencies[(self.latencies.len() * 99) / 100];
 
             info!(
-                "AMean(ns) {} AMedian(ns): {} ATail(ns) {} OMean(ns) {} OMedian(ns): {} OTail(ns): {} Throughput(Kops/s): {}",
-                cycles::to_seconds(a_mean as u64) * 1e9,
-                cycles::to_seconds(a_median) * 1e9,
-                cycles::to_seconds(a_tail) * 1e9,
-                cycles::to_seconds(o_mean as u64) * 1e9,
-                cycles::to_seconds(o_median) * 1e9,
-                cycles::to_seconds(o_tail) * 1e9,
+                "Median(ns): {} Tail(ns): {} Throughput(Kops/s): {}",
+                cycles::to_seconds(median) * 1e9,
+                cycles::to_seconds(tail) * 1e9,
                 self.recvd as f64 / cycles::to_seconds(stop - self.start)
             );
         }
@@ -551,156 +507,4 @@ fn main() {
 
     // Stop the client.
     net_context.stop();
-}
-
-#[cfg(test)]
-mod test {
-    use std;
-    use std::collections::HashMap;
-    use std::mem::transmute;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
-    use std::thread;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn ycsb_abc_basic() {
-        let n_threads = 1;
-        let mut threads = Vec::with_capacity(n_threads);
-        let done = Arc::new(AtomicBool::new(false));
-
-        for _ in 0..n_threads {
-            let done = done.clone();
-            threads.push(thread::spawn(move || {
-                let mut b = super::Ycsb::new(10, 100, 1000000, 5, 0.99);
-                let mut n_gets = 0u64;
-                let mut n_puts = 0u64;
-                let start = Instant::now();
-                while !done.load(Ordering::Relaxed) {
-                    b.abc(|_t, _key| n_gets += 1, |_t, _key, _value| n_puts += 1);
-                }
-                (start.elapsed(), n_gets, n_puts)
-            }));
-        }
-
-        thread::sleep(Duration::from_secs(2));
-        done.store(true, Ordering::Relaxed);
-
-        // Iterate across all threads. Return a tupule whose first member consists
-        // of the highest execution time across all threads, and whose second member
-        // is the sum of the number of iterations run on each benchmark thread.
-        // Dividing the second member by the first, will yeild the throughput.
-        let (duration, n_gets, n_puts) = threads
-            .into_iter()
-            .map(|t| t.join().expect("ERROR: Thread join failed."))
-            .fold(
-                (Duration::new(0, 0), 0, 0),
-                |(ldur, lgets, lputs), (rdur, rgets, rputs)| {
-                    (std::cmp::max(ldur, rdur), lgets + rgets, lputs + rputs)
-                },
-            );
-
-        let secs = duration.as_secs() as f64 + (duration.subsec_nanos() as f64 / 1e9);
-        println!(
-            "{} threads: {:.0} gets/s {:.0} puts/s {:.0} ops/s",
-            n_threads,
-            n_gets as f64 / secs,
-            n_puts as f64 / secs,
-            (n_gets + n_puts) as f64 / secs
-        );
-    }
-
-    // Convert a key to u32 assuming little endian.
-    fn convert_key(key: &[u8]) -> u32 {
-        assert_eq!(4, key.len());
-        let k: u32 = 0 | key[0] as u32 | (key[1] as u32) << 8 | (key[2] as u32) << 16
-            | (key[3] as u32) << 24;
-        k
-    }
-
-    #[test]
-    fn ycsb_abc_histogram() {
-        let hist = Arc::new(Mutex::new(HashMap::new()));
-
-        let n_keys = 20;
-        let n_threads = 1;
-
-        let mut threads = Vec::with_capacity(n_threads);
-        let done = Arc::new(AtomicBool::new(false));
-        for _ in 0..n_threads {
-            let hist = hist.clone();
-            let done = done.clone();
-            threads.push(thread::spawn(move || {
-                let mut b = super::Ycsb::new(4, 100, n_keys, 5, 0.99);
-                let mut n_gets = 0u64;
-                let mut n_puts = 0u64;
-                let start = Instant::now();
-                while !done.load(Ordering::Relaxed) {
-                    b.abc(
-                        |_t, key| {
-                            // get
-                            let k = convert_key(key);
-                            let mut ht = hist.lock().unwrap();
-                            ht.entry(k).or_insert((0, 0)).0 += 1;
-                            n_gets += 1
-                        },
-                        |_t, key, _value| {
-                            // put
-                            let k = convert_key(key);
-                            let mut ht = hist.lock().unwrap();
-                            ht.entry(k).or_insert((0, 0)).1 += 1;
-                            n_puts += 1
-                        },
-                    );
-                }
-                (start.elapsed(), n_gets, n_puts)
-            }));
-        }
-
-        thread::sleep(Duration::from_secs(2));
-        done.store(true, Ordering::Relaxed);
-
-        // Iterate across all threads. Return a tupule whose first member consists
-        // of the highest execution time across all threads, and whose second member
-        // is the sum of the number of iterations run on each benchmark thread.
-        // Dividing the second member by the first, will yeild the throughput.
-        let (duration, n_gets, n_puts) = threads
-            .into_iter()
-            .map(|t| t.join().expect("ERROR: Thread join failed."))
-            .fold(
-                (Duration::new(0, 0), 0, 0),
-                |(ldur, lgets, lputs), (rdur, rgets, rputs)| {
-                    (std::cmp::max(ldur, rdur), lgets + rgets, lputs + rputs)
-                },
-            );
-
-        let secs = duration.as_secs() as f64 + (duration.subsec_nanos() as f64 / 1e9);
-        println!(
-            "{} threads: {:.0} gets/s {:.0} puts/s {:.0} ops/s",
-            n_threads,
-            n_gets as f64 / secs,
-            n_puts as f64 / secs,
-            (n_gets + n_puts) as f64 / secs
-        );
-
-        let ht = hist.lock().unwrap();
-        let mut kvs: Vec<_> = ht.iter().collect();
-        kvs.sort();
-        let v: Vec<_> = kvs.iter()
-            .map(|&(k, v)| println!("Key {:?}: {:?} gets/puts", k, v))
-            .collect();
-        println!("Unique key count: {}", v.len());
-        assert_eq!(n_keys, v.len());
-
-        let total: i64 = kvs.iter().map(|&(_, &(g, s))| (g + s) as i64).sum();
-
-        let mut sum = 0;
-        for &(k, v) in kvs.iter() {
-            let &(g, s) = v;
-            sum += g + s;
-            let percentile = sum as f64 / total as f64;
-            println!("Key {:?}: {:?} percentile", k, percentile);
-        }
-        // For 20 keys median key should be near 4th key, so this checks out.
-    }
 }

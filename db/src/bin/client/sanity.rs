@@ -66,7 +66,7 @@ impl SanitySend {
         SanitySend {
             sender: dispatch::Sender::new(config, port, 1),
             puts: 1 * 1000,
-            gets: 1 * 1000,
+            gets: 1,
             native: !config.use_invoke,
         }
     }
@@ -77,7 +77,7 @@ impl Executable for SanitySend {
     /// Called by a Netbricks scheduler.
     fn execute(&mut self) {
         // Throttle. Sleep for 1 micro-second before issuing a request.
-        std::thread::sleep(std::time::Duration::from_micros(1));
+        std::thread::sleep(std::time::Duration::from_micros(1000));
 
         // If there are pending puts, issue one and return.
         if self.puts > 0 {

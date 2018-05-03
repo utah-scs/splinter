@@ -33,8 +33,8 @@ fn get_default_netbricks_config(config: &ClientConfig) -> NetbricksConfiguration
     // General arguments supplied to netbricks.
     let net_config_name = String::from("client");
     let dpdk_secondary: bool = false;
-    let net_primary_core: i32 = 31;
-    let net_cores: Vec<i32> = vec![0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30];
+    let net_primary_core: i32 = 9;
+    let net_cores: Vec<i32> = (0i32..8i32).collect();
     let net_strict_cores: bool = true;
     let net_pool_size: u32 = 8192 - 1;
     let net_cache_size: u32 = 128;

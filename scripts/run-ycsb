@@ -43,25 +43,37 @@ fi
 # operation based YCSB.
 invoke=$(cat client.toml | grep "use_invoke" | awk '{ print $NF }')
 
+# The number of tenants requests are being generated for. Each data point in the
+# output file is marked with this number.
+tenants=$(cat client.toml | grep "num_tenants" | awk '{ print $NF }')
+
+# The skew with which tenants are chosen by the client. Each data point in the
+# output file is marked with this number.
+tenant_skew=$(cat client.toml | grep "tenant_skew" | awk '{ print $NF }')
+
+# The number of server cores being stressed by YCSB. Each data point in the
+# output file is marked with this number.
+cores=$(cat client.toml | grep "server_udp_ports" | awk '{ print $NF }')
+
 # The different request rates that the YCSB client will be configured and run
 # with.
-rates=(100000 200000 300000 400000 500000 600000 700000 800000 900000 1000000 \
-        1100000 1200000)
+rates=(250000 375000 500000 625000 750000 875000 1000000 1125000 1250000 1375000 1500000)
 
 # Header for the output file. Required inorder to plot the results.
-echo "Offered 50 99 Thrpt" > ../ycsb_invoke_"$invoke".out
+echo "Offered 50 99 Thrpt Tenants TSkew Cores" > ../ycsb_invoke_"$invoke".out
 
 # Run YCSB for each of the above request rates.
 for rate in ${rates[@]}
 do
-    echo "Running for a target rate of $rate ops/sec, invoke=$invoke"
+    echo "rate=$rate, invoke=$invoke, tenants=$tenants, tenant_skew=$tenant_skew, cores=$cores"
 
     # Configure the client TOML file with the request rate.
     sed -i "s/req_rate = [1-9][0-9]*/req_rate = $rate/g" client.toml
 
     # Run YCSB, and write out the median, 99th, and throughput.
     RUST_LOG=debug ./target/release/ycsb 2>&1 | grep "Median(ns)" | \
-            awk "{ print $rate, \$3, \$5, \$7 }" >> ../ycsb_invoke_"$invoke".out
+            awk "{ print $rate, \$3, \$5, \$7, $tenants, $tenant_skew, $cores }" \
+            >> ../ycsb_invoke_"$invoke".out
 done
 
 exit 0

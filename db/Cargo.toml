@@ -22,8 +22,16 @@ name = "tao"
 path = "src/bin/client/tao.rs"
 
 [[bin]]
+name = "bad"
+path = "src/bin/client/bad.rs"
+
+[[bin]]
 name = "ycsb"
 path = "src/bin/client/ycsb.rs"
+
+[[bin]]
+name = "long"
+path = "src/bin/client/long.rs"
 
 [[bin]]
 name = "ext_bench"
