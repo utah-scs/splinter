@@ -20,7 +20,9 @@ extern crate time;
 extern crate sandstorm;
 
 use std::rc::Rc;
+use std::ops::{Generator, GeneratorState};
 
+use db::cycles::*;
 use db::ext::ExtensionManager;
 
 use time::{Duration, PreciseTime};
@@ -40,8 +42,8 @@ fn main() {
     let start = PreciseTime::now();
     for i in 0..n {
         let ret = ext_manager.load(
-                            &format!("../ext/tao/target/release/deps/libtao{}.so", i),
-                            0, &format!("tao{}", i),
+                            &format!("../ext/test/target/release/deps/libtest{}.so", i),
+                            0, &format!("test{}", i),
                             );
         if ret == false {
             panic!("Failed to load test extension!");
@@ -56,13 +58,12 @@ fn main() {
                                     .map(| _ | format!("TAO Initialized! 0"))
                                     .collect();
     let proc_names : Vec<String> = (0..n)
-                                        .map(| i | format!("tao{}", i))
+                                        .map(| i | format!("test{}", i))
                                         .collect();
     for p in proc_names.iter() {
         let mut ext = ext_manager.get(0, &p)
                                     .unwrap()
                                     .get(Rc::clone(&db) as Rc<DB>);
-        unsafe { ext.resume() };
         unsafe { ext.resume() };
     }
 
@@ -75,22 +76,43 @@ fn main() {
                                     .map(| _ | format!("TAO Initialized! 1"))
                                     .collect();
 
-    let mut c = 0;
-    let start_bench = PreciseTime::now();
+    let mut load = Vec::with_capacity(10000000);
+    let mut enter = Vec::with_capacity(10000000);
+
     for _ in 0..100000 {
         for p in proc_names.iter() {
+            let l = rdtsc();
             let mut ext = ext_manager.get(0, &p)
                                         .unwrap()
                                         .get(Rc::clone(&db) as Rc<DB>);
+            let r = rdtsc();
+            load.push(r - l);
+
+            let l = rdtsc();
             unsafe { ext.resume() };
-            unsafe { ext.resume() };
-            c = c + 1;
+            let r = rdtsc();
+            enter.push(r - l);
         }
     }
-    let end_bench: Duration = start_bench.to(PreciseTime::now());
-    println!("Average time taken per extension call: {} ns",
-             end_bench.num_nanoseconds().expect("ERROR: Duration overflow!") /
-             c);
+
+    let ret = ext_manager.load(
+                            "../ext/test/target/release/deps/libtest.so",
+                            0, "test",
+                            );
+    if ret == false {
+        panic!("Failed to load test extension!");
+    }
+
+    let mut ext = ext_manager.get(0, "test").unwrap().get(Rc::clone(&db) as Rc<DB>);
+
+    unsafe { while ext.resume() != GeneratorState::Complete(0) {} };
+
+    load.sort();
+    enter.sort();
+
+    println!("Load: {} ns, Enter: {} ns", to_seconds(load[load.len() / 2]) * 1e9,
+             to_seconds(enter[enter.len() / 2]) * 1e9,
+             );
 
     db.assert_messages(expected.as_slice());
 }

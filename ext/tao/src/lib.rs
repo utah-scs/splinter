@@ -94,7 +94,7 @@ fn dispatch(db: Rc<DB>) -> u64 {
 /// * `otype` - the type of the object.
 /// * `object` - the bytes representing the objects value.
 fn object_response_handler(db: Rc<DB>, otype: &[u8], object: &[u8]){
-    db.resp(otype);
+    // db.resp(otype);
     db.resp(object);
 }
 
@@ -498,16 +498,36 @@ impl TAO {
         assoc_key.extend_from_slice(association_type);
         assoc_key.extend_from_slice(id2);
 
-        match self.client.get(self.association_table_id, assoc_key.as_slice()) {
-            Some(assoc_serialized) => {
-                match Association::deserialize(&assoc_serialized.read()) {
-                    Ok(ac) => {
-                        assoc_response_handler(Rc::clone(&self.client), ac);
-                        return true;
-                    },
-                    Err(_) => return false
+        // Get the length of the id and atype combined.
+        let len = id1.len() + association_type.len();
+
+        // Lookup the association list.
+        match self.client.get(self.association_table_id, &assoc_key[0..len]) {
+            Some(a_list) => {
+                let list = a_list.read();
+
+                // Get the number of assocs in the list.
+                let s = std::mem::size_of::<Association>();
+                let n = list.len() / s;
+
+                // Lookup every assoc and write to the response packet.
+                for i in 0..n {
+                    let l = i * s;
+                    let r = l + std::mem::size_of::<Id>();
+                    let id = &list[l..r];
+
+                    assoc_key[len..(len + id2.len())].copy_from_slice(id);
+
+                    if let Some(assoc) = self.client.get(self.association_table_id, &assoc_key) {
+                        self.client.resp(assoc.read());
+                    } else {
+                        return false;
+                    }
                 }
-            },
+
+                return true;
+            }
+
             None => return false, //Error assoc does not exist.
         }
     }

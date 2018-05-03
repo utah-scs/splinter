@@ -1,5 +1,5 @@
 [package]
-name = "test"
+name = "long"
 version = "0.1.0"
 authors = ["Chinmay Kulkarni <chnm.kulkarni@gmail.com>"]
 
@@ -7,5 +7,4 @@ authors = ["Chinmay Kulkarni <chnm.kulkarni@gmail.com>"]
 crate-type = ["dylib"]
 
 [dependencies]
-db        = { path = "../../db" }
 sandstorm = { path = "../../sandstorm" }

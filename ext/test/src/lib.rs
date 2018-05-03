@@ -17,7 +17,10 @@
 #![feature(no_unsafe)]
 #![feature(generators, generator_trait)]
 
+extern crate db;
 extern crate sandstorm;
+
+use db::cycles::*;
 
 use std::rc::Rc;
 use std::ops::Generator;
@@ -37,9 +40,34 @@ use sandstorm::db::DB;
 /// A coroutine that can be run inside the database.
 #[no_mangle]
 #[allow(unused_assignments)]
-pub fn init(_db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
+pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
     Box::new(move || {
         yield 0;
+
+        let mut y = Vec::with_capacity(1000000);
+        let mut c = Vec::with_capacity(1000000);
+
+        for _j in 0u64..1000000u64 {
+            let l = rdtsc();
+            db.debug_log("");
+            let r = rdtsc();
+
+            c.push(r - l);
+        }
+
+        for _i in 0u64..1000000u64 {
+            let a = rdtsc();
+            yield 0;
+            let b = rdtsc();
+
+            y.push(b - a);
+        }
+
+        y.sort();
+        c.sort();
+
+        println!("Yield: {} ns, Call: {} ns", to_seconds(y[y.len() / 2]) * 1e9, to_seconds(c[c.len() / 2]) * 1e9);
+
         return 0;
     })
 }

@@ -199,6 +199,7 @@ int init_pmd_port(int port, int rxqs, int txqs, int rxq_core[], int txq_core[], 
      * First, setup details regarding the flow to be filtered. Restrict to
      * IP+UDP packets, and look at only the UDP destination port.
      */
+    /*
     struct rte_eth_fdir_filter_info filter_info;
     memset(&filter_info, 0, sizeof(filter_info));
     filter_info.info_type = RTE_ETH_FDIR_FILTER_INPUT_SET_SELECT;
@@ -213,6 +214,7 @@ int init_pmd_port(int port, int rxqs, int txqs, int rxq_core[], int txq_core[], 
         rte_exit(EXIT_FAILURE, "Could not set fdir info: %s\n",
                         strerror(-retval));
     }
+    */
 
     /*
      * Next, configure a rule for each receive queue. Redirect packets with UDP

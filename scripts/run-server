@@ -27,6 +27,6 @@ if [[ ! -f server.toml ]]; then
 fi
 
 # Run the server.
-RUST_LOG=debug numactl --interleave all ./target/release/server
+RUST_LOG=info numactl --interleave all ./target/release/server
 
 exit 0

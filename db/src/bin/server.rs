@@ -47,7 +47,7 @@ const SCAN_INTERVAL_MS: u64 = 10;
 
 /// A scheduler is considered compromised if it has not updated it's `latest` timestamp in so many
 /// milliseconds.
-const MALICIOUS_LIMIT_MS: f64 = 100f64;
+const MALICIOUS_LIMIT_MS: f64 = 1f64;
 
 /// The identifier of the core that all misbehaving schedulers will be migrated to.
 const GHETTO: u64 = 20;
@@ -156,8 +156,8 @@ fn get_default_netbricks_config(config: &config::ServerConfig) -> NetbricksConfi
     // General arguments supplied to netbricks.
     let net_config_name = String::from("server");
     let dpdk_secondary: bool = false;
-    let net_primary_core: i32 = 31;
-    let net_cores: Vec<i32> = vec![0, 2, 4, 6, 8, 10, 12, 14];
+    let net_primary_core: i32 = 19;
+    let net_cores: Vec<i32> = vec![10, 11, 12, 13, 14, 15, 16, 17];
     let net_strict_cores: bool = true;
     let net_pool_size: u32 = 8192 - 1;
     let net_cache_size: u32 = 128;
@@ -229,15 +229,13 @@ fn main() {
     let config = config::ServerConfig::load();
     info!("Starting up Sandstorm server with config {:?}", config);
 
-    // Setup Netbricks.
-    let mut net_context: NetbricksContext = config_and_init_netbricks(&config);
-
     let master = Arc::new(Master::new());
     info!("Populating test data table and extensions...");
 
     // Create tenants with data and extensions for YCSB.
     for tenant in 1..(config.num_tenants + 1) {
-        master.fill_test(tenant, 1, 10 * 1000 * 1000);
+        // master.fill_test(tenant, 1, 1 * 1000 * 1000);
+        master.fill_tao(tenant, 500000);
         master.load_test(tenant);
     }
 
@@ -246,6 +244,9 @@ fn main() {
     master.fill_test(100, 100, 0);
 
     info!("Finished populating data and extensions");
+
+    // Setup Netbricks.
+    let mut net_context: NetbricksContext = config_and_init_netbricks(&config);
 
     // A handle to every scheduler for pre-emption.
     let handles = Arc::new(RwLock::new(Vec::with_capacity(8)));

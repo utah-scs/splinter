@@ -142,6 +142,80 @@ impl Master {
         self.insert_tenant(tenant);
     }
 
+    pub fn fill_tao(&self, tenant_id: TenantId, num: u32) {
+        // Create a tenant containing two tables, one for objects, and one for
+        // associations.
+        let tenant = Tenant::new(tenant_id);
+        tenant.create_table(1); // Holds tao objects.
+        tenant.create_table(2); // Holds tao assocs.
+
+        // First, fill up the object table.
+        let table = tenant
+            .get_table(1)
+            .expect("Failed to init test table.");
+
+        // Objects are identified by an 8 byte key.
+        let mut key = vec![0; 8];
+        // Objects contain a 4 byte otype, 8 byte version, 4 byte update time, and
+        // 16 byte payload, all of which are zero.
+        let val = vec![0; 32];
+
+        // Setup the object table with num objects.
+        for i in 1..(num + 1) {
+            let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+            &key[0..4].copy_from_slice(&temp);
+
+            let obj = self.heap
+                .object(tenant_id, 1, &key, &val)
+                .expect("Failed to create test object.");
+            table.put(obj.0, obj.1);
+        }
+
+        // Next, fill up the assoc table.
+        let table = tenant
+            .get_table(2)
+            .expect("Failed to init test table.");
+
+        // Assocs are identified by an 8 byte object 1 id, 2 byte association
+        // type (always zero), and 8 byte object 2 id.
+        let mut key = vec![0; 18];
+        // Assocs have a 22 byte value (all zeros).
+        let val = vec![0; 22];
+
+        // Populate the assoc table. Each object gets four assocs to it's
+        // neighbours.
+        for i in 1..(num + 1) {
+            let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+            &key[0..4].copy_from_slice(&temp);
+
+            // Assoc list for this particular object.
+            let mut list: Vec<u8> = Vec::new();
+
+            for a in 1u32..5u32 {
+                let temp: [u8; 4] = unsafe { transmute(((i + a) % num).to_le()) };
+                &key[10..14].copy_from_slice(&temp);
+                list.extend_from_slice(&temp);
+                list.extend_from_slice(&[0; 12]);
+
+                // Add this assoc to the assoc table.
+                let obj = self.heap
+                    .object(tenant_id, 2, &key, &val)
+                    .expect("Failed to create test object.");
+                table.put(obj.0, obj.1);
+            }
+
+            // Add the assoc list to the table too.
+            let obj = self.heap
+                .object(tenant_id, 2, &key[0..10], &list)
+                .expect("Failed to create test object.");
+            table.put(obj.0, obj.1);
+        }
+
+
+        // Add the tenant.
+        self.insert_tenant(tenant);
+    }
+
     /// Loads the get(), put(), tao(), and bad() extensions.
     ///
     /// # Arguments
@@ -170,6 +244,12 @@ impl Master {
         let name = "../ext/bad/target/release/libbad.so";
         if self.extensions.load(name, tenant, "bad") == false {
             panic!("Failed to load bad() extension.");
+        }
+
+        // Load the long() extension.
+        let name = "../ext/long/target/release/liblong.so";
+        if self.extensions.load(name, tenant, "long") == false {
+            panic!("Failed to load long() extension.");
         }
     }
 

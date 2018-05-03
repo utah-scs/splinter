@@ -350,7 +350,7 @@ where
         if self.responses_sent >= every {
             self.measurement_stop = cycles::rdtsc();
 
-            info!(
+            debug!(
                 "Dispatcher {}: {:.0} K/packets/s",
                 self.id,
                 (self.responses_sent as f64 / 1e3)
