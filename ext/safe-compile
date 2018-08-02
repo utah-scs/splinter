@@ -1,0 +1,71 @@
+#!/bin/bash
+
+#set -x
+
+crate_name="$1"
+
+if [[ "$crate_name" == "" ]]; then
+    echo "Usage: $0 <ext_crate_name>"
+    exit -1
+fi
+
+cd "$crate_name"
+
+target=debug
+
+src="src/lib.rs"
+outdir="target/$target/deps"
+out="$outdir/lib${crate_name}.so"
+
+echo "Compiling $src for $target target into $out"
+
+# --- Safety Checks ---
+
+# Ensure no extern crates are used aside of those re-exported through
+# sandstorm's public interface.
+grep -v '^extern crate sandstorm;$' < "$src" | grep 'extern crate' > /dev/null
+result="$?"
+if [[ "$result" == "0" ]]; then
+    echo "ERROR: No extern crates allowed aside from extern crate sandstorm."
+    exit -1
+fi
+
+# Unfortunately, std is implicit still, though. So we need to be sure that it is
+# disabled.
+grep '^#!\[no_std\]$' < "$src" > /dev/null
+result="$?"
+if [[ "$result" != "0" ]]; then
+    echo "ERROR: All extensions must include #![no_std];" \
+         "extensions must only use modules exposed through the sandstorm crate."
+    exit -1
+fi
+
+# Enforce a specific list of features to ensure extensions don't turn on weird
+# Rust features.
+grep -v '#!\[feature(generators)\]' < "$src" | \
+    grep -v '#!\[feature(generator_trait)\]' | \
+    grep -v '#!\[feature(try_from)\]' | \
+    grep -v '#!\[no_std\]' | \
+    grep '#!' > /dev/null
+result="$?"
+if [[ "$result" == "0" ]]; then
+    echo "ERROR: #! isn't allowed except for whitelisted features."
+    exit -1
+fi
+
+# --- Compile (no unsafe is enforced here via a rustc flag) ---
+
+rustc \
+  --crate-name "$crate_name" \
+  "$src" \
+  --crate-type dylib \
+  --emit=link \
+  -Funsafe-code \
+  --out-dir "$outdir" \
+  -L ../../sandstorm/target/$target \
+  -L ../../sandstorm/target/$target/deps
+  #-l../../sandstorm/target/$target/libsandstorm.rlib \
+
+if [[ "$?" == "0" ]]; then
+    openssl dgst -sha256 -hmac "secret" $out
+fi

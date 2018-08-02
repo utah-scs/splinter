@@ -16,6 +16,7 @@
 use std::fmt::Debug;
 
 use super::db::DB;
+
 use super::buf::{ReadBuf, WriteBuf};
 
 pub struct NullDB {}

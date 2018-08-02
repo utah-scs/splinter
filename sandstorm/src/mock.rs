@@ -18,7 +18,8 @@ use std::fmt::Debug;
 use super::db::DB;
 use super::buf::{ReadBuf, WriteBuf};
 
-use bytes::{Bytes, BytesMut};
+extern crate bytes;
+use self::bytes::{Bytes, BytesMut};
 
 use std::cell::RefCell;
 

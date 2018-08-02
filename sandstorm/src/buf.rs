@@ -13,7 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use bytes::{BigEndian, BufMut, Bytes, BytesMut, LittleEndian};
+extern crate bytes;
+use self::bytes::{BufMut, Bytes, BytesMut};
 
 /// This type represents a read-only buffer of bytes that can be received from
 /// the database. This type is primarily used to read objects from the database.
@@ -177,9 +178,9 @@ impl WriteBuf {
     /// space left inside the `WriteBuf` to perform the write.
     pub fn write_u16(&mut self, data: u16, le: bool) {
         match le {
-            true => { self.inner.put_u16::<LittleEndian>(data); }
+            true => { self.inner.put_u16_le(data); }
 
-            false => { self.inner.put_u16::<BigEndian>(data); }
+            false => { self.inner.put_u16_be(data); }
         }
     }
 
@@ -197,9 +198,9 @@ impl WriteBuf {
     /// space left inside the `WriteBuf` to perform the write.
     pub fn write_u32(&mut self, data: u32, le: bool) {
         match le {
-            true => { self.inner.put_u32::<LittleEndian>(data); }
+            true => { self.inner.put_u32_le(data); }
 
-            false => { self.inner.put_u32::<BigEndian>(data); }
+            false => { self.inner.put_u32_be(data); }
         }
     }
 
@@ -217,9 +218,9 @@ impl WriteBuf {
     /// space left inside the `WriteBuf` to perform the write.
     pub fn write_u64(&mut self, data: u64, le: bool) {
         match le {
-            true => { self.inner.put_u64::<LittleEndian>(data); }
+            true => { self.inner.put_u64_le(data); }
 
-            false => { self.inner.put_u64::<BigEndian>(data); }
+            false => { self.inner.put_u64_be(data); }
         }
     }
 

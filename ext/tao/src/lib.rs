@@ -1,20 +1,23 @@
-#![crate_type = "dylib"]
-#![feature(no_unsafe)]
-#![feature(generators, generator_trait)]
+#![feature(generators)]
+#![feature(generator_trait)]
 #![feature(try_from)]
 
+#![no_std]
 
 extern crate sandstorm;
-extern crate byteorder;
 
 use sandstorm::buf::{WriteBuf};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use sandstorm::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use sandstorm::db::DB;
-use std::result::Result;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::ops::Generator;
-use std::rc::Rc;
-use std::convert::From;
+
+use sandstorm::vec::*;
+use sandstorm::result::Result;
+use sandstorm::time::{SystemTime, UNIX_EPOCH};
+use sandstorm::Generator;
+use sandstorm::rc::Rc;
+use sandstorm::convert::From;
+use sandstorm::boxed::Box;
+use sandstorm::size_of;
 
 type Id = u64;
 type ObjectType = u16;
@@ -93,7 +96,7 @@ fn dispatch(db: Rc<DB>) -> u64 {
 /// * `db` - a connection to the database.
 /// * `otype` - the type of the object.
 /// * `object` - the bytes representing the objects value.
-fn object_response_handler(db: Rc<DB>, otype: &[u8], object: &[u8]){
+fn object_response_handler(db: Rc<DB>, _otype: &[u8], object: &[u8]){
     // db.resp(otype);
     db.resp(object);
 }
@@ -104,7 +107,7 @@ fn object_response_handler(db: Rc<DB>, otype: &[u8], object: &[u8]){
 /// * `db` - a connection to the database.
 /// * `assoc` - the association which needs to be written into the response to the client.
 fn assoc_response_handler(db: Rc<DB>, assoc: Association){
-    let mut assoc_serialized: Vec<u8> = std::vec::Vec::with_capacity(Association::size());
+    let mut assoc_serialized: Vec<u8> = Vec::with_capacity(Association::size());
     assoc_serialized.write_u64::<LittleEndian>(assoc.id).unwrap();
     assoc_serialized.write_u64::<LittleEndian>(assoc.time).unwrap();
 
@@ -385,7 +388,7 @@ impl TAO {
             time: self.current_time()
         };
 
-        let mut assoc_key: Vec<u8> = std::vec::Vec::with_capacity(id1.len() + association_type.len() + id2.len());
+        let mut assoc_key: Vec<u8> = Vec::with_capacity(id1.len() + association_type.len() + id2.len());
         assoc_key.extend_from_slice(id1);
         assoc_key.extend_from_slice(association_type);
         assoc_key.extend_from_slice(id2);
@@ -402,7 +405,7 @@ impl TAO {
             // Add the association to the list. (id1, atype) -> (id2)
             // To do this, assume the list exists. if it doesn't exist, add our entry and add the list
             // to the db.
-            let mut list_key: Vec<u8> = std::vec::Vec::with_capacity(id1.len() + association_type.len() + id2.len());
+            let mut list_key: Vec<u8> = Vec::with_capacity(id1.len() + association_type.len() + id2.len());
             list_key.extend_from_slice(id1);
             list_key.extend_from_slice(association_type);
 
@@ -446,8 +449,7 @@ impl TAO {
             id: convert_from_slice(id2),
             time: 0 //This doesn't matter because we will find the assoc via the id.
         };
-
-        let mut list_key: Vec<u8> = std::vec::Vec::with_capacity(id1.len() + association_type.len() + id2.len());
+        let mut list_key: Vec<u8> = Vec::with_capacity(id1.len() + association_type.len() + id2.len());
         list_key.extend_from_slice(id1);
         list_key.extend_from_slice(association_type);
 
@@ -474,7 +476,7 @@ impl TAO {
 
         if self.client.put(list_container){
             // Delete the association
-            let mut assoc_key: Vec<u8> = std::vec::Vec::with_capacity(id1.len() + association_type.len() + id2.len());
+            let mut assoc_key: Vec<u8> = Vec::with_capacity(id1.len() + association_type.len() + id2.len());
             assoc_key.extend_from_slice(id1);
             assoc_key.extend_from_slice(association_type);
             assoc_key.extend_from_slice(id2);
@@ -492,8 +494,8 @@ impl TAO {
     /// * `id1` - the id of the first object in this Association.
     /// * `association_type` - the type of this association.
     /// * `id2` - the id of the second object in this Association.
-    pub fn association_get(&self, id1: &[u8], association_type: &[u8], id2: &[u8], assoc_response_handler: AssocResponseHandler) -> bool {
-        let mut assoc_key: Vec<u8> = std::vec::Vec::with_capacity(id1.len() + association_type.len() + id2.len());
+    pub fn association_get(&self, id1: &[u8], association_type: &[u8], id2: &[u8], _assoc_response_handler: AssocResponseHandler) -> bool {
+        let mut assoc_key: Vec<u8> = Vec::with_capacity(id1.len() + association_type.len() + id2.len());
         assoc_key.extend_from_slice(id1);
         assoc_key.extend_from_slice(association_type);
         assoc_key.extend_from_slice(id2);
@@ -507,13 +509,13 @@ impl TAO {
                 let list = a_list.read();
 
                 // Get the number of assocs in the list.
-                let s = std::mem::size_of::<Association>();
+                let s = size_of::<Association>();
                 let n = list.len() / s;
 
                 // Lookup every assoc and write to the response packet.
                 for i in 0..n {
                     let l = i * s;
-                    let r = l + std::mem::size_of::<Id>();
+                    let r = l + size_of::<Id>();
                     let id = &list[l..r];
 
                     assoc_key[len..(len + id2.len())].copy_from_slice(id);
@@ -541,7 +543,7 @@ impl TAO {
     // Returns a simple unique integer.
     fn allocate_unique_id(&mut self) -> Vec<u8> {
         self.next_id += 1;
-        let mut id = vec![];
+        let mut id = Vec::new();
         id.write_u64::<LittleEndian>(self.next_id).unwrap();
         return id;
     }
@@ -565,7 +567,7 @@ struct ObjectHeader {
 impl ObjectHeader {
     /// Returns the space in memory required to serialize this struct.
     fn size() -> usize {
-        let otype_size = std::mem::size_of::<ObjectType>();
+        let otype_size = size_of::<ObjectType>();
         otype_size
     }
 
@@ -573,7 +575,7 @@ impl ObjectHeader {
         bytes.write_u16(self.otype, true)
     }
 
-    fn deserialize(mut bytes: &[u8]) -> Result<ObjectHeader, std::io::Error> {
+    fn deserialize(mut bytes: &[u8]) -> Result<ObjectHeader, sandstorm::io::Error> {
         let obj_type = match bytes.read_u16::<LittleEndian>() {
             Ok(v) => v,
             Err(e) => return Err(e),
@@ -597,8 +599,8 @@ impl PartialEq for Association {
 impl Association {
     /// Returns the space in memory required to serialize this struct.
     fn size() -> usize {
-        let id_size = std::mem::size_of::<Id>();
-        let time_size = std::mem::size_of::<Time>();
+        let id_size = size_of::<Id>();
+        let time_size = size_of::<Time>();
         id_size + time_size
     }
 
@@ -607,7 +609,7 @@ impl Association {
         bytes.write_u64(self.time, true);
     }
 
-    fn deserialize(mut bytes: &[u8]) -> Result<Association, std::io::Error> {
+    fn deserialize(mut bytes: &[u8]) -> Result<Association, sandstorm::io::Error> {
         Ok(Association {
             id: bytes.read_u64::<LittleEndian>().unwrap(),
             time: bytes.read_u64::<LittleEndian>().unwrap()
@@ -648,7 +650,7 @@ impl PartialEq for AssociationList {
 }
 impl AssociationList {
     fn new() -> AssociationList {
-        let my_vector: Vec<Association> = std::vec::Vec::with_capacity(1); //This is not allowed...
+        let my_vector: Vec<Association> = Vec::with_capacity(1); //This is not allowed...
         AssociationList {
             list: my_vector
         }
@@ -660,7 +662,7 @@ impl AssociationList {
 
     /// Returns the space in memory required to serialize this struct.
     fn size(&self) -> usize {
-        // (self.len() as usize) * std::mem::size_of::<Association>()
+        // (self.len() as usize) * size_of::<Association>()
         (self.len() as usize) * Association::size()
     }
 
@@ -694,10 +696,10 @@ impl AssociationList {
     /// # Costs
     /// Memory: O(n) -> Allocates structure to return.
     /// Time: O(n) where n is the length of the list.
-    fn deserialize(bytes: &[u8]) -> Result<AssociationList, std::io::Error> {
+    fn deserialize(bytes: &[u8]) -> Result<AssociationList, sandstorm::io::Error> {
         let capacity = bytes.len()/Association::size();
 
-        let mut list: Vec<Association> = std::vec::Vec::with_capacity(capacity);
+        let mut list: Vec<Association> = Vec::with_capacity(capacity);
 
         let mut start: usize = 0;
         while start < bytes.len() {
@@ -774,7 +776,6 @@ impl AssociationList {
     }
 }
 
-/********************************** TESTING **************************************/
 
 #[cfg(test)]
 mod tests {
@@ -800,7 +801,7 @@ mod tests {
 
     #[test]
     fn ser_dser_list(){
-        let mut list: Vec<Association> = std::vec::Vec::with_capacity(1);
+        let mut list: Vec<Association> = Vec::with_capacity(1);
         for i in 0..50000 {
             list.push(Association {
                 id: i,

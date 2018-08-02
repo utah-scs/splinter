@@ -5,3 +5,4 @@ authors = ["Ryan Stutsman <stutsman@cs.utah.edu>"]
 
 [dependencies]
 bytes   = "0.4"
+byteorder = "1"
