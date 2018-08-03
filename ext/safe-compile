@@ -3,15 +3,20 @@
 #set -x
 
 crate_name="$1"
+target="$2"
 
 if [[ "$crate_name" == "" ]]; then
-    echo "Usage: $0 <ext_crate_name>"
+    echo "Usage: $0 <ext_crate_name> [target]"
     exit -1
+fi
+
+if [[ "$target" == "" ]]; then
+    echo "No target given; assuming release."
+    target="release"
 fi
 
 cd "$crate_name"
 
-target=debug
 
 src="src/lib.rs"
 outdir="target/$target/deps"
@@ -45,6 +50,7 @@ fi
 grep -v '#!\[feature(generators)\]' < "$src" | \
     grep -v '#!\[feature(generator_trait)\]' | \
     grep -v '#!\[feature(try_from)\]' | \
+    grep -v '#!\[feature(rustc_private)\]' | \
     grep -v '#!\[no_std\]' | \
     grep '#!' > /dev/null
 result="$?"
