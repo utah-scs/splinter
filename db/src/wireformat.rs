@@ -58,8 +58,11 @@ pub enum OpCode {
     /// This operation invokes a procedure inside the database at runtime.
     SandstormInvokeRpc = 0x03,
 
+    /// This operation installs a procedure into the database at runtime.
+    SandstormInstallRpc = 0x04,
+
     /// Any value beyond this represents an invalid rpc.
-    InvalidOperation = 0x04,
+    InvalidOperation = 0x05,
 }
 
 /// This enum represents the status of a completed RPC. A status of 'StatusOk'
@@ -565,6 +568,115 @@ impl EndOffset for InvokeResponse {
 
     fn size() -> usize {
         size_of::<InvokeResponse>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This type represents the header for an install() RPC request.
+#[repr(C, packed)]
+pub struct InstallRequest {
+    /// Generic RPC header identifying the service, opcode, and tenant.
+    pub common_header: RpcRequestHeader,
+
+    /// Length of the name in bytes of the extension being installed. The payload of the RPC should
+    /// start with the name of the extension.
+    pub name_length: u32,
+
+    /// Length of the extension in bytes. The extension should follow the name on the RPC's
+    /// payload.
+    pub extn_length: u32,
+}
+
+// Implementation of methods on InstallRequest.
+impl InstallRequest {
+    /// Returns a header for the install() RPC request. The header is of type `InstallRequest`.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant`:      Tenant identifier.
+    /// * `name_length`: Length of the name of the extension in bytes. The payload of the RPC
+    ///                  should start with the name of the extension.
+    /// * `extn_length`: Length of the extension in bytes. The extension should follow the name on
+    ///                  the RPC's payload.
+    /// * `req_stamp`:   RPC identifier.
+    pub fn new(tenant: u32, name_length: u32, extn_length: u32, req_stamp: u64) -> InstallRequest {
+        InstallRequest {
+            common_header: RpcRequestHeader::new(
+                Service::MasterService,
+                OpCode::SandstormInstallRpc,
+                tenant,
+                req_stamp,
+            ),
+            name_length: name_length,
+            extn_length: extn_length,
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for InstallRequest. Refer to
+// GetRequest's implementation of this trait to understand what the methods
+// and types mean.
+impl EndOffset for InstallRequest {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<InstallRequest>()
+    }
+
+    fn size() -> usize {
+        size_of::<InstallRequest>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This type represents the response header for an install() RPC request.
+#[repr(C, packed)]
+pub struct InstallResponse {
+    /// A generic response header with the status of the RPC (indicating whether it
+    /// succeeded or failed).
+    pub common_header: RpcResponseHeader,
+}
+
+// Implementation of methods on InstallResponse.
+impl InstallResponse {
+    /// Returns a header for the install() RPC request.
+    ///
+    /// # Arguments
+    ///
+    /// * `req_stamp`: RPC identifier.
+    pub fn new(req_stamp: u64) -> InstallResponse {
+        InstallResponse {
+            common_header: RpcResponseHeader::new(req_stamp),
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for InstallResponse. Refer to
+// GetRequest's implementation of this trait to understand what the methods
+// and types mean.
+impl EndOffset for InstallResponse {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<InstallResponse>()
+    }
+
+    fn size() -> usize {
+        size_of::<InstallResponse>()
     }
 
     fn payload_size(&self, hint: usize) -> usize {

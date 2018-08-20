@@ -15,7 +15,7 @@
 
 use std::mem::size_of;
 
-use bytes::{BufMut, Bytes, BytesMut, LittleEndian};
+use bytes::{BufMut, Bytes, BytesMut};
 
 /// This type represents the memory allocator in Sandstorm. The allocator
 /// allocates and initializes objects that can then be inserted into a
@@ -156,9 +156,9 @@ impl Allocator {
         let mut object = BytesMut::with_capacity(size);
 
         // Write metadata into the object.
-        object.put_u32::<LittleEndian>(tenant);
-        object.put_u64::<LittleEndian>(table);
-        object.put_u16::<LittleEndian>(key_len);
+        object.put_u32_le(tenant);
+        object.put_u64_le(table);
+        object.put_u16_le(key_len);
 
         return Some(object);
     }
