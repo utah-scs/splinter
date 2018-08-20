@@ -177,6 +177,9 @@ def plotAllGraphs():
         dists = plotCDFAndGetDists(fileName)
         [medianAnd999Dists.append(dist) for dist in dists]
 
+    # Print out the median and tail context switch times.
+    print medianAnd999Dists
+
     # Plot all the median and and 99.9th context switch times.
     plotMedianAnd999(medianAnd999Dists)
 

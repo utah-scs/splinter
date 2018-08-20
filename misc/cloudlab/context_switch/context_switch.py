@@ -24,11 +24,13 @@ import geni.aggregate.cloudlab as cloudlab
 # The possible set of base disk-images the machine can be booted with.
 # The second field of every tupule is what is displayed on the cloudlab
 # dashboard.
-images = [("UBUNTU16-64-STD", "Ubuntu 16.04 (64-bit)")]
+images = [("UBUNTU16-64-STD", "Ubuntu 16.04 (64-bit), KPTI"),
+          ("UBUNTU16-64-STD:33", "Ubuntu 16.04 (64-bit), Pre KPTI")]
 
 # The possible set of node-types that can be used for the experiment.
 nodes = [ ("r320", "r320 (Xeon E5 2450, Sandy Bridge)"),
         ("c6220", "c6220 (Xeon E5 2650v2, Ivy Bridge)"),
+        ("c6420", "c6420 (Xeon Gold 6142, Skylake)"),
         ("d430", "d430 (Xeon E5 2630v3, Haswell)"),
         ("m510", "m510 (Xeon D-1548, Broadwell)")]
 

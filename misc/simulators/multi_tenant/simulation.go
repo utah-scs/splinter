@@ -186,14 +186,16 @@ func simulate(
 
 func main() {
     // The execution time of an extension inside the key-value service.
-    processing_ns := []int{ 2000, 16000, 64000 }
+    processing_ns := []int{ 1000, 2000, 16000, 64000 }
 
     // The overhead of switching between extensions/procedures.
     ctxt_switch_ns := []int { 0,    /* No context switch overhead. What we can
                                        theoretically do with language level
                                        isolation. */
                               1400, /* Process context switch overhead as
-                                       measured on CloudLab machines. */
+                                       measured on CloudLab machines before KPTI. */
+                              2160, /* Process context switch overhead as
+                                       measured on CloudLab machines after KPTI. */
                             }
 
     // The number of cores available to the simulated key-value service.
