@@ -30,6 +30,23 @@ colors = {
 def printColor(color, string):
     print colors[color] + string + colors["end"]
 
+"""This function fixes dependencies inside the db and ext/test crates.
+"""
+def setupCargo():
+    printColor("bold", "=============== Fixing Deps ==========================")
+    fix = "cargo update -p spin:0.4.9 --precise 0.4.7; " + \
+          "cargo update -p serde:1.0.71 --precise 1.0.37; " + \
+          "cargo update -p serde_derive:1.0.71 --precise 1.0.37; " + \
+          "cargo update -p regex:1.0.1 --precise 0.2.11; "
+
+    # Fix dependencies inside db.
+    cmd = "cd db; " + fix + "cd ../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/test.
+    cmd = "cd ext/test; " + fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
 """This function first compiles DPDK using Netbricks scripts on CloudLab's d430.
    It then binds an active 10 GigE NIC to the compiled igb_uio driver.
 """
@@ -96,5 +113,8 @@ if __name__ == "__main__":
 
     # Next, setup DPDK.
     setupDpdk()
+
+    # Finally, fix dependencies.
+    setupCargo()
 
     sys.exit(0)

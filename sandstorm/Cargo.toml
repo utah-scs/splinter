@@ -4,5 +4,5 @@ version = "0.1.0"
 authors = ["Ryan Stutsman <stutsman@cs.utah.edu>"]
 
 [dependencies]
-bytes   = "0.4"
+bytes   = "0.4.7"
 byteorder = "1"
