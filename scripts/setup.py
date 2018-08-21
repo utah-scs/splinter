@@ -115,6 +115,6 @@ if __name__ == "__main__":
     setupDpdk()
 
     # Finally, fix dependencies.
-    setupCargo()
+    # setupCargo()
 
     sys.exit(0)
