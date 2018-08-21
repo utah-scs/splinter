@@ -34,10 +34,11 @@ def printColor(color, string):
 """
 def setupCargo():
     printColor("bold", "=============== Fixing Deps ==========================")
-    fix = "cargo update -p spin:0.4.9 --precise 0.4.7; " + \
-          "cargo update -p serde:1.0.71 --precise 1.0.37; " + \
-          "cargo update -p serde_derive:1.0.71 --precise 1.0.37; " + \
-          "cargo update -p regex:1.0.1 --precise 0.2.11; "
+    fix = "cargo generate-lockfile; " + \
+          "cargo update -p spin:0.4.9 --precise 0.4.7; " + \
+          "cargo update -p serde:1.0.72 --precise 1.0.37; " + \
+          "cargo update -p serde_derive:1.0.72 --precise 1.0.37; " + \
+          "cargo update -p env_logger:0.5.12 --precise 0.5.3; "
 
     # Fix dependencies inside db.
     cmd = "cd db; " + fix + "cd ../"
@@ -115,6 +116,6 @@ if __name__ == "__main__":
     setupDpdk()
 
     # Finally, fix dependencies.
-    # setupCargo()
+    setupCargo()
 
     sys.exit(0)
