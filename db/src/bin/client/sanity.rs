@@ -23,14 +23,18 @@ mod dispatch;
 mod setup;
 
 use std::fmt::Display;
-use std::mem::transmute;
+use std::mem::{size_of, transmute};
 use std::sync::Arc;
+use std::fs::File;
+use std::net::TcpStream;
+use std::io::{Read, Write};
 
 use db::config;
 use db::e2d2::allocators::*;
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
 use db::log::*;
+use db::wireformat::InstallRequest;
 
 /// Send side logic for a simple client that issues put() and get() requests.
 struct SanitySend {
@@ -48,6 +52,9 @@ struct SanitySend {
     // If true, native get() and put() requests are sent out. If false, invoke based requests are
     // sent out.
     native: bool,
+
+    // Server network endpoint listening for install() RPCs.
+    install_addr: String,
 }
 
 // Implementation of methods on SanitySend.
@@ -68,6 +75,7 @@ impl SanitySend {
             puts: 1 * 1000,
             gets: 1,
             native: !config.use_invoke,
+            install_addr: config.install_addr.clone(),
         }
     }
 }
@@ -78,6 +86,45 @@ impl Executable for SanitySend {
     fn execute(&mut self) {
         // Throttle. Sleep for 1 micro-second before issuing a request.
         std::thread::sleep(std::time::Duration::from_micros(1000));
+
+        // If using invokes, then first install a get and put extension.
+        let install: bool = !self.native && (self.puts == 0) && (self.gets == 0);
+
+        if install {
+            // First, open the get() extension and read it into a buffer.
+            let mut buf: Vec<u8> = Vec::new();
+            let mut get = File::open("../ext/get/target/release/libget.so")
+                .expect("Failed to open .so for install.");
+            let _ = get.read_to_end(&mut buf);
+
+            // Next, construct the RPC (header and payload).
+            let mut hdr = InstallRequest::new(100, 4, buf.len() as u32, 0);
+            let mut req: Vec<u8> = unsafe {
+                Vec::from_raw_parts(
+                    (&mut hdr as *mut InstallRequest) as *mut u8,
+                    size_of::<InstallRequest>(),
+                    size_of::<InstallRequest>(),
+                )
+            };
+            req.extend_from_slice("iget".as_bytes());
+            req.append(&mut buf);
+
+            // Send the RPC to the server.
+            let mut stream = TcpStream::connect(self.install_addr.clone())
+                .expect("Failed to connect to server for install.");
+            stream
+                .write_all(&req)
+                .expect("Failed to send install to server.");
+            stream
+                .flush()
+                .expect("Failed to flush install RPC on server connection.");
+
+            // Wait for a response from the server.
+            let mut res: Vec<u8> = Vec::new();
+            stream
+                .read_to_end(&mut res)
+                .expect("Failed to read install response from server.");
+        }
 
         // If there are pending puts, issue one and return.
         if self.puts > 0 {
@@ -114,10 +161,10 @@ impl Executable for SanitySend {
             } else {
                 let mut payload = Vec::new();
                 let table: [u8; 8] = unsafe { transmute(100u64.to_le()) };
-                payload.extend_from_slice("get".as_bytes()); // Name
+                payload.extend_from_slice("iget".as_bytes()); // Name
                 payload.extend_from_slice(&table); // Table Id
                 payload.extend_from_slice(&temp); // Key
-                self.sender.send_invoke(100, 3, &payload, self.gets);
+                self.sender.send_invoke(100, 4, &payload, self.gets);
             }
 
             self.gets -= 1;

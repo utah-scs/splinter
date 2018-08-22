@@ -23,6 +23,9 @@ server_ip_address = "192.168.0.2"
 # The number of server UDP ports to send requests to.
 server_udp_ports = 8
 
+# Server network endpoint receiving install() RPCs.
+install_addr = "127.0.0.1:7700"
+
 ############################### GENERIC CLIENT CONFIG ##########################
 
 # If true, client's send invoke() based RPC requests to the server. If false,

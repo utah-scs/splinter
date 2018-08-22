@@ -133,6 +133,7 @@ pub struct ClientConfig {
     pub server_ip_address: String,
     pub server_udp_ports: u16,
     pub num_tenants: u32,
+    pub install_addr: String,
 
     pub use_invoke: bool,
 

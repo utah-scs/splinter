@@ -65,6 +65,7 @@ impl Installer {
 
                 // Return a response to the client.
                 stream.write_all(&res).unwrap();
+                stream.flush().unwrap();
             }
         }
     }
