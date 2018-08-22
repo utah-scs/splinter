@@ -15,8 +15,11 @@
 
 use std::rc::Rc;
 use std::sync::Arc;
-use std::mem::transmute;
+use std::mem::{size_of, transmute};
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::Write;
+use std::str::from_utf8;
 
 use super::ext::*;
 use super::wireformat::*;
@@ -150,9 +153,7 @@ impl Master {
         tenant.create_table(2); // Holds tao assocs.
 
         // First, fill up the object table.
-        let table = tenant
-            .get_table(1)
-            .expect("Failed to init test table.");
+        let table = tenant.get_table(1).expect("Failed to init test table.");
 
         // Objects are identified by an 8 byte key.
         let mut key = vec![0; 8];
@@ -172,9 +173,7 @@ impl Master {
         }
 
         // Next, fill up the assoc table.
-        let table = tenant
-            .get_table(2)
-            .expect("Failed to init test table.");
+        let table = tenant.get_table(2).expect("Failed to init test table.");
 
         // Assocs are identified by an 8 byte object 1 id, 2 byte association
         // type (always zero), and 8 byte object 2 id.
@@ -210,7 +209,6 @@ impl Master {
                 .expect("Failed to create test object.");
             table.put(obj.0, obj.1);
         }
-
 
         // Add the tenant.
         self.insert_tenant(tenant);
@@ -651,6 +649,84 @@ impl Master {
             req.deparse_header(PACKET_UDP_LEN as usize),
             res.deparse_header(PACKET_UDP_LEN as usize),
         ));
+    }
+
+    /// Handles the install() RPC request.
+    ///
+    /// If issued by a valid tenant, installs (loads) an extension into the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `buf`: The RPC buffer consisting of the request header followed by the payload.
+    ///
+    /// # Return
+    ///
+    /// A response buffer that can be sent back to the tenant.
+    pub fn install(&self, buf: Vec<u8>) -> Vec<u8> {
+        // First off, parse the RPC header.
+        let hdr = buf.as_ptr() as *const InstallRequest;
+
+        let tenant: TenantId;
+        let name_l: usize;
+        let extn_l: usize;
+        let tstamp: u64;
+
+        unsafe {
+            tenant = (*hdr).common_header.tenant as TenantId;
+            name_l = (*hdr).name_length as usize;
+            extn_l = (*hdr).extn_length as usize;
+            tstamp = (*hdr).common_header.stamp;
+        }
+
+        // Create a response for the tenant.
+        let mut res = InstallResponse::new(tstamp);
+        res.common_header.status = RpcStatus::StatusTenantDoesNotExist;
+
+        // Check if the tenant provided lengths match the actual request length.
+        if buf.len() != size_of::<InstallRequest>() + name_l + extn_l {
+            res.common_header.status = RpcStatus::StatusMalformedRequest;
+            unsafe {
+                return Vec::from_raw_parts(
+                    (&mut res as *mut InstallResponse) as *mut u8,
+                    size_of::<InstallResponse>(),
+                    size_of::<InstallResponse>(),
+                );
+            }
+        }
+
+        // Save the extension to a .so file. If all goes well, load it into the server.
+        if let Some(_) = self.get_tenant(tenant) {
+            res.common_header.status = RpcStatus::StatusInternalError;
+
+            let (_, payload) = buf.split_at(size_of::<InstallRequest>());
+            let (name, payload) = payload.split_at(name_l);
+            let (extn, _) = payload.split_at(extn_l);
+
+            if let Ok(name) = from_utf8(name) {
+                let mut path = String::new();
+                path.push_str("/tmp/");
+                path.push_str(name);
+                path.push_str(".so");
+
+                // No need for error handling here. If a file could not be created or
+                // written to, then it might be better to just crash the server and recover.
+                let mut file = File::create(path.clone()).unwrap();
+                let _ = file.write_all(extn).unwrap();
+                let _ = file.sync_all().unwrap();
+
+                if self.extensions.load(&path, tenant, name) {
+                    res.common_header.status = RpcStatus::StatusOk;
+                }
+            }
+        }
+
+        unsafe {
+            Vec::from_raw_parts(
+                (&mut res as *mut InstallResponse) as *mut u8,
+                size_of::<InstallResponse>(),
+                size_of::<InstallResponse>(),
+            )
+        }
     }
 }
 

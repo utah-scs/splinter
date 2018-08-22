@@ -19,7 +19,7 @@ extern crate db;
 extern crate spin;
 
 use std::sync::Arc;
-use std::thread::sleep;
+use std::thread::{sleep, spawn};
 use std::time::Duration;
 
 use db::log::*;
@@ -38,6 +38,7 @@ use db::dispatch::Dispatch;
 use db::master::Master;
 use db::sched::RoundRobin;
 use db::task::TaskPriority;
+use db::install::Installer;
 
 use spin::RwLock;
 
@@ -264,6 +265,18 @@ fn main() {
         },
     ));
 
+    // Create a thread to handle the install() RPC request.
+    let imaster = Arc::clone(&master);
+    let install = spawn(move || {
+        // Pin to the ghetto core.
+        let tid = unsafe { zcsi::get_thread_id() };
+        unsafe { zcsi::set_affinity(tid, GHETTO) };
+
+        // Run the installer.
+        let mut installer = Installer::new(imaster, String::from("127.0.0.1:7700"));
+        installer.execute();
+    });
+
     // Run the server, and give it some time to bootup.
     net_context.execute();
     sleep(Duration::from_millis(1000));
@@ -337,7 +350,7 @@ fn main() {
             net_context.execute_core(core);
 
             // Wait for the new scheduler to be created.
-            while temp.read().len() == 0 {};
+            while temp.read().len() == 0 {}
 
             // Enqueue all tasks and response packets from the previous scheduler.
             let new = temp.write()

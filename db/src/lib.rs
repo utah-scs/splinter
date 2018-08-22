@@ -49,3 +49,4 @@ pub mod wireformat;
 pub mod master;
 pub mod sched;
 pub mod task;
+pub mod install;
