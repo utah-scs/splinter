@@ -257,6 +257,9 @@ fn main() {
     let cmaster = Arc::clone(&master);
     let chandle = Arc::clone(&handles);
 
+    // Copy out the network address that install() RPCs will be received on.
+    let install_addr = config.install_addr.clone();
+
     // Setup the server pipeline.
     net_context.start_schedulers();
     net_context.add_pipeline_to_run(Arc::new(
@@ -273,7 +276,7 @@ fn main() {
         unsafe { zcsi::set_affinity(tid, GHETTO) };
 
         // Run the installer.
-        let mut installer = Installer::new(imaster, String::from("127.0.0.1:7700"));
+        let mut installer = Installer::new(imaster, install_addr);
         installer.execute();
     });
 

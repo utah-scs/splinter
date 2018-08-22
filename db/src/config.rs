@@ -94,6 +94,7 @@ pub struct ServerConfig {
     client_mac: String,
     pub client_ip: String,
     pub num_tenants: u32,
+    pub install_addr: String,
 }
 
 impl ServerConfig {
