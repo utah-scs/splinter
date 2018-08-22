@@ -96,7 +96,7 @@ def setupDevEnvt():
     printColor("bold", "=============== Setting up Dev Environment ===========")
     subprocess.check_call("cp ./misc/dev/vimrc-sample ~/.vimrc", shell=True)
     subprocess.check_call("cp -r ./misc/dev/vim ~/.vim", shell=True)
-    subprocess.check_call("vim +PlugClean +y +PlugInstall +qall", shell=True)
+    subprocess.check_call("vim +PlugClean +PlugInstall +qall", shell=True)
 
 """This function installs the nightly version of Rust.
 """
