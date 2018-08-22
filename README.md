@@ -11,9 +11,9 @@ following
    allocate two machines for the experiment.
 2. Once the experiment has begun, clone this repository on both the allocated
    machines.
-3. Next, run `scripts/setup.py` from the root directory on both machines. This
-   script installs Rust, DPDK, and binds a 10 GbE network card to DPDK. It saves
-   the PCI and MAC addresses of the bound NIC to a file called `nic_info`.
+3. Next, run `scripts/setup.py --full` from the root directory on both machines.
+   This script installs Rust, DPDK, and binds a 10 GbE network card to DPDK.
+   It saves the PCI and MAC addresses of the bound NIC to a file called `nic_info`.
 4. Create a toml file (`db/server.toml`) for the server on one machine, and a
    toml file (`db/client.toml`) for the client on the other machine. There are
    example files under `db`.

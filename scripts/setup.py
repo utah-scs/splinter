@@ -16,6 +16,7 @@
 
 import os
 import sys
+import argparse
 import subprocess
 
 """Dictionary of different colors that can be printed to the screen.
@@ -107,16 +108,34 @@ def installRust():
     return
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=\
+                                     'Setup a machine for Sandstorm')
+    parser.add_argument('--full', action='store_true',
+                        help='If true, performs a full setup on the box.')
+    parser.add_argument('--installRust', action='store_true',
+                        help='If true, installs rust.')
+    parser.add_argument('--setupDevEnv', action='store_true',
+                        help='If true, sets up development tools (vim etc).')
+    parser.add_argument('--installDpdk', action='store_true',
+                        help='If true, builds and installs DPDK.')
+    parser.add_argument('--fixCargoDep', action='store_true',
+                        help='If true, fixes all cargo dependencies.')
+    args = parser.parse_args()
+
     # First, install Rust.
-    installRust()
+    if args.full or args.installRust:
+        installRust()
 
     # Then, setup the development environment.
-    setupDevEnvt()
+    if args.full or args.setupDevEnv:
+        setupDevEnvt()
 
     # Next, setup DPDK.
-    setupDpdk()
+    if args.full or args.installDpdk:
+        setupDpdk()
 
     # Finally, fix dependencies.
-    setupCargo()
+    if args.full or args.fixCargoDep:
+        setupCargo()
 
     sys.exit(0)
