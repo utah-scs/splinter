@@ -23,11 +23,11 @@ mod dispatch;
 mod setup;
 
 use std::fmt::Display;
-use std::mem::{size_of, transmute};
-use std::sync::Arc;
 use std::fs::File;
-use std::net::TcpStream;
 use std::io::{Read, Write};
+use std::mem::{size_of, transmute};
+use std::net::{Shutdown, TcpStream};
+use std::sync::Arc;
 
 use db::config;
 use db::e2d2::allocators::*;
@@ -73,7 +73,7 @@ impl SanitySend {
         SanitySend {
             sender: dispatch::Sender::new(config, port, 1),
             puts: 1 * 1000,
-            gets: 1,
+            gets: 1 * 1000,
             native: !config.use_invoke,
             install_addr: config.install_addr.clone(),
         }
@@ -88,7 +88,7 @@ impl Executable for SanitySend {
         std::thread::sleep(std::time::Duration::from_micros(1000));
 
         // If using invokes, then first install a get and put extension.
-        let install: bool = !self.native && (self.puts == 0) && (self.gets == 0);
+        let install: bool = !self.native && (self.puts == 1000) && (self.gets == 1000);
 
         if install {
             // First, open the get() extension and read it into a buffer.
@@ -98,14 +98,10 @@ impl Executable for SanitySend {
             let _ = get.read_to_end(&mut buf);
 
             // Next, construct the RPC (header and payload).
-            let mut hdr = InstallRequest::new(100, 4, buf.len() as u32, 0);
-            let mut req: Vec<u8> = unsafe {
-                Vec::from_raw_parts(
-                    (&mut hdr as *mut InstallRequest) as *mut u8,
-                    size_of::<InstallRequest>(),
-                    size_of::<InstallRequest>(),
-                )
-            };
+            let hdr = InstallRequest::new(100, 4, buf.len() as u32, 0);
+            let hdr: [u8; size_of::<InstallRequest>()] = unsafe { transmute(hdr) };
+            let mut req: Vec<u8> = Vec::new();
+            req.extend_from_slice(&hdr);
             req.extend_from_slice("iget".as_bytes());
             req.append(&mut buf);
 
@@ -118,6 +114,9 @@ impl Executable for SanitySend {
             stream
                 .flush()
                 .expect("Failed to flush install RPC on server connection.");
+            stream
+                .shutdown(Shutdown::Write)
+                .expect("Failed to stop writes on stream.");
 
             // Wait for a response from the server.
             let mut res: Vec<u8> = Vec::new();
