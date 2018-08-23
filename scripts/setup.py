@@ -37,8 +37,8 @@ def setupCargo():
     printColor("bold", "=============== Fixing Deps ==========================")
     fix = "cargo generate-lockfile; " + \
           "cargo update -p spin:0.4.9 --precise 0.4.7; " + \
-          "cargo update -p serde:1.0.72 --precise 1.0.37; " + \
-          "cargo update -p serde_derive:1.0.72 --precise 1.0.37; " + \
+          "cargo update -p serde:1.0.73 --precise 1.0.37; " + \
+          "cargo update -p serde_derive:1.0.73 --precise 1.0.37; " + \
           "cargo update -p env_logger:0.5.12 --precise 0.5.3; "
 
     # Fix dependencies inside db.
@@ -111,15 +111,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=\
                                      'Setup a machine for Sandstorm')
     parser.add_argument('--full', action='store_true',
-                        help='If true, performs a full setup on the box.')
+                        help='Performs a full setup on the box.')
     parser.add_argument('--installRust', action='store_true',
-                        help='If true, installs rust.')
+                        help='Installs rust.')
     parser.add_argument('--setupDevEnv', action='store_true',
-                        help='If true, sets up development tools (vim etc).')
+                        help='Sets up development tools (vim etc).')
     parser.add_argument('--installDpdk', action='store_true',
-                        help='If true, builds and installs DPDK.')
+                        help='Builds and installs DPDK.')
     parser.add_argument('--fixCargoDep', action='store_true',
-                        help='If true, fixes all cargo dependencies.')
+                        help='Fixes all cargo dependencies.')
     args = parser.parse_args()
 
     # First, install Rust.
