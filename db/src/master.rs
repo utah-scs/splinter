@@ -13,28 +13,28 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::rc::Rc;
-use std::sync::Arc;
-use std::mem::{size_of, transmute};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
+use std::mem::{size_of, transmute};
+use std::rc::Rc;
 use std::str::from_utf8;
+use std::sync::Arc;
 
-use super::ext::*;
-use super::wireformat::*;
-use super::native::Native;
-use super::tenant::Tenant;
-use super::service::Service;
-use super::context::Context;
 use super::alloc::Allocator;
-use super::container::Container;
-use super::task::{Task, TaskPriority};
 use super::common::{TableId, TenantId, PACKET_UDP_LEN};
+use super::container::Container;
+use super::context::Context;
+use super::ext::*;
+use super::native::Native;
+use super::service::Service;
+use super::task::{Task, TaskPriority};
+use super::tenant::Tenant;
+use super::wireformat::*;
 
-use e2d2::interface::Packet;
-use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
+use e2d2::headers::UdpHeader;
+use e2d2::interface::Packet;
 
 use spin::RwLock;
 
@@ -685,13 +685,10 @@ impl Master {
         // Check if the tenant provided lengths match the actual request length.
         if buf.len() != size_of::<InstallRequest>() + name_l + extn_l {
             res.common_header.status = RpcStatus::StatusMalformedRequest;
-            unsafe {
-                return Vec::from_raw_parts(
-                    (&mut res as *mut InstallResponse) as *mut u8,
-                    size_of::<InstallResponse>(),
-                    size_of::<InstallResponse>(),
-                );
-            }
+            let res: [u8; size_of::<InstallResponse>()] = unsafe { transmute(res) };
+            let mut ret: Vec<u8> = Vec::new();
+            ret.extend_from_slice(&res);
+            return ret;
         }
 
         // Save the extension to a .so file. If all goes well, load it into the server.
@@ -720,13 +717,10 @@ impl Master {
             }
         }
 
-        unsafe {
-            Vec::from_raw_parts(
-                (&mut res as *mut InstallResponse) as *mut u8,
-                size_of::<InstallResponse>(),
-                size_of::<InstallResponse>(),
-            )
-        }
+        let res: [u8; size_of::<InstallResponse>()] = unsafe { transmute(res) };
+        let mut ret: Vec<u8> = Vec::new();
+        ret.extend_from_slice(&res);
+        return ret;
     }
 }
 

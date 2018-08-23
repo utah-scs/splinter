@@ -14,7 +14,7 @@
  */
 
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener};
 use std::sync::Arc;
 
 use super::master::Master;
@@ -66,6 +66,7 @@ impl Installer {
                 // Return a response to the client.
                 stream.write_all(&res).unwrap();
                 stream.flush().unwrap();
+                stream.shutdown(Shutdown::Both).unwrap();
             }
         }
     }
