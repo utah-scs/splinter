@@ -14,6 +14,7 @@
  */
 
 use std::mem;
+use std::slice;
 
 /// Indicates a type is safe for the database to cast between raw bytes and values. Only types
 /// endorsed by this trait will be accepted by the unpack and consume functions in this module.
@@ -132,6 +133,22 @@ pub fn unpack_four<'a, A, B, C, D>(args: &'a [u8]) -> Option<&'a (A, B, C, D)>
 		  D: Safe,
 {
     cast(args)
+}
+
+/// Creates a byte slice from a reference to a safe type without *any* intermediate copies.
+///
+/// # Arguments
+///
+/// * `arg`: The argument to be "packed up" into a byte slice.
+///
+/// # Return
+/// A byte slice corresponding to the passed in argument with the same alignment.
+pub fn pack<'a, A>(arg: &'a A) -> &'a [u8]
+    where A: Safe,
+{
+    let p = (arg as *const A) as *const u8;
+    let l = mem::size_of::<A>();
+    unsafe { slice::from_raw_parts(p, l) }
 }
 
 /// Creates a `&'a A` that treats the bytes in `args` as an `A` without copying them.
