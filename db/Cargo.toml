@@ -34,6 +34,10 @@ name = "long"
 path = "src/bin/client/long.rs"
 
 [[bin]]
+name = "aggregate"
+path = "src/bin/client/aggregate.rs"
+
+[[bin]]
 name = "ext_bench"
 path = "src/bin/ext_bench.rs"
 
