@@ -16,10 +16,9 @@
 #![feature(use_extern_macros)]
 
 extern crate db;
-extern crate spin;
 extern crate nix;
+extern crate spin;
 
-use nix::sys::signal;
 use std::sync::Arc;
 use std::thread::{sleep, spawn};
 use std::time::Duration;
@@ -43,6 +42,8 @@ use db::task::TaskPriority;
 use db::install::Installer;
 
 use spin::RwLock;
+
+use nix::sys::signal;
 
 /// Interval in milliseconds at which all schedulers in the system will be scanned for misbehaving
 /// tasks.
@@ -225,17 +226,23 @@ fn config_and_init_netbricks(config: &config::ServerConfig) -> NetbricksContext 
     }
 }
 
-extern fn handle_sigsegv(_:i32) {
-      //We can't do much as it's different stack all together; swapcontext() might help.
-      loop {
-      }
+/// Custom signal handler for stack overflows.
+extern "C" fn handle_sigsegv(_: i32) {
+    // We can't do much as it's different stack all together; swapcontext() might help.
+    // Enter into an infinite while loop so that the watchdog catches this thread.
+    loop {}
 }
 
 fn main() {
-    let sig_action = signal::SigAction::new(signal::SigHandler::Handler(handle_sigsegv),
+    // First off, install a signal handler to catch stack overflows. On catching a
+    // SIGSEGV, we allocate a new stack to the thread to prevent a segmentation fault
+    // caused by pushing the signal handler onto the overflowed stack (SA_ONSTACK).
+    let sig_action = signal::SigAction::new(
+        signal::SigHandler::Handler(handle_sigsegv),
         signal::SaFlags::SA_ONSTACK,
-        signal::SigSet::empty()
+        signal::SigSet::empty(),
     );
+
     unsafe {
         signal::sigaction(signal::SIGSEGV, &sig_action);
     }
