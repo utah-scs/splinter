@@ -17,7 +17,9 @@
 
 extern crate db;
 extern crate spin;
+extern crate nix;
 
+use nix::sys::signal;
 use std::sync::Arc;
 use std::thread::{sleep, spawn};
 use std::time::Duration;
@@ -223,7 +225,21 @@ fn config_and_init_netbricks(config: &config::ServerConfig) -> NetbricksContext 
     }
 }
 
+extern fn handle_sigsegv(_:i32) {
+      //We can't do much as it's different stack all together; swapcontext() might help.
+      loop {
+      }
+}
+
 fn main() {
+    let sig_action = signal::SigAction::new(signal::SigHandler::Handler(handle_sigsegv),
+        signal::SaFlags::SA_ONSTACK,
+        signal::SigSet::empty()
+    );
+    unsafe {
+        signal::sigaction(signal::SIGSEGV, &sig_action);
+    }
+
     // Basic setup and initialization.
     db::env_logger::init().expect("ERROR: failed to initialize logger!");
 
