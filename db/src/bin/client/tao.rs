@@ -162,7 +162,7 @@ struct YcsbSend {
 
     // If true, RPC requests corresponding to native get() and put() operations are sent out. If
     // false, invoke() based RPC requests are sent out.
-    native: bool,
+    _native: bool,
 
     // Payload for an invoke() based get operation. Required in order to avoid making intermediate
     // copies of the extension name, table id, and key.
@@ -229,7 +229,7 @@ impl YcsbSend {
             rate_inv: cycles::cycles_per_second() / config.req_rate as u64,
             start: cycles::rdtsc(),
             next: 0,
-            native: !config.use_invoke,
+            _native: !config.use_invoke,
             payload_get: RefCell::new(payload_get),
             payload_put: RefCell::new(payload_put),
         }

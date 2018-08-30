@@ -119,6 +119,7 @@ impl Sender {
     /// * `table`:  Id of the table from which the key is looked up.
     /// * `key`:    Byte string of key whose value is to be fetched. Limit 64 KB.
     /// * `id`:     RPC identifier.
+    #[allow(dead_code)]
     pub fn send_get(&self, tenant: u32, table: u64, key: &[u8], id: u64) {
         let request = rpc::create_get_rpc(
             &self.req_mac_header,
@@ -144,6 +145,7 @@ impl Sender {
     /// * `key`:    Byte string of key whose value is to be inserted. Limit 64 KB.
     /// * `val`:    Byte string of the value to be inserted.
     /// * `id`:     RPC identifier.
+    #[allow(dead_code)]
     pub fn send_put(&self, tenant: u32, table: u64, key: &[u8], val: &[u8], id: u64) {
         let request = rpc::create_put_rpc(
             &self.req_mac_header,

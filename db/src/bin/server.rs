@@ -244,7 +244,8 @@ fn main() {
     );
 
     unsafe {
-        signal::sigaction(signal::SIGSEGV, &sig_action);
+        let _ret = signal::sigaction(signal::SIGSEGV, &sig_action)
+            .expect("Failed to install custom handler for stack overflow.");
     }
 
     // Basic setup and initialization.
@@ -293,7 +294,7 @@ fn main() {
 
     // Create a thread to handle the install() RPC request.
     let imaster = Arc::clone(&master);
-    let install = spawn(move || {
+    let _install = spawn(move || {
         // Pin to the ghetto core.
         let tid = unsafe { zcsi::get_thread_id() };
         unsafe { zcsi::set_affinity(tid, GHETTO) };
@@ -390,4 +391,5 @@ fn main() {
 
     // Stop the server.
     // net_context.stop();
+    // _install.join();
 }

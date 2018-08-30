@@ -13,6 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#![feature(use_extern_macros)]
+
 extern crate db;
 extern crate rand;
 extern crate zipf;
@@ -280,7 +282,7 @@ impl Executable for AggregateRecv {
                     // If the response is for a native request, then first aggregate and then
                     // take a latency measurement (if required).
                     let p = packet.parse_header::<GetResponse>();
-                    let s = Self::aggregate(0, p.get_payload());
+                    let _s = Self::aggregate(0, p.get_payload());
                     if self.recvd & 0xf == 0 {
                         self.latencies
                             .push(cycles::rdtsc() - p.get_header().common_header.stamp);
