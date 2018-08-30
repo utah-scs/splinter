@@ -18,15 +18,17 @@ extern crate rand;
 extern crate zipf;
 
 mod dispatch;
+mod setup;
 
+use std::sync::Arc;
 use std::mem::{size_of, transmute};
 
 use db::config;
 use db::cycles;
 use db::log::*;
+use db::e2d2::scheduler::*;
 use db::e2d2::allocators::CacheAligned;
 use db::e2d2::interface::PortQueue;
-use db::e2d2::scheduler::Executable;
 use db::wireformat::{GetResponse, InvokeResponse};
 
 use rand::distributions::Sample;
@@ -304,4 +306,151 @@ impl Executable for AggregateRecv {
     }
 }
 
-fn main() {}
+/// Sets up AggregateSend by adding it to a Netbricks scheduler.
+///
+/// # Arguments
+///
+/// * `config`:    Network related configuration such as the MAC and IP address.
+/// * `ports`:     Network port on which packets will be sent.
+/// * `scheduler`: Netbricks scheduler to which AggregateSend will be added.
+fn setup_send<S>(
+    config: &config::ClientConfig,
+    ports: Vec<CacheAligned<PortQueue>>,
+    scheduler: &mut S,
+    _core: i32,
+) where
+    S: Scheduler + Sized,
+{
+    if ports.len() != 1 {
+        error!("Client should be configured with exactly 1 port!");
+        std::process::exit(1);
+    }
+
+    // Add the sender to a netbricks pipeline.
+    match scheduler.add_task(AggregateSend::new(
+        config,
+        ports[0].clone(),
+        config.num_reqs as u64,
+        config.server_udp_ports as u16,
+    )) {
+        Ok(_) => {
+            info!(
+                "Successfully added AggregateSend with tx queue {}.",
+                ports[0].txq()
+            );
+        }
+
+        Err(ref err) => {
+            error!("Error while adding to Netbricks pipeline {}", err);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Sets up AggregateRecv by adding it to a Netbricks scheduler.
+///
+/// # Arguments
+///
+/// * `ports`:     Network port on which packets will be sent.
+/// * `scheduler`: Netbricks scheduler to which AggregateRecv will be added.
+/// * `native`:    Boolean indicating whether responses are for native (true) or invoke (false)
+///                RPCs.
+fn setup_recv<S>(ports: Vec<CacheAligned<PortQueue>>, scheduler: &mut S, _core: i32, native: bool)
+where
+    S: Scheduler + Sized,
+{
+    if ports.len() != 1 {
+        error!("Client should be configured with exactly 1 port!");
+        std::process::exit(1);
+    }
+
+    // Add the receiver to a netbricks pipeline.
+    match scheduler.add_task(AggregateRecv::new(
+        ports[0].clone(),
+        32 * 1000 * 1000 as u64,
+        native,
+    )) {
+        Ok(_) => {
+            info!(
+                "Successfully added AggregateRecv with rx queue {}.",
+                ports[0].rxq()
+            );
+        }
+
+        Err(ref err) => {
+            error!("Error while adding to Netbricks pipeline {}", err);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn main() {
+    db::env_logger::init().expect("ERROR: failed to initialize logger!");
+
+    let config = config::ClientConfig::load();
+    info!("Starting up Sandstorm client with config {:?}", config);
+
+    // Based on the supplied client configuration, compute the amount of time it will take to send
+    // out `num_reqs` requests at a rate of `req_rate` requests per second.
+    let exec = config.num_reqs / config.req_rate;
+
+    // Setup Netbricks.
+    let mut net_context = setup::config_and_init_netbricks(&config);
+
+    // Setup the client pipeline.
+    net_context.start_schedulers();
+
+    // The core id's which will run the sender and receiver threads.
+    // XXX The following two arrays heavily depend on the set of cores
+    // configured in setup.rs
+    let senders = [0, 2, 4, 6];
+    let receive = [1, 3, 5, 7];
+    assert!((senders.len() == 4) && (receive.len() == 4));
+
+    // Required by AggregateRecv.
+    let native = config.use_invoke;
+
+    // Setup 4 senders and 4 receivers.
+    for i in 0..4 {
+        // First, retrieve a tx-rx queue pair from Netbricks
+        let port = net_context
+            .rx_queues
+            .get(&senders[i])
+            .expect("Failed to retrieve network port!")
+            .clone();
+
+        // Setup the receive side.
+        net_context
+            .add_pipeline_to_core(
+                receive[i],
+                Arc::new(
+                    move |_ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
+                        setup_recv(port.clone(), sched, core, native)
+                    },
+                ),
+            )
+            .expect("Failed to initialize receive side.");
+
+        // Setup the send side.
+        net_context
+            .add_pipeline_to_core(
+                senders[i],
+                Arc::new(
+                    move |ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
+                        setup_send(&config::ClientConfig::load(), ports, sched, core)
+                    },
+                ),
+            )
+            .expect("Failed to initialize send side.");
+    }
+
+    // Run the client.
+    net_context.execute();
+
+    // Sleep for an amount of time approximately equal to the estimated execution time, and then
+    // shutdown the client.
+    std::thread::sleep(std::time::Duration::from_secs(exec as u64 + 10));
+
+    // Stop the client.
+    net_context.stop();
+}
