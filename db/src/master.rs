@@ -249,6 +249,12 @@ impl Master {
         if self.extensions.load(name, tenant, "long") == false {
             panic!("Failed to load long() extension.");
         }
+
+        // Load the aggregate() extension.
+        let name = "../ext/aggregate/target/release/libaggregate.so";
+        if self.extensions.load(name, tenant, "aggregate") == false {
+            panic!("Failed to load aggregate() extension.");
+        }
     }
 
     /// Loads the get(), put(), and tao() extensions once, and shares them across multiple tenants.
