@@ -263,8 +263,8 @@ fn main() {
 
     // Create tenants with data and extensions for YCSB.
     for tenant in 1..(config.num_tenants + 1) {
-        // master.fill_test(tenant, 1, 1 * 1000 * 1000);
-        master.fill_tao(tenant, 500000);
+        master.fill_test(tenant, 1, 1 * 1000 * 1000);
+        // master.fill_tao(tenant, 500000);
         master.load_test(tenant);
     }
 

@@ -287,12 +287,14 @@ impl Executable for AggregateRecv {
                         self.latencies
                             .push(cycles::rdtsc() - p.get_header().common_header.stamp);
                     }
+                    p.free_packet();
                 } else {
                     let p = packet.parse_header::<InvokeResponse>();
                     if self.recvd & 0xf == 0 {
                         self.latencies
                             .push(cycles::rdtsc() - p.get_header().common_header.stamp);
                     }
+                    p.free_packet();
                 }
             }
         }

@@ -14,15 +14,15 @@
  */
 #![feature(generators)]
 #![feature(generator_trait)]
-#![no_std]
+#![nostd]
 
 extern crate sandstorm;
 
-use sandstorm::rc::Rc;
-use sandstorm::db::DB;
-use sandstorm::Generator;
 use sandstorm::boxed::Box;
+use sandstorm::db::DB;
 use sandstorm::pack::{consume, pack};
+use sandstorm::rc::Rc;
+use sandstorm::Generator;
 
 /// Status codes for the response to the tenant.
 const SUCCESSFUL: u8 = 0x01;
@@ -64,15 +64,17 @@ fn dispatch(db: Rc<DB>) {
 
     // Unwrap args, lookup the db, perform the aggregate.
     let arg: &[u8] = db.args();
-    let res = consume::<u64>(arg)
-        .and_then(|(t, k)| {
-            err = INVALIDKEY;
-            db.get(*t, k)
-        })
-        .and_then(|val| {
-            err = SUCCESSFUL;
-            Some(aggregate(0, val.read()))
-        });
+    let (table, key) = arg.split_at(8);
+    let table: u64 = 0 | table[0] as u64 | (table[1] as u64) << 8 | (table[2] as u64) << 16
+        | (table[3] as u64) << 24 | (table[4] as u64) << 32
+        | (table[5] as u64) << 40 | (table[6] as u64) << 48
+        | (table[7] as u64) << 56;
+
+    err = INVALIDKEY;
+    let res = db.get(table, key).and_then(|val| {
+        err = SUCCESSFUL;
+        Some(aggregate(0, val.read()))
+    });
 
     // Write out a response.
     db.resp(pack(&err));

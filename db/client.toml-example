@@ -41,7 +41,7 @@ num_tenants = 8
 tenant_skew = 0.1
 
 # The number of RPC requests that the client must generate.
-num_reqs = 20000000
+num_reqs = 64000000
 
 # The rate at which the client must issue RPC requests.
 req_rate = 500000
@@ -56,7 +56,7 @@ value_len = 100
 
 # The number of keys in the YCSB table on the server. Required to initialize the
 # Zipfian distribution from which the key for each request is sampled.
-n_keys = 10000000
+n_keys = 1000000
 
 # The percentage of operations that are puts/writes.
 put_pct = 5
