@@ -145,6 +145,13 @@ impl Master {
         self.insert_tenant(tenant);
     }
 
+    /// Populates the TAO dataset.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant_id`: Identifier of the tenant to be added. Any existing tenant with the same
+    ///                identifier will be overwritten.
+    /// * `num`:       The number of objects to be added to the data table.
     pub fn fill_tao(&self, tenant_id: TenantId, num: u32) {
         // Create a tenant containing two tables, one for objects, and one for
         // associations.
@@ -211,6 +218,73 @@ impl Master {
         }
 
         // Add the tenant.
+        self.insert_tenant(tenant);
+    }
+
+    /// Populates the aggregate dataset.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant_id`: Identifier of the tenant to be added. Any existing tenant with the same
+    ///                identifier will be overwritten.
+    /// * `table_id`:  Identifier of the table to be added to the tenant. This table will contain
+    ///                all the objects.
+    /// * `num`:       The number of objects to be added to the data table.
+    pub fn fill_aggregate(&self, tenant_id: TenantId, table_id: TableId, num: u32) {
+        // One table for the tenant. Both, objects and indirection lists will be
+        // stored in here.
+        let tenant = Tenant::new(tenant_id);
+        tenant.create_table(table_id);
+
+        let table = tenant
+            .get_table(table_id)
+            .expect("Failed to init test table.");
+
+        // The number of records per aggregation.
+        const N_AGG: u32 = 4;
+        // The length of each record's key.
+        const K_LEN: u32 = 30;
+        // The length of each record's value.
+        const V_LEN: u32 = 100;
+
+        // First, add in the indirection records. Keys are 8 bytes, and values are
+        // lists of 30 Byte keys.
+        for i in 1..(num + 1) {
+            let mut key = vec![0; 8];
+            let mut val = vec![];
+
+            let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+            &key[0..4].copy_from_slice(&temp);
+
+            for e in 0..N_AGG {
+                let mut k = vec![0; K_LEN as usize];
+                let t: [u8; 4] = unsafe { transmute((i*N_AGG + e).to_le()) };
+                &k[0..4].copy_from_slice(&t);
+
+                val.extend_from_slice(&k);
+            }
+
+            let obj = self.heap
+                .object(tenant_id, table_id, &key, &val)
+                .expect("Failed to create test object.");
+            table.put(obj.0, obj.1);
+        }
+
+        // Next, populate the actual records.
+        for i in 1..((num + 1) * N_AGG) {
+            let mut key = vec![0; K_LEN as usize];
+            let mut val = vec![0; V_LEN as usize];
+
+            let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+            &key[0..4].copy_from_slice(&temp);
+            &val[0..4].copy_from_slice(&temp);
+
+            let obj = self.heap
+                .object(tenant_id, table_id, &key, &val)
+                .expect("Failed to create test object.");
+            table.put(obj.0, obj.1);
+        }
+
         self.insert_tenant(tenant);
     }
 
