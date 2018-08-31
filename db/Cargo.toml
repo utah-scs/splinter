@@ -46,6 +46,7 @@ name = "table_bench"
 path = "src/bin/table_bench.rs"
 
 [dependencies]
+libc         = "0.2.43"
 nix          = "0.11.0"
 log          = "0.3"
 rand         = "0.4"
