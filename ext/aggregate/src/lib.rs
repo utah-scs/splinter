@@ -14,7 +14,7 @@
  */
 #![feature(generators)]
 #![feature(generator_trait)]
-#![nostd]
+#![no_std]
 
 extern crate sandstorm;
 
