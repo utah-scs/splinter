@@ -61,8 +61,11 @@ pub enum OpCode {
     /// This operation installs a procedure into the database at runtime.
     SandstormInstallRpc = 0x04,
 
+    /// This operation fetches multiple records in a single round trip.
+    SandstormMultiGetRpc = 0x05,
+
     /// Any value beyond this represents an invalid rpc.
-    InvalidOperation = 0x05,
+    InvalidOperation = 0x06,
 }
 
 /// This enum represents the status of a completed RPC. A status of 'StatusOk'
@@ -677,6 +680,125 @@ impl EndOffset for InstallResponse {
 
     fn size() -> usize {
         size_of::<InstallResponse>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This type represents the RPC header on a multiget() request.
+#[repr(C, packed)]
+pub struct MultiGetRequest {
+    /// Generic RPC header consisting of service, opcode, and tenant id.
+    pub common_header: RpcRequestHeader,
+
+    /// Table that should be looked up for the records.
+    pub table_id: u64,
+
+    /// The length of every key to be looked up. All keys to be looked up are assumed to be of
+    /// equal length.
+    pub key_len: u32,
+
+    /// The number of keys to be looked up at the database. Every key should be `key_len` bytes
+    /// long.
+    pub num_keys: u32,
+}
+
+// Implementation of methods on MultiGetRequest.
+impl MultiGetRequest {
+    /// Constructs an RPC header that can be added to the multiget() request. The header is of type
+    /// `MultiGetRequest`.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant`: Identifier of the tenant sending the request.
+    /// * `table`:  Identifier of the table to be looked up.
+    /// * `k_len`:  Length of every key to be looked up. All keys are assumed to be of equal
+    ///             length.
+    /// * `n_keys`: The number of keys to be looked up (each of length `k_len`).
+    /// * `stamp`:  Identifier of the RPC. Can be used as a timestamp.
+    pub fn new(tenant: u32, table: u64, k_len: u32, n_keys: u32, stamp: u64) -> MultiGetRequest {
+        MultiGetRequest {
+            common_header: RpcRequestHeader::new(
+                Service::MasterService,
+                OpCode::SandstormMultiGetRpc,
+                tenant,
+                stamp,
+            ),
+            table_id: table,
+            key_len: k_len,
+            num_keys: n_keys,
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for MultiGetRequest. Refer to
+// GetRequest's implementation of this trait to understand what the methods
+// and types mean.
+impl EndOffset for MultiGetRequest {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<MultiGetRequest>()
+    }
+
+    fn size() -> usize {
+        size_of::<MultiGetRequest>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This type represents the response header for a multiget() RPC request.
+#[repr(C, packed)]
+pub struct MultiGetResponse {
+    /// Generic response header consisting of RPC status and identifier.
+    pub common_header: RpcResponseHeader,
+
+    /// Number of records returned by the RPC.
+    pub num_records: u32,
+}
+
+// Implementation of methods on MultiGetResponse.
+impl MultiGetResponse {
+    /// Constructs a response header for the multiget() RPC. The header is of type
+    /// `MultiGetResponse`.
+    ///
+    /// # Arguments
+    ///
+    /// * `stamp`:     RPC identifier. Can be used to timestamp the RPC.
+    /// * `n_records`: Number of records being returned in the response.
+    pub fn new(stamp: u64, n_records: u32) -> MultiGetResponse {
+        MultiGetResponse {
+            common_header: RpcResponseHeader::new(stamp),
+            num_records: n_records,
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for MultiGetResponse. Refer to
+// GetRequest's implementation of this trait to understand what the methods
+// and types mean.
+impl EndOffset for MultiGetResponse {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<MultiGetResponse>()
+    }
+
+    fn size() -> usize {
+        size_of::<MultiGetResponse>()
     }
 
     fn payload_size(&self, hint: usize) -> usize {
