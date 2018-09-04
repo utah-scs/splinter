@@ -72,6 +72,7 @@ pub enum OpCode {
 /// means that the RPC completed successfully, and that the payload on the
 /// response can be safely read and interpreted.
 #[repr(u8)]
+#[derive(PartialEq, Clone)]
 pub enum RpcStatus {
     /// The RPC completed successfully. The response can be safely unpacked
     /// at the client.
