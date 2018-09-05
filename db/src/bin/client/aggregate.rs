@@ -22,17 +22,16 @@ extern crate zipf;
 mod dispatch;
 mod setup;
 
-use std::sync::Arc;
 use std::mem::{size_of, transmute};
+use std::sync::Arc;
 
 use db::config;
 use db::cycles;
-use db::log::*;
-use db::e2d2::scheduler::*;
 use db::e2d2::allocators::CacheAligned;
 use db::e2d2::interface::PortQueue;
+use db::e2d2::scheduler::*;
+use db::log::*;
 use db::wireformat::*;
-use db::rpc::*;
 
 use rand::distributions::Sample;
 use rand::{SeedableRng, XorShiftRng};
@@ -196,6 +195,10 @@ struct AggregateRecv {
     /// The network stack required to receives RPC response packets from a network port.
     receiver: dispatch::Receiver<CacheAligned<PortQueue>>,
 
+    /// Second receiver stack to receive multiget RPC response packets when operating in
+    /// native mode.
+    multi_rx: dispatch::Receiver<CacheAligned<PortQueue>>,
+
     /// Network stack that can actually send an RPC over the network. Required for the native case.
     sender: dispatch::Sender,
 
@@ -245,6 +248,7 @@ impl AggregateRecv {
     ) -> AggregateRecv {
         AggregateRecv {
             receiver: dispatch::Receiver::new(port),
+            multi_rx: dispatch::Receiver::new(send.clone()),
             sender: dispatch::Sender::new(config, send, dst_ports),
             native: native,
             responses: resps,
@@ -305,35 +309,37 @@ impl Executable for AggregateRecv {
         if let Some(mut resps) = self.receiver.recv_res() {
             while let Some(packet) = resps.pop() {
                 if self.native {
-                    let opcode = parse_rpc_opcode(&packet);
-                    if opcode == OpCode::SandstormMultiGetRpc {
-                        self.recvd += 1;
-
-                        let p = packet.parse_header::<MultiGetResponse>();
-                        let _s = Self::aggregate(0, p.get_payload());
-                        if self.recvd & 0xf == 0 {
-                            self.latencies
-                                .push(cycles::rdtsc() - p.get_header().common_header.stamp);
-                        }
-                        p.free_packet();
-                    } else if opcode == OpCode::SandstormGetRpc {
-                        let p = packet.parse_header::<GetResponse>();
-                        self.sender.send_multiget(
-                            p.get_header().common_header.tenant,
-                            1,
-                            30,
-                            4,
-                            p.get_payload(),
-                            p.get_header().common_header.stamp,
-                        );
-                        p.free_packet();
-                    } else {
-                        println!("Received response with unexpected opcode.");
-                    }
+                    let p = packet.parse_header::<GetResponse>();
+                    self.sender.send_multiget(
+                        p.get_header().common_header.tenant,
+                        1,
+                        30,
+                        4,
+                        p.get_payload(),
+                        p.get_header().common_header.stamp,
+                    );
+                    p.free_packet();
                 } else {
                     self.recvd += 1;
 
                     let p = packet.parse_header::<InvokeResponse>();
+                    if self.recvd & 0xf == 0 {
+                        self.latencies
+                            .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                    }
+                    p.free_packet();
+                }
+            }
+        }
+
+        // If running in native mode, then check for multiget() responses.
+        if self.native {
+            if let Some(mut resps) = self.multi_rx.recv_res() {
+                while let Some(packet) = resps.pop() {
+                    self.recvd += 1;
+
+                    let p = packet.parse_header::<MultiGetResponse>();
+                    let _s = Self::aggregate(0, p.get_payload());
                     if self.recvd & 0xf == 0 {
                         self.latencies
                             .push(cycles::rdtsc() - p.get_header().common_header.stamp);
