@@ -247,6 +247,51 @@ pub fn create_put_rpc(
     fixup_header_length_fields(request.deparse_header(size_of::<UdpHeader>()))
 }
 
+/// Allocate and populate a packet that requests a server "multiget" operation.
+///
+/// # Arguments
+///
+/// * `mac`:      Reference to the MAC header to be added to the request.
+/// * `ip` :      Reference to the IP header to be added to the request.
+/// * `udp`:      Reference to the UDP header to be added to the request.
+/// * `tenant`:   Id of the tenant requesting the item.
+/// * `table_id`: Id of the table from which the key is looked up.
+/// * `key_len`:  The length of each key to be looked up at the server. All keys are
+///               assumed to be of equal length.
+/// * `num_keys`: The number of keys to be looked up at the server.
+/// * `keys`:     Byte string of key whose values are to be fetched.
+/// * `id`:       RPC identifier.
+/// * `dst`:      The UDP port on the server the RPC is destined for.
+///
+/// # Return
+///
+/// Packet populated with the request parameters.
+#[inline]
+pub fn create_multiget_rpc(
+    mac: &MacHeader,
+    ip: &IpHeader,
+    udp: &UdpHeader,
+    tenant: u32,
+    table_id: u64,
+    key_len: u16,
+    num_keys: u32,
+    keys: &[u8],
+    id: u64,
+    dst: u16,
+) -> Packet<IpHeader, EmptyMetadata> {
+    // Allocate a packet, write the header and payload into it, and set fields on it's UDP and IP
+    // header.
+    let mut request = create_request(mac, ip, udp, dst)
+        .push_header(&MultiGetRequest::new(tenant, table_id, key_len, num_keys, id))
+        .expect("Failed to push RPC header into request!");
+
+    request
+        .add_to_payload_tail(keys.len(), &keys)
+        .expect("Failed to write key into multiget() request!");
+
+    fixup_header_length_fields(request.deparse_header(size_of::<UdpHeader>()))
+}
+
 /// Allocate and populate a packet that requests a server "invoke" operation.
 ///
 /// # Panic

@@ -48,6 +48,7 @@ pub enum Service {
 /// The second field on the header of every rpc request identifies the
 /// operation it should perform within the Sandstorm server.
 #[repr(u8)]
+#[derive(PartialEq)]
 pub enum OpCode {
     /// A simple operation that looks up the hash table for a given key.
     SandstormGetRpc = 0x01,
@@ -179,6 +180,12 @@ pub struct RpcResponseHeader {
     /// The status of the RPC indicating whether it completed successfully.
     pub status: RpcStatus,
 
+    /// The opcode on the original RPC request.
+    pub opcode: OpCode,
+
+    /// The tenant this response is destined for.
+    pub tenant: u32,
+
     /// Identifier of the RPC request this response is being generated for.
     pub stamp: u64,
 }
@@ -188,12 +195,16 @@ impl RpcResponseHeader {
     /// added to an RPC response. The status on the header is set to StatusOk.
     ///
     /// - `req_stamp`:  RPC identifier.
+    /// - `opcode`:     The opcode on the original RPC request.
+    /// - `tenant`:     The tenant this response should be sent to.
     ///
     /// - `return`: A header of type RpcResponseHeader with the status field
     ///             set to RpcStatus::StatusOk.
-    pub fn new(req_stamp: u64) -> RpcResponseHeader {
+    pub fn new(req_stamp: u64, opcode: OpCode, tenant: u32) -> RpcResponseHeader {
         RpcResponseHeader {
             status: RpcStatus::StatusOk,
+            opcode: opcode,
+            tenant: tenant,
             stamp: req_stamp,
         }
     }
@@ -323,12 +334,14 @@ impl GetResponse {
     /// get() RPC request. The value_length field is set to zero.
     ///
     /// - `req_stamp`: RPC identifier.
+    /// - `opcode`:    The opcode on the original RPC request.
+    /// - `tenant`:    The tenant this response should be sent to.
     ///
     /// - `return`: A header of type GetResponse that can be added to an RPC
     ///             response.
-    pub fn new(req_stamp: u64) -> GetResponse {
+    pub fn new(req_stamp: u64, opcode: OpCode, tenant: u32) -> GetResponse {
         GetResponse {
-            common_header: RpcResponseHeader::new(req_stamp),
+            common_header: RpcResponseHeader::new(req_stamp, opcode, tenant),
             value_length: 0,
         }
     }
@@ -439,9 +452,11 @@ impl PutResponse {
     /// # Arguments
     ///
     /// * `req_stamp`: RPC identifier.
-    pub fn new(req_stamp: u64) -> PutResponse {
+    /// * `opcode`:    The opcode on the original RPC request.
+    /// * `tenant`:    The tenant this response should be sent to.
+    pub fn new(req_stamp: u64, opcode: OpCode, tenant: u32) -> PutResponse {
         PutResponse {
-            common_header: RpcResponseHeader::new(req_stamp),
+            common_header: RpcResponseHeader::new(req_stamp, opcode, tenant),
         }
     }
 }
@@ -553,9 +568,11 @@ impl InvokeResponse {
     /// # Arguments
     ///
     /// * `req_stamp`: RPC identifier.
-    pub fn new(req_stamp: u64) -> InvokeResponse {
+    /// * `opcode`:    The opcode on the original RPC request.
+    /// * `tenant`:    The tenant this response should be sent to.
+    pub fn new(req_stamp: u64, opcode: OpCode, tenant: u32) -> InvokeResponse {
         InvokeResponse {
-            common_header: RpcResponseHeader::new(req_stamp),
+            common_header: RpcResponseHeader::new(req_stamp, opcode, tenant),
         }
     }
 }
@@ -662,9 +679,11 @@ impl InstallResponse {
     /// # Arguments
     ///
     /// * `req_stamp`: RPC identifier.
-    pub fn new(req_stamp: u64) -> InstallResponse {
+    /// * `opcode`:    The opcode on the original RPC request.
+    /// * `tenant`:    The tenant this response should be sent to.
+    pub fn new(req_stamp: u64, opcode: OpCode, tenant: u32) -> InstallResponse {
         InstallResponse {
-            common_header: RpcResponseHeader::new(req_stamp),
+            common_header: RpcResponseHeader::new(req_stamp, opcode, tenant),
         }
     }
 }
@@ -703,7 +722,7 @@ pub struct MultiGetRequest {
 
     /// The length of every key to be looked up. All keys to be looked up are assumed to be of
     /// equal length.
-    pub key_len: u32,
+    pub key_len: u16,
 
     /// The number of keys to be looked up at the database. Every key should be `key_len` bytes
     /// long.
@@ -723,7 +742,7 @@ impl MultiGetRequest {
     ///             length.
     /// * `n_keys`: The number of keys to be looked up (each of length `k_len`).
     /// * `stamp`:  Identifier of the RPC. Can be used as a timestamp.
-    pub fn new(tenant: u32, table: u64, k_len: u32, n_keys: u32, stamp: u64) -> MultiGetRequest {
+    pub fn new(tenant: u32, table: u64, k_len: u16, n_keys: u32, stamp: u64) -> MultiGetRequest {
         MultiGetRequest {
             common_header: RpcRequestHeader::new(
                 Service::MasterService,
@@ -779,10 +798,12 @@ impl MultiGetResponse {
     /// # Arguments
     ///
     /// * `stamp`:     RPC identifier. Can be used to timestamp the RPC.
+    /// * `opcode`:    The opcode on the original RPC request.
+    /// * `tenant`:    The tenant this response should be sent to.
     /// * `n_records`: Number of records being returned in the response.
-    pub fn new(stamp: u64, n_records: u32) -> MultiGetResponse {
+    pub fn new(stamp: u64, opcode: OpCode, tenant: u32, n_records: u32) -> MultiGetResponse {
         MultiGetResponse {
-            common_header: RpcResponseHeader::new(stamp),
+            common_header: RpcResponseHeader::new(stamp, opcode, tenant),
             num_records: n_records,
         }
     }

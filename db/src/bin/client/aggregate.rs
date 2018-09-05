@@ -31,7 +31,8 @@ use db::log::*;
 use db::e2d2::scheduler::*;
 use db::e2d2::allocators::CacheAligned;
 use db::e2d2::interface::PortQueue;
-use db::wireformat::{GetResponse, InvokeResponse};
+use db::wireformat::*;
+use db::rpc::*;
 
 use rand::distributions::Sample;
 use rand::{SeedableRng, XorShiftRng};
@@ -195,6 +196,9 @@ struct AggregateRecv {
     /// The network stack required to receives RPC response packets from a network port.
     receiver: dispatch::Receiver<CacheAligned<PortQueue>>,
 
+    /// Network stack that can actually send an RPC over the network. Required for the native case.
+    sender: dispatch::Sender,
+
     /// Flag indicating whether requests sent out were native (true) or invocations (false).
     native: bool,
 
@@ -219,17 +223,29 @@ impl AggregateRecv {
     ///
     /// # Arguments
     ///
-    /// * `port` :  Network port on which responses will be polled for.
-    /// * `resps`:  The number of responses to wait for before calculating statistics.
-    /// * `native`: Boolean indicating whether responses are for native (true) RPCs or
-    ///             invoke (false) RPCs
+    /// * `port` :     Network port on which responses will be polled for.
+    /// * `resps`:     The number of responses to wait for before calculating statistics.
+    /// * `native`:    Boolean indicating whether responses are for native (true) RPCs or
+    ///                invoke (false) RPCs
+    /// * `send`:      Network port over which requests will be sent out.
+    /// * `dst_ports`: The total number of UDP ports the server is listening on.
+    /// * `config`:    Client configuration with Workload related (key and value length etc.) as
+    ///                well as network related (Server and Client MAC address etc.) parameters.
     ///
     /// # Return
     ///
     /// A receiver that measures the median latency and throughput of a Sandstorm server.
-    fn new(port: CacheAligned<PortQueue>, resps: u64, native: bool) -> AggregateRecv {
+    fn new(
+        port: CacheAligned<PortQueue>,
+        resps: u64,
+        native: bool,
+        send: CacheAligned<PortQueue>,
+        dst_ports: u16,
+        config: &config::ClientConfig,
+    ) -> AggregateRecv {
         AggregateRecv {
             receiver: dispatch::Receiver::new(port),
+            sender: dispatch::Sender::new(config, send, dst_ports),
             native: native,
             responses: resps,
             start: cycles::rdtsc(),
@@ -238,14 +254,26 @@ impl AggregateRecv {
         }
     }
 
-    /// Sums up the contents of a byte array.
+    /// Aggregates the first byte across a list of values.
     ///
     /// # Arguments
     ///
     /// * `init`: Initial value to be used in the summation.
     /// * `vec`:  The byte array whose contents need to be summed up.
     fn aggregate(init: u64, vec: &[u8]) -> u64 {
-        vec.iter().fold(init, |sum, e| sum + (*e as u64))
+        let mut cols = Vec::new();
+
+        // First collect the first byte of each value.
+        for row in vec.chunks(100) {
+            if row.len() != 100 {
+                break;
+            }
+
+            cols.push(row[0]);
+        }
+
+        // Aggregate the collected set of bytes.
+        cols.iter().fold(init, |sum, e| sum + (*e as u64))
     }
 
     /// Prints out the measured latency distribution and throughput.
@@ -276,19 +304,32 @@ impl Executable for AggregateRecv {
         // Check for received packets. If any, then take latency measurements.
         if let Some(mut resps) = self.receiver.recv_res() {
             while let Some(packet) = resps.pop() {
-                self.recvd += 1;
-
                 if self.native {
-                    // If the response is for a native request, then first aggregate and then
-                    // take a latency measurement (if required).
-                    let p = packet.parse_header::<GetResponse>();
-                    let _s = Self::aggregate(0, p.get_payload());
-                    if self.recvd & 0xf == 0 {
-                        self.latencies
-                            .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                    if parse_rpc_opcode(&packet) == OpCode::SandstormMultiGetRpc {
+                        self.recvd += 1;
+
+                        let p = packet.parse_header::<MultiGetResponse>();
+                        let _s = Self::aggregate(0, p.get_payload());
+                        if self.recvd & 0xf == 0 {
+                            self.latencies
+                                .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                        }
+                        p.free_packet();
+                    } else {
+                        let p = packet.parse_header::<GetResponse>();
+                        self.sender.send_multiget(
+                            p.get_header().common_header.tenant,
+                            1,
+                            30,
+                            4,
+                            p.get_payload(),
+                            p.get_header().common_header.stamp,
+                        );
+                        p.free_packet();
                     }
-                    p.free_packet();
                 } else {
+                    self.recvd += 1;
+
                     let p = packet.parse_header::<InvokeResponse>();
                     if self.recvd & 0xf == 0 {
                         self.latencies
@@ -355,12 +396,20 @@ fn setup_send<S>(
 ///
 /// # Arguments
 ///
-/// * `ports`:     Network port on which packets will be sent.
+/// * `ports`:     Network port on which packets will be received.
 /// * `scheduler`: Netbricks scheduler to which AggregateRecv will be added.
 /// * `native`:    Boolean indicating whether responses are for native (true) or invoke (false)
 ///                RPCs.
-fn setup_recv<S>(ports: Vec<CacheAligned<PortQueue>>, scheduler: &mut S, _core: i32, native: bool)
-where
+/// * `send`:      Network port on which packets will be sent.
+/// * `config`:    Network related configuration such as the MAC and IP address.
+fn setup_recv<S>(
+    ports: Vec<CacheAligned<PortQueue>>,
+    scheduler: &mut S,
+    _core: i32,
+    native: bool,
+    send: Vec<CacheAligned<PortQueue>>,
+    config: &config::ClientConfig,
+) where
     S: Scheduler + Sized,
 {
     if ports.len() != 1 {
@@ -373,11 +422,14 @@ where
         ports[0].clone(),
         32 * 1000 * 1000 as u64,
         native,
+        send[0].clone(),
+        config.server_udp_ports as u16,
+        config,
     )) {
         Ok(_) => {
             info!(
-                "Successfully added AggregateRecv with rx queue {}.",
-                ports[0].rxq()
+                "Successfully added AggregateRecv with tx, rx queue {:?}.",
+                (send[0].txq(), ports[0].rxq())
             );
         }
 
@@ -428,8 +480,15 @@ fn main() {
             .add_pipeline_to_core(
                 receive[i],
                 Arc::new(
-                    move |_ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
-                        setup_recv(port.clone(), sched, core, native)
+                    move |send, sched: &mut StandaloneScheduler, core: i32, _sibling| {
+                        setup_recv(
+                            port.clone(),
+                            sched,
+                            core,
+                            native,
+                            send,
+                            &config::ClientConfig::load(),
+                        )
                     },
                 ),
             )

@@ -162,6 +162,44 @@ impl Sender {
         self.send_req(request);
     }
 
+    /// Creates and sends out a multiget() RPC request. Network headers are populated based on
+    /// arguments passed into new() above.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant`: Id of the tenant requesting the item.
+    /// * `table`:  Id of the table from which the key is looked up.
+    /// * `k_len`:  The length of each key to be looked up at the server. All keys are
+    ///               assumed to be of equal length.
+    /// * `n_keys`: The number of keys to be looked up at the server.
+    /// * `keys`:   Byte string of keys whose values are to be fetched.
+    /// * `id`:     RPC identifier.
+    #[allow(dead_code)]
+    pub fn send_multiget(
+        &self,
+        tenant: u32,
+        table: u64,
+        k_len: u16,
+        n_keys: u32,
+        keys: &[u8],
+        id: u64,
+    ) {
+        let request = rpc::create_multiget_rpc(
+            &self.req_mac_header,
+            &self.req_ip_header,
+            &self.req_udp_header,
+            tenant,
+            table,
+            k_len,
+            n_keys,
+            keys,
+            id,
+            self.get_dst_port(tenant),
+        );
+
+        self.send_req(request);
+    }
+
     /// Creates and sends out an invoke() RPC request. Network headers are populated based on
     /// arguments passed into new() above.
     ///

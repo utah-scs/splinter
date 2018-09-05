@@ -441,8 +441,11 @@ impl Master {
         }
 
         // Next, add a header to the response packet.
-        let mut res = res.push_header(&GetResponse::new(rpc_stamp))
-            .expect("Failed to setup GetResponse");
+        let mut res = res.push_header(&GetResponse::new(
+            rpc_stamp,
+            OpCode::SandstormGetRpc,
+            tenant_id,
+        )).expect("Failed to setup GetResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < key_length as usize {
@@ -572,8 +575,11 @@ impl Master {
         }
 
         // Next, write a header into the response packet.
-        let mut res = res.push_header(&PutResponse::new(rpc_stamp))
-            .expect("Failed to push PutResponse");
+        let mut res = res.push_header(&PutResponse::new(
+            rpc_stamp,
+            OpCode::SandstormPutRpc,
+            tenant_id,
+        )).expect("Failed to push PutResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < key_length as usize {
@@ -687,11 +693,15 @@ impl Master {
         }
 
         // Next, add a header to the response packet.
-        let mut res = res.push_header(&MultiGetResponse::new(rpc_stamp, 0))
-            .expect("Failed to setup MultiGetResponse");
+        let mut res = res.push_header(&MultiGetResponse::new(
+            rpc_stamp,
+            OpCode::SandstormMultiGetRpc,
+            tenant_id,
+            0,
+        )).expect("Failed to setup MultiGetResponse");
 
         // If the payload size is less than the key length, return an error.
-        if req.get_payload().len() < (key_length * num_keys) as usize {
+        if req.get_payload().len() < ((key_length as u32) * num_keys) as usize {
             res.get_mut_header().common_header.status = RpcStatus::StatusMalformedRequest;
             return Err((
                 req.deparse_header(PACKET_UDP_LEN as usize),
@@ -821,8 +831,11 @@ impl Master {
         }
 
         // Next, add a header to the response packet.
-        let mut res = res.push_header(&InvokeResponse::new(rpc_stamp))
-            .expect("Failed to push InvokeResponse");
+        let mut res = res.push_header(&InvokeResponse::new(
+            rpc_stamp,
+            OpCode::SandstormInvokeRpc,
+            tenant_id,
+        )).expect("Failed to push InvokeResponse");
 
         // If the payload size is less than the sum of the name and args
         // length, return an error.
@@ -897,7 +910,7 @@ impl Master {
         }
 
         // Create a response for the tenant.
-        let mut res = InstallResponse::new(tstamp);
+        let mut res = InstallResponse::new(tstamp, OpCode::SandstormInstallRpc, tenant as u32);
         res.common_header.status = RpcStatus::StatusTenantDoesNotExist;
 
         // Check if the tenant provided lengths match the actual request length.
