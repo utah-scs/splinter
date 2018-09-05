@@ -305,7 +305,8 @@ impl Executable for AggregateRecv {
         if let Some(mut resps) = self.receiver.recv_res() {
             while let Some(packet) = resps.pop() {
                 if self.native {
-                    if parse_rpc_opcode(&packet) == OpCode::SandstormMultiGetRpc {
+                    let opcode = parse_rpc_opcode(&packet);
+                    if opcode == OpCode::SandstormMultiGetRpc {
                         self.recvd += 1;
 
                         let p = packet.parse_header::<MultiGetResponse>();
@@ -315,7 +316,7 @@ impl Executable for AggregateRecv {
                                 .push(cycles::rdtsc() - p.get_header().common_header.stamp);
                         }
                         p.free_packet();
-                    } else {
+                    } else if opcode == OpCode::SandstormGetRpc {
                         let p = packet.parse_header::<GetResponse>();
                         self.sender.send_multiget(
                             p.get_header().common_header.tenant,
@@ -326,6 +327,8 @@ impl Executable for AggregateRecv {
                             p.get_header().common_header.stamp,
                         );
                         p.free_packet();
+                    } else {
+                        println!("Received response with unexpected opcode.");
                     }
                 } else {
                     self.recvd += 1;
@@ -464,7 +467,7 @@ fn main() {
     assert!((senders.len() == 4) && (receive.len() == 4));
 
     // Required by AggregateRecv.
-    let native = config.use_invoke;
+    let native = !config.use_invoke;
 
     // Setup 4 senders and 4 receivers.
     for i in 0..4 {
