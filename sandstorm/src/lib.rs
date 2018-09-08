@@ -22,6 +22,7 @@ pub mod buf;
 pub mod null;
 pub mod mock;
 pub mod pack;
+pub mod allocator;
 
 pub use std::vec;
 pub use std::result;
