@@ -37,8 +37,8 @@ def setupCargo():
     printColor("bold", "=============== Fixing Deps ==========================")
     fix = "cargo generate-lockfile; " + \
           "cargo update -p spin:0.4.9 --precise 0.4.7; " + \
-          "cargo update -p serde:1.0.77 --precise 1.0.37; " + \
-          "cargo update -p serde_derive:1.0.77 --precise 1.0.37; " + \
+          "cargo update -p serde:1.0.78 --precise 1.0.37; " + \
+          "cargo update -p serde_derive:1.0.78 --precise 1.0.37; " + \
           "cargo update -p env_logger:0.5.13 --precise 0.5.3; "
 
     # Fix dependencies inside db.
