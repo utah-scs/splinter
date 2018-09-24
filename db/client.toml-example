@@ -29,8 +29,8 @@ install_addr = "127.0.0.1:7700"
 ############################### GENERIC CLIENT CONFIG ##########################
 
 # If true, client's send invoke() based RPC requests to the server. If false,
-# regular get() and put() operations are used. Ignored for the tao client.
-use_invoke = false
+# regular get() and put() operations are used.
+use_invoke = true
 
 # The number of tenants to generate requests for. The exact tenant id for a
 # particular request should be generated from a Zipfian distribution.
@@ -46,20 +46,36 @@ num_reqs = 64000000
 # The rate at which the client must issue RPC requests.
 req_rate = 500000
 
-############################### YCSB CLIENT CONFIG #############################
-
-# The length of the key to issue YCSB reads and writes for.
+# The length of the key to issue reads and writes for.
 key_len = 30
 
-# The length of the value to issue YCSB writes for.
+# The length of the value to issue writes for.
 value_len = 100
 
-# The number of keys in the YCSB table on the server. Required to initialize the
+# The number of keys in the table on the server. Required to initialize the
 # Zipfian distribution from which the key for each request is sampled.
 n_keys = 1000000
+
+# The skew of the Zipfian distribution from which keys are sampled.
+skew = 0.99
+
+############################### YCSB CLIENT CONFIG #############################
 
 # The percentage of operations that are puts/writes.
 put_pct = 5
 
-# The skew of the Zipfian distribution from which keys are sampled.
-skew = 0.99
+############################### AGGREGATE CLIENT CONFIG ########################
+
+# The number of records to aggregate across.
+num_aggr = 2
+
+# The order of the final result of the aggregation.
+order = 1
+
+############################### TAO CLIENT CONFIG ##############################
+
+# If true, then an invoke() based run will use native requests for an obj_get.
+combined = true
+
+# The percentage of assoc_range() requests.
+assocs_p = 40

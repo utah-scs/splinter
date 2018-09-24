@@ -1,0 +1,89 @@
+#!/bin/bash
+#
+# Copyright (c) 2018 University of Utah
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+# Export DPDK bindings to the current shell.
+export LD_LIBRARY_PATH=$(pwd)/net/target/native
+
+cd db
+
+# Check for a TOML file with client related configuration.
+if [[ ! -f client.toml ]]; then
+    echo "Missing client.toml file (in db directory)."
+    exit -1
+fi
+
+# If a command line argument was provided, use it as a request rate for YCSB.
+if [ $# -eq 1 ]
+then
+    # Configure the client TOML file with the request rate.
+    sed -i "s/req_rate = [1-9][0-9]*/req_rate = $1/g" client.toml
+
+    # Run YCSB.
+    RUST_LOG=debug ./target/release/aggregate
+
+    exit 0
+fi
+
+# Get the "use_invoke" field from the client configuration. The output file
+# will be markes with the value of this field, allowing to distinguish between
+# experiments run with an invoke based YCSB, and experiments run with a native
+# operation based YCSB.
+invoke=$(cat client.toml | grep "use_invoke" | awk '{ print $NF }')
+
+# The number of tenants requests are being generated for. Each data point in the
+# output file is marked with this number.
+tenants=$(cat client.toml | grep "num_tenants" | awk '{ print $NF }')
+
+# The skew with which tenants are chosen by the client. Each data point in the
+# output file is marked with this number.
+tenant_skew=$(cat client.toml | grep "tenant_skew" | awk '{ print $NF }')
+
+# The number of server cores being stressed by YCSB. Each data point in the
+# output file is marked with this number.
+cores=$(cat client.toml | grep "server_udp_ports" | awk '{ print $NF }')
+
+# The order of the aggregate.
+order=(500 1000 1500 2000 2500 3000 3500 4000 4500 5000)
+
+# The different request rates that the YCSB client will be configured and run
+# with.
+rates=(100000 150000 200000 250000 300000 350000 400000 450000 500000 550000 \
+       600000 650000 700000)
+
+# Header for the output file. Required inorder to plot the results.
+echo "Offered 50 99 Thrpt Tenants TSkew Cores Order" > ../aggregate_invoke_"$invoke".out
+
+# Run Aggregate for each of the above request rates and orders.
+for ord in ${order[@]}
+do
+    # Configure the client TOML file with the order.
+    sed -i "s/order = [1-9][0-9]*/order = $ord/g" client.toml
+
+    for rate in ${rates[@]}
+    do
+        echo "rate=$rate, invoke=$invoke, tenants=$tenants, tenant_skew=$tenant_skew, cores=$cores, order=$ord"
+
+        # Configure the client TOML file with the request rate.
+        sed -i "s/req_rate = [1-9][0-9]*/req_rate = $rate/g" client.toml
+
+        # Run Aggregate, and write out the median, 99th, and throughput.
+        RUST_LOG=debug ./target/release/aggregate 2>&1 | grep "Median(ns)" | \
+                awk "{ print $rate, \$3, \$5, \$7, $tenants, $tenant_skew, $cores, $ord }" \
+                >> ../aggregate_invoke_"$invoke".out
+    done
+done
+
+exit 0

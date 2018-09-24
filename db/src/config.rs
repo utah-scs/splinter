@@ -146,6 +146,12 @@ pub struct ClientConfig {
 
     pub num_reqs: usize,
     pub req_rate: usize,
+
+    pub num_aggr: u32,
+    pub order: u32,
+
+    pub combined: bool,
+    pub assocs_p: usize,
 }
 
 impl ClientConfig {

@@ -89,20 +89,27 @@ impl AggregateSend {
     /// * `port`:      Network port over which requests will be sent out.
     /// * `reqs`:      The number of requests to be issued to the server.
     /// * `dst_ports`: The total number of UDP ports the server is listening on.
+    /// * `num`:       Number of keys to aggregate across.
+    /// * `ord`:       Order of the final polynomial to be computed.
     pub fn new(
         config: &config::ClientConfig,
         port: CacheAligned<PortQueue>,
         reqs: u64,
         dst_ports: u16,
+        num: u32,
+        ord: u32,
     ) -> AggregateSend {
         // Allocate a vector for the invoke() RPC's payload. The payload consists of the name of
-        // the extension, the table id (8 bytes), and the key length.
-        let len = "aggregate".as_bytes().len() + size_of::<u64>() + config.key_len;
+        // the extension, the table id (8 bytes), the key length, the aggregate size, and the order.
+        let len = "aggregate".as_bytes().len() + size_of::<u64>() + size_of::<u32>()
+            + size_of::<u32>() + config.key_len;
         let mut i_buff = Vec::with_capacity(len);
 
         // Pre-populate the extension name and table id.
         i_buff.extend_from_slice("aggregate".as_bytes());
         i_buff.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
+        i_buff.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(num.to_le()) });
+        i_buff.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(ord.to_le()) });
         i_buff.resize(len, 0);
 
         // Allocate and init a buffer into which keys will be generated.
@@ -159,7 +166,7 @@ impl AggregateSend {
 
             // Invoke request. Add the key to the pre-populated payload.
             false => {
-                self.i_buff[17..21].copy_from_slice(&k);
+                self.i_buff[25..29].copy_from_slice(&k);
                 self.sender.send_invoke(t, 9, &self.i_buff, curr);
             }
         }
@@ -218,6 +225,12 @@ struct AggregateRecv {
     /// Vector of sampled request latencies. Required to calculate distributions once all responses
     /// have been received.
     latencies: Vec<u64>,
+
+    /// Number of keys to aggregate across. Required for the native case.
+    num: u32,
+
+    /// Order of the final polynomial to be computed.
+    ord: u32,
 }
 
 // Implementation of methods on AggregateRecv.
@@ -234,6 +247,8 @@ impl AggregateRecv {
     /// * `dst_ports`: The total number of UDP ports the server is listening on.
     /// * `config`:    Client configuration with Workload related (key and value length etc.) as
     ///                well as network related (Server and Client MAC address etc.) parameters.
+    /// * `num`:       The number of keys aggregations are to be performed across.
+    /// * `ord`:       Order of the final polynomial to be computed.
     ///
     /// # Return
     ///
@@ -245,6 +260,8 @@ impl AggregateRecv {
         send: CacheAligned<PortQueue>,
         dst_ports: u16,
         config: &config::ClientConfig,
+        num: u32,
+        ord: u32,
     ) -> AggregateRecv {
         AggregateRecv {
             receiver: dispatch::Receiver::new(port),
@@ -255,6 +272,8 @@ impl AggregateRecv {
             start: cycles::rdtsc(),
             recvd: 0,
             latencies: Vec::with_capacity(2 * 1000 * 1000),
+            num: num,
+            ord: ord,
         }
     }
 
@@ -264,7 +283,7 @@ impl AggregateRecv {
     ///
     /// * `init`: Initial value to be used in the summation.
     /// * `vec`:  The byte array whose contents need to be summed up.
-    fn aggregate(init: u64, vec: &[u8]) -> u64 {
+    fn aggregate(&self, init: u64, vec: &[u8]) -> u64 {
         let mut cols = Vec::new();
 
         // First collect the first byte of each value.
@@ -277,7 +296,13 @@ impl AggregateRecv {
         }
 
         // Aggregate the collected set of bytes.
-        cols.iter().fold(init, |sum, e| sum + (*e as u64))
+        let mut aggr = cols.iter().fold(init, |sum, e| sum + (*e as u64));
+
+        for _mul in 1..self.ord {
+            aggr *= aggr;
+        }
+
+        aggr
     }
 
     /// Prints out the measured latency distribution and throughput.
@@ -314,7 +339,7 @@ impl Executable for AggregateRecv {
                         p.get_header().common_header.tenant,
                         1,
                         30,
-                        4,
+                        self.num,
                         p.get_payload(),
                         p.get_header().common_header.stamp,
                     );
@@ -339,7 +364,7 @@ impl Executable for AggregateRecv {
                     self.recvd += 1;
 
                     let p = packet.parse_header::<MultiGetResponse>();
-                    let _s = Self::aggregate(0, p.get_payload());
+                    let _s = self.aggregate(0, p.get_payload());
                     if self.recvd & 0xf == 0 {
                         self.latencies
                             .push(cycles::rdtsc() - p.get_header().common_header.stamp);
@@ -367,11 +392,15 @@ impl Executable for AggregateRecv {
 /// * `config`:    Network related configuration such as the MAC and IP address.
 /// * `ports`:     Network port on which packets will be sent.
 /// * `scheduler`: Netbricks scheduler to which AggregateSend will be added.
+/// * `num`:       Number of keys aggregations are to be performed across.
+/// * `ord`:       Order of the final polynomial to be computed.
 fn setup_send<S>(
     config: &config::ClientConfig,
     ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
     _core: i32,
+    num: u32,
+    ord: u32,
 ) where
     S: Scheduler + Sized,
 {
@@ -386,6 +415,8 @@ fn setup_send<S>(
         ports[0].clone(),
         config.num_reqs as u64,
         config.server_udp_ports as u16,
+        num,
+        ord,
     )) {
         Ok(_) => {
             info!(
@@ -411,6 +442,8 @@ fn setup_send<S>(
 ///                RPCs.
 /// * `send`:      Network port on which packets will be sent.
 /// * `config`:    Network related configuration such as the MAC and IP address.
+/// * `num`:       Number of keys aggregations are to be performed across.
+/// * `ord`:       Order of the final polynomial to be computed.
 fn setup_recv<S>(
     ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
@@ -418,6 +451,8 @@ fn setup_recv<S>(
     native: bool,
     send: Vec<CacheAligned<PortQueue>>,
     config: &config::ClientConfig,
+    num: u32,
+    ord: u32,
 ) where
     S: Scheduler + Sized,
 {
@@ -434,6 +469,8 @@ fn setup_recv<S>(
         send[0].clone(),
         config.server_udp_ports as u16,
         config,
+        num,
+        ord,
     )) {
         Ok(_) => {
             info!(
@@ -475,6 +512,10 @@ fn main() {
     // Required by AggregateRecv.
     let native = !config.use_invoke;
 
+    // Aggregation size.
+    let num = config.num_aggr;
+    let ord = config.order;
+
     // Setup 4 senders and 4 receivers.
     for i in 0..4 {
         // First, retrieve a tx-rx queue pair from Netbricks
@@ -497,6 +538,8 @@ fn main() {
                             native,
                             send,
                             &config::ClientConfig::load(),
+                            num,
+                            ord,
                         )
                     },
                 ),
@@ -509,7 +552,7 @@ fn main() {
                 senders[i],
                 Arc::new(
                     move |ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
-                        setup_send(&config::ClientConfig::load(), ports, sched, core)
+                        setup_send(&config::ClientConfig::load(), ports, sched, core, num, ord)
                     },
                 ),
             )
