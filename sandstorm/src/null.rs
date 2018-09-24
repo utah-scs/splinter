@@ -17,18 +17,20 @@ use std::fmt::Debug;
 
 use super::db::DB;
 
-use super::buf::{ReadBuf, WriteBuf};
+use super::buf::{ReadBuf, WriteBuf, MultiReadBuf};
 
 pub struct NullDB {}
 
 impl NullDB {
     pub fn new() -> NullDB {
-        NullDB{}
+        NullDB {}
     }
 
     pub fn assert_messages<S>(&self, _messages: &[S])
-        where S: Debug + PartialEq<String>
-    {}
+    where
+        S: Debug + PartialEq<String>,
+    {
+    }
 
     pub fn clear_messages(&self) {}
 }
@@ -38,9 +40,11 @@ impl DB for NullDB {
         return None;
     }
 
-    fn alloc(&self, _table: u64, _key: &[u8], _val_len: u64)
-             -> Option<WriteBuf>
-    {
+    fn multiget(&self, _table: u64, _key_len: u16, _keys: &[u8]) -> Option<MultiReadBuf> {
+        return None;
+    }
+
+    fn alloc(&self, _table: u64, _key: &[u8], _val_len: u64) -> Option<WriteBuf> {
         return None;
     }
 

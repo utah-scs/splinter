@@ -371,10 +371,11 @@ impl<T: EndOffset, M: Sized + Send> Packet<T, M> {
     #[inline]
     pub fn add_to_payload_tail(&mut self, size: usize, data: &[u8]) -> Result<()> {
         unsafe {
+            let end = self.get_payload().len();
             let added = (*self.mbuf).add_data_end(size);
             if added >= size {
                 let src = &data[0] as *const u8;
-                let dst = self.payload();
+                let dst = self.payload().offset(end as isize);
                 ptr::copy_nonoverlapping(src, dst, size);
                 Ok(())
             } else {

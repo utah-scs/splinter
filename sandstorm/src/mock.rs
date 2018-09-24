@@ -15,8 +15,8 @@
 
 use std::fmt::Debug;
 
+use super::buf::{ReadBuf, WriteBuf, MultiReadBuf};
 use super::db::DB;
-use super::buf::{ReadBuf, WriteBuf};
 
 extern crate bytes;
 use self::bytes::{Bytes, BytesMut};
@@ -30,14 +30,15 @@ pub struct MockDB {
 
 impl MockDB {
     pub fn new() -> MockDB {
-        MockDB{
+        MockDB {
             messages: RefCell::new(Vec::new()),
             args: [97; 30],
         }
     }
 
     pub fn assert_messages<S>(&self, messages: &[S])
-        where S: Debug + PartialEq<String>
+    where
+        S: Debug + PartialEq<String>,
     {
         let found = self.messages.borrow();
         assert_eq!(messages, found.as_slice());
@@ -52,29 +53,34 @@ impl MockDB {
 impl DB for MockDB {
     fn get(&self, table: u64, key: &[u8]) -> Option<ReadBuf> {
         self.debug_log(&format!(
-                            "Invoked get() on table {} for key {:?}",
-                            table, key));
+            "Invoked get() on table {} for key {:?}",
+            table, key
+        ));
 
-        unsafe {
-            Some(ReadBuf::new(Bytes::with_capacity(0)))
-        }
+        unsafe { Some(ReadBuf::new(Bytes::with_capacity(0))) }
     }
 
-    fn alloc(&self, table: u64, key: &[u8], val_len: u64) -> Option<WriteBuf>
-    {
+    fn multiget(&self, table: u64, key_len: u16, keys: &[u8]) -> Option<MultiReadBuf> {
         self.debug_log(&format!(
-                            "Invoked alloc(), table {}, key {:?}, val_len {}",
-                            table, key, val_len));
+            "Invoked multiget() on table {} for keys {:?} with key length {}",
+            table, keys, key_len
+        ));
 
-        unsafe {
-            Some(WriteBuf::new(table, BytesMut::with_capacity(0)))
-        }
+        unsafe { Some(MultiReadBuf::new(Vec::new())) }
+    }
+
+    fn alloc(&self, table: u64, key: &[u8], val_len: u64) -> Option<WriteBuf> {
+        self.debug_log(&format!(
+            "Invoked alloc(), table {}, key {:?}, val_len {}",
+            table, key, val_len
+        ));
+
+        unsafe { Some(WriteBuf::new(table, BytesMut::with_capacity(0))) }
     }
 
     fn put(&self, buf: WriteBuf) -> bool {
         unsafe {
-            self.debug_log(&format!("Invoked put(), buf {:?}",
-                                &buf.freeze().1[..]));
+            self.debug_log(&format!("Invoked put(), buf {:?}", &buf.freeze().1[..]));
         }
 
         return true;
@@ -82,8 +88,9 @@ impl DB for MockDB {
 
     fn del(&self, table: u64, key: &[u8]) {
         self.debug_log(&format!(
-                            "Invoked del() on table {} for key {:?}",
-                            table, key));
+            "Invoked del() on table {} for key {:?}",
+            table, key
+        ));
     }
 
     fn args(&self) -> &[u8] {

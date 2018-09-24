@@ -1,23 +1,22 @@
 #![feature(generators)]
 #![feature(generator_trait)]
 #![feature(try_from)]
-
 #![no_std]
 
 extern crate sandstorm;
 
-use sandstorm::buf::{WriteBuf};
-use sandstorm::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use sandstorm::buf::WriteBuf;
 use sandstorm::db::DB;
+use sandstorm::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
-use sandstorm::vec::*;
-use sandstorm::result::Result;
-use sandstorm::time::{SystemTime, UNIX_EPOCH};
-use sandstorm::Generator;
-use sandstorm::rc::Rc;
-use sandstorm::convert::From;
 use sandstorm::boxed::Box;
+use sandstorm::convert::From;
+use sandstorm::rc::Rc;
+use sandstorm::result::Result;
 use sandstorm::size_of;
+use sandstorm::time::{SystemTime, UNIX_EPOCH};
+use sandstorm::vec::*;
+use sandstorm::Generator;
 
 type Id = u64;
 type ObjectType = u16;
@@ -30,12 +29,12 @@ enum TaoOp {
     ObjDelete = 3,
     AssocGet = 4,
     AssocAdd = 5,
-    AssocDelete = 6
+    AssocDelete = 6,
 }
 
 /// Converts a u8 into a TaoOp.
 impl From<u8> for TaoOp {
-    fn from(original: u8) -> Self{
+    fn from(original: u8) -> Self {
         match original {
             0 => TaoOp::ObjGet,
             1 => TaoOp::ObjAdd,
@@ -44,7 +43,7 @@ impl From<u8> for TaoOp {
             4 => TaoOp::AssocGet,
             5 => TaoOp::AssocAdd,
             6 => TaoOp::AssocDelete,
-            _ => panic!("Invalid Tao opcode.")
+            _ => panic!("Invalid Tao opcode."),
         }
     }
 }
@@ -55,7 +54,7 @@ type AssocResponseHandler = fn(db: Rc<DB>, assoc: Association);
 #[no_mangle]
 #[allow(unreachable_code)]
 #[allow(unused_assignments)]
-pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
+pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
     Box::new(move || {
         {
             return dispatch(db);
@@ -84,7 +83,7 @@ fn dispatch(db: Rc<DB>) -> u64 {
         TaoOp::ObjAdd => obj_add_dispatch(Rc::clone(&db), ops),
         TaoOp::ObjUpdate => obj_update_dispatch(Rc::clone(&db), ops),
         TaoOp::ObjDelete => obj_delete_dispatch(Rc::clone(&db), ops),
-        _ => assoc_dispatch(opcode, Rc::clone(&db), ops)
+        _ => assoc_dispatch(opcode, Rc::clone(&db), ops),
     };
 
     return 0;
@@ -96,7 +95,7 @@ fn dispatch(db: Rc<DB>) -> u64 {
 /// * `db` - a connection to the database.
 /// * `otype` - the type of the object.
 /// * `object` - the bytes representing the objects value.
-fn object_response_handler(db: Rc<DB>, _otype: &[u8], object: &[u8]){
+fn object_response_handler(db: Rc<DB>, _otype: &[u8], object: &[u8]) {
     // db.resp(otype);
     db.resp(object);
 }
@@ -106,10 +105,14 @@ fn object_response_handler(db: Rc<DB>, _otype: &[u8], object: &[u8]){
 /// # Arguments
 /// * `db` - a connection to the database.
 /// * `assoc` - the association which needs to be written into the response to the client.
-fn assoc_response_handler(db: Rc<DB>, assoc: Association){
+fn assoc_response_handler(db: Rc<DB>, assoc: Association) {
     let mut assoc_serialized: Vec<u8> = Vec::with_capacity(Association::size());
-    assoc_serialized.write_u64::<LittleEndian>(assoc.id).unwrap();
-    assoc_serialized.write_u64::<LittleEndian>(assoc.time).unwrap();
+    assoc_serialized
+        .write_u64::<LittleEndian>(assoc.id)
+        .unwrap();
+    assoc_serialized
+        .write_u64::<LittleEndian>(assoc.time)
+        .unwrap();
 
     db.resp(assoc_serialized.as_slice());
 }
@@ -244,10 +247,10 @@ fn assoc_dispatch(opcode: u8, db: Rc<DB>, ops: &[u8]) {
     }
 
     let (table, rest) = ops.split_at(8);
-    let table: u64 = 0 | table[0] as u64    | (table[1] as u64) << 8 |
-                    (table[2] as u64) << 16 | (table[3] as u64) << 24 |
-                    (table[4] as u64) << 32 | (table[5] as u64) << 40 |
-                    (table[6] as u64) << 48 | (table[7] as u64) << 56;
+    let table: u64 = 0 | table[0] as u64 | (table[1] as u64) << 8 | (table[2] as u64) << 16
+        | (table[3] as u64) << 24 | (table[4] as u64) << 32
+        | (table[5] as u64) << 40 | (table[6] as u64) << 48
+        | (table[7] as u64) << 56;
 
     let (id1, rest2) = rest.split_at(8);
     let (assoc_type, id2) = rest2.split_at(2);
@@ -258,27 +261,26 @@ fn assoc_dispatch(opcode: u8, db: Rc<DB>, ops: &[u8]) {
             if tao.association_get(id1, assoc_type, id2, assoc_response_handler) == false {
                 db.resp("ERROR: could not get association.".as_bytes());
             }
-        },
+        }
         TaoOp::AssocAdd => {
             if tao.association_add(id1, assoc_type, id2) == false {
                 db.resp("ERROR: unsuccessful update".as_bytes());
             }
-        },
+        }
         TaoOp::AssocDelete => {
             if tao.association_delete(id1, assoc_type, id2) == false {
                 db.resp("ERROR: unable to delete the association".as_bytes());
             }
-        },
+        }
         _ => {} // ERROR invalid opcode.
     };
 }
-
 
 pub struct TAO {
     client: Rc<DB>,
     object_table_id: u64,
     association_table_id: u64,
-    next_id: Id
+    next_id: Id,
 }
 
 impl TAO {
@@ -297,7 +299,7 @@ impl TAO {
             client,
             object_table_id,
             association_table_id,
-            next_id: 1 // TODO: this is invalid if the user is creating a new TAO instance, for existing tables. This needs to be read from DB?
+            next_id: 1, // TODO: this is invalid if the user is creating a new TAO instance, for existing tables. This needs to be read from DB?
         }
     }
 
@@ -322,15 +324,15 @@ impl TAO {
     pub fn object_update(&self, id: &[u8], otype: ObjectType, data: &[u8]) -> bool {
         let space_needed = ObjectHeader::size() + data.len();
 
-        let mut container = match self.client.alloc(self.object_table_id, id, space_needed as u64){
+        let mut container = match self.client
+            .alloc(self.object_table_id, id, space_needed as u64)
+        {
             None => return false,
             Some(o) => o,
         };
 
         //put the header into container
-        let header: ObjectHeader = ObjectHeader {
-            otype
-        };
+        let header: ObjectHeader = ObjectHeader { otype };
 
         header.serialize(&mut container);
 
@@ -364,7 +366,11 @@ impl TAO {
                 //  [..header..|.........object data.........]
                 let size_of_header = ObjectHeader::size();
                 let data_slice: &[u8] = data.read();
-                callback(Rc::clone(&self.client), &data_slice[0..size_of_header], &data_slice[size_of_header..data_slice.len()-1]);
+                callback(
+                    Rc::clone(&self.client),
+                    &data_slice[0..size_of_header],
+                    &data_slice[size_of_header..data_slice.len() - 1],
+                );
                 return true;
             }
             None => {
@@ -372,7 +378,6 @@ impl TAO {
             }
         }
     }
-
 
     /// Adds the given Association (id1, type, id2) to the AssociationList (id1, type) if one exists.
     /// Otherwise, creates a new AssociationList and populates it with the given Association.
@@ -383,18 +388,23 @@ impl TAO {
     /// * `id2` - the id of the second object in this Association.
     pub fn association_add(&self, id1: &[u8], association_type: &[u8], id2: &[u8]) -> bool {
         //Add the association to the table. (id1, atype, id2)<key> -> data<value>.
-        let new_assoc = Association{
+        let new_assoc = Association {
             id: convert_from_slice(id2),
-            time: self.current_time()
+            time: self.current_time(),
         };
 
-        let mut assoc_key: Vec<u8> = Vec::with_capacity(id1.len() + association_type.len() + id2.len());
+        let mut assoc_key: Vec<u8> =
+            Vec::with_capacity(id1.len() + association_type.len() + id2.len());
         assoc_key.extend_from_slice(id1);
         assoc_key.extend_from_slice(association_type);
         assoc_key.extend_from_slice(id2);
 
         let space_needed = Association::size();
-        let mut assoc_container = match self.client.alloc(self.association_table_id, assoc_key.as_slice(), space_needed as u64){
+        let mut assoc_container = match self.client.alloc(
+            self.association_table_id,
+            assoc_key.as_slice(),
+            space_needed as u64,
+        ) {
             None => return false,
             Some(o) => o,
         };
@@ -405,26 +415,32 @@ impl TAO {
             // Add the association to the list. (id1, atype) -> (id2)
             // To do this, assume the list exists. if it doesn't exist, add our entry and add the list
             // to the db.
-            let mut list_key: Vec<u8> = Vec::with_capacity(id1.len() + association_type.len() + id2.len());
+            let mut list_key: Vec<u8> =
+                Vec::with_capacity(id1.len() + association_type.len() + id2.len());
             list_key.extend_from_slice(id1);
             list_key.extend_from_slice(association_type);
 
-            let mut list = match self.client.get(self.association_table_id, list_key.as_slice()){
-                Some(list_serialized) => {
-                    match AssociationList::deserialize(list_serialized.read()) {
-                        Ok(ls) => ls,
-                        Err(_) => return false,
-                    }
+            let mut list = match self.client
+                .get(self.association_table_id, list_key.as_slice())
+            {
+                Some(list_serialized) => match AssociationList::deserialize(list_serialized.read())
+                {
+                    Ok(ls) => ls,
+                    Err(_) => return false,
                 },
                 None => {
                     // Create a new AssociationList.
                     AssociationList::new()
-                },
+                }
             };
 
             list.add(new_assoc);
 
-            let mut list_container = match self.client.alloc(self.association_table_id, list_key.as_slice(), list.size() as u64){
+            let mut list_container = match self.client.alloc(
+                self.association_table_id,
+                list_key.as_slice(),
+                list.size() as u64,
+            ) {
                 None => return false,
                 Some(o) => o,
             };
@@ -432,8 +448,7 @@ impl TAO {
             list.serialize(&mut list_container);
 
             return self.client.put(list_container);
-        }
-        else {
+        } else {
             return false;
         }
     }
@@ -444,22 +459,22 @@ impl TAO {
     /// * `id1` - the id of the first object in this Association.
     /// * `association_type` - the type of this association.
     /// * `id2` - the id of the second object in this Association.
-    pub fn association_delete(&self, id1: &[u8], association_type: &[u8], id2: &[u8]) -> bool{
-        let assoc = Association{
+    pub fn association_delete(&self, id1: &[u8], association_type: &[u8], id2: &[u8]) -> bool {
+        let assoc = Association {
             id: convert_from_slice(id2),
-            time: 0 //This doesn't matter because we will find the assoc via the id.
+            time: 0, //This doesn't matter because we will find the assoc via the id.
         };
-        let mut list_key: Vec<u8> = Vec::with_capacity(id1.len() + association_type.len() + id2.len());
+        let mut list_key: Vec<u8> =
+            Vec::with_capacity(id1.len() + association_type.len() + id2.len());
         list_key.extend_from_slice(id1);
         list_key.extend_from_slice(association_type);
 
-
-        let mut list = match self.client.get(self.association_table_id, list_key.as_slice()){
-            Some(list_serialized) => {
-                match AssociationList::deserialize(list_serialized.read()) {
-                    Ok(ls) => ls,
-                    Err(_) => return false,
-                }
+        let mut list = match self.client
+            .get(self.association_table_id, list_key.as_slice())
+        {
+            Some(list_serialized) => match AssociationList::deserialize(list_serialized.read()) {
+                Ok(ls) => ls,
+                Err(_) => return false,
             },
             None => return false,
         };
@@ -467,23 +482,28 @@ impl TAO {
         list.remove(assoc.id);
 
         // recommit the list
-        let mut list_container = match self.client.alloc(self.association_table_id, list_key.as_slice(), list.size() as u64){
+        let mut list_container = match self.client.alloc(
+            self.association_table_id,
+            list_key.as_slice(),
+            list.size() as u64,
+        ) {
             None => return false,
             Some(o) => o,
         };
 
         list.serialize(&mut list_container);
 
-        if self.client.put(list_container){
+        if self.client.put(list_container) {
             // Delete the association
-            let mut assoc_key: Vec<u8> = Vec::with_capacity(id1.len() + association_type.len() + id2.len());
+            let mut assoc_key: Vec<u8> =
+                Vec::with_capacity(id1.len() + association_type.len() + id2.len());
             assoc_key.extend_from_slice(id1);
             assoc_key.extend_from_slice(association_type);
             assoc_key.extend_from_slice(id2);
-            self.client.del(self.association_table_id, assoc_key.as_slice());
+            self.client
+                .del(self.association_table_id, assoc_key.as_slice());
             return true;
-        }
-        else {
+        } else {
             return false;
         }
     }
@@ -494,8 +514,15 @@ impl TAO {
     /// * `id1` - the id of the first object in this Association.
     /// * `association_type` - the type of this association.
     /// * `id2` - the id of the second object in this Association.
-    pub fn association_get(&self, id1: &[u8], association_type: &[u8], id2: &[u8], _assoc_response_handler: AssocResponseHandler) -> bool {
-        let mut assoc_key: Vec<u8> = Vec::with_capacity(id1.len() + association_type.len() + id2.len());
+    pub fn association_get(
+        &self,
+        id1: &[u8],
+        association_type: &[u8],
+        id2: &[u8],
+        _assoc_response_handler: AssocResponseHandler,
+    ) -> bool {
+        let key_len = id1.len() + association_type.len() + id2.len();
+        let mut assoc_key: Vec<u8> = Vec::with_capacity(key_len * 4);
         assoc_key.extend_from_slice(id1);
         assoc_key.extend_from_slice(association_type);
         assoc_key.extend_from_slice(id2);
@@ -504,7 +531,9 @@ impl TAO {
         let len = id1.len() + association_type.len();
 
         // Lookup the association list.
-        match self.client.get(self.association_table_id, &assoc_key[0..len]) {
+        match self.client
+            .get(self.association_table_id, &assoc_key[0..len])
+        {
             Some(a_list) => {
                 let list = a_list.read();
 
@@ -512,22 +541,46 @@ impl TAO {
                 let s = size_of::<Association>();
                 let n = list.len() / s;
 
-                // Lookup every assoc and write to the response packet.
+                // Construct a key for the database lookup.
                 for i in 0..n {
                     let l = i * s;
                     let r = l + size_of::<Id>();
                     let id = &list[l..r];
 
-                    assoc_key[len..(len + id2.len())].copy_from_slice(id);
+                    let l = (key_len * i) + len;
+                    let r = l + id2.len();
 
-                    if let Some(assoc) = self.client.get(self.association_table_id, &assoc_key) {
-                        self.client.resp(assoc.read());
-                    } else {
-                        return false;
+                    match i {
+                        0 => assoc_key[l..r].copy_from_slice(id),
+
+                        _ => {
+                            assoc_key.extend_from_slice(id1);
+                            assoc_key.extend_from_slice(association_type);
+                            assoc_key.extend_from_slice(id);
+                        }
                     }
                 }
 
-                return true;
+                // Lookup the assocs, add them to the response buffer.
+                let buf =
+                    self.client
+                        .multiget(self.association_table_id, key_len as u16, &assoc_key);
+
+                match buf {
+                    Some(vals) => {
+                        if vals.num() > 0 {
+                            self.client.resp(vals.read());
+                        }
+
+                        while vals.next() {
+                            self.client.resp(vals.read());
+                        }
+
+                        return true;
+                    }
+
+                    None => return false,
+                }
             }
 
             None => return false, //Error assoc does not exist.
@@ -536,7 +589,9 @@ impl TAO {
 
     /// Returns seconds since unix epoch.
     fn current_time(&self) -> Time {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("invalid time");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("invalid time");
         now.as_secs()
     }
 
@@ -553,16 +608,15 @@ impl TAO {
 ///
 /// # Arguments
 /// * `val` - the slice being converted.
-fn convert_from_slice(val: &[u8]) -> u64{
-    let val: u64 = 0 | val[0] as u64 | (val[1] as u64) << 8 |
-                    (val[2] as u64) << 16 | (val[3] as u64) << 24 |
-                    (val[4] as u64) << 32 | (val[5] as u64) << 40 |
-                    (val[6] as u64) << 48 | (val[7] as u64) << 56;
+fn convert_from_slice(val: &[u8]) -> u64 {
+    let val: u64 = 0 | val[0] as u64 | (val[1] as u64) << 8 | (val[2] as u64) << 16
+        | (val[3] as u64) << 24 | (val[4] as u64) << 32 | (val[5] as u64) << 40
+        | (val[6] as u64) << 48 | (val[7] as u64) << 56;
     return val;
 }
 
 struct ObjectHeader {
-    otype: ObjectType
+    otype: ObjectType,
 }
 impl ObjectHeader {
     /// Returns the space in memory required to serialize this struct.
@@ -571,7 +625,7 @@ impl ObjectHeader {
         otype_size
     }
 
-    fn serialize(&self, bytes: &mut WriteBuf){
+    fn serialize(&self, bytes: &mut WriteBuf) {
         bytes.write_u16(self.otype, true)
     }
 
@@ -580,16 +634,14 @@ impl ObjectHeader {
             Ok(v) => v,
             Err(e) => return Err(e),
         };
-        Ok(ObjectHeader {
-            otype: obj_type,
-        })
+        Ok(ObjectHeader { otype: obj_type })
     }
 }
 
 #[derive(Debug)]
 pub struct Association {
     id: Id,
-    time: Time
+    time: Time,
 }
 impl PartialEq for Association {
     fn eq(&self, other: &Association) -> bool {
@@ -604,7 +656,7 @@ impl Association {
         id_size + time_size
     }
 
-    fn serialize(&self, bytes: &mut WriteBuf){
+    fn serialize(&self, bytes: &mut WriteBuf) {
         bytes.write_u64(self.id, true);
         bytes.write_u64(self.time, true);
     }
@@ -612,7 +664,7 @@ impl Association {
     fn deserialize(mut bytes: &[u8]) -> Result<Association, sandstorm::io::Error> {
         Ok(Association {
             id: bytes.read_u64::<LittleEndian>().unwrap(),
-            time: bytes.read_u64::<LittleEndian>().unwrap()
+            time: bytes.read_u64::<LittleEndian>().unwrap(),
         })
 
         // match bytes.read_u64::<LittleEndian>() {
@@ -629,8 +681,8 @@ impl Association {
 }
 
 #[derive(Debug)]
-struct AssociationList  {
-    list: Vec<Association>
+struct AssociationList {
+    list: Vec<Association>,
 }
 impl PartialEq for AssociationList {
     fn eq(&self, other: &AssociationList) -> bool {
@@ -651,9 +703,7 @@ impl PartialEq for AssociationList {
 impl AssociationList {
     fn new() -> AssociationList {
         let my_vector: Vec<Association> = Vec::with_capacity(1); //This is not allowed...
-        AssociationList {
-            list: my_vector
-        }
+        AssociationList { list: my_vector }
     }
     /// Returns the number of associations in this list.
     fn len(&self) -> usize {
@@ -675,7 +725,7 @@ impl AssociationList {
     ///
     /// # Arguments
     /// * `idx` - the index of the association to be returned.
-    fn association_at(& self, idx: usize) -> &Association {
+    fn association_at(&self, idx: usize) -> &Association {
         &self.list[idx]
     }
 
@@ -684,7 +734,7 @@ impl AssociationList {
     /// # Costs
     /// Memory: O(n) -> Allocates structure to return.
     /// Time: O(n) where n is the length of the list.
-    fn serialize(&self, bytes: &mut WriteBuf){
+    fn serialize(&self, bytes: &mut WriteBuf) {
         // let count: usize = self.len() as usize;
         for i in 0..self.len() {
             self.association_at(i).serialize(bytes)
@@ -697,7 +747,7 @@ impl AssociationList {
     /// Memory: O(n) -> Allocates structure to return.
     /// Time: O(n) where n is the length of the list.
     fn deserialize(bytes: &[u8]) -> Result<AssociationList, sandstorm::io::Error> {
-        let capacity = bytes.len()/Association::size();
+        let capacity = bytes.len() / Association::size();
 
         let mut list: Vec<Association> = Vec::with_capacity(capacity);
 
@@ -708,9 +758,7 @@ impl AssociationList {
             list.push(assoc);
             start += Association::size();
         }
-        Ok(AssociationList{
-            list: list
-        })
+        Ok(AssociationList { list: list })
     }
 
     /// Removes the association with the given id from this association list.
@@ -722,16 +770,16 @@ impl AssociationList {
     ///
     /// # Arguments
     /// * `id_2` - the id of the association to be removed.
-    fn remove(&mut self, id_2: Id){
+    fn remove(&mut self, id_2: Id) {
         for pos in 0..self.len() {
             // Find the association.
             if self.association_at(pos).id == id_2 {
                 // Shift everything down by one.
-                for idx in pos..self.len()-1 {
+                for idx in pos..self.len() - 1 {
                     //re-arrange references.
-                    self.list[idx] = Association{
+                    self.list[idx] = Association {
                         id: self.list[idx - 1].id,
-                        time: self.list[idx - 1].time
+                        time: self.list[idx - 1].time,
                     };
                 }
                 // Remove extra space at end? This looks to copy data but might save space?
@@ -754,19 +802,18 @@ impl AssociationList {
     fn add(&mut self, association: Association) {
         // when associations get added, they get added in order of time. newest -> oldest.
         // Could do a binary search to find insertion point but.. that's probably silly.
-        self.list.push(Association{
-                            id: association.id,
-                            time: association.time
-                            }
-                    );
+        self.list.push(Association {
+            id: association.id,
+            time: association.time,
+        });
 
         for pos in 0..self.len() {
             if self.association_at(pos).time < association.time {
                 // Make room for insertion
-                for idx in self.len()-2..pos+1 {
-                    self.list[idx] = Association{
+                for idx in self.len() - 2..pos + 1 {
+                    self.list[idx] = Association {
                         id: self.list[idx + 1].id,
-                        time: self.list[idx + 1].time
+                        time: self.list[idx + 1].time,
                     };
                 }
                 self.list[pos] = association;
@@ -775,7 +822,6 @@ impl AssociationList {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -786,11 +832,8 @@ mod tests {
         assert_eq!(2 + 2, 4);
     }
     #[test]
-    fn ser_dser(){
-        let assoc = Association {
-            id : 1,
-            time : 2
-        };
+    fn ser_dser() {
+        let assoc = Association { id: 1, time: 2 };
         let mut data = vec![];
         let assoc_des: Association = match assoc.serialize(&mut data) {
             None => Association::deserialize(data.as_slice()).unwrap(),
@@ -800,17 +843,15 @@ mod tests {
     }
 
     #[test]
-    fn ser_dser_list(){
+    fn ser_dser_list() {
         let mut list: Vec<Association> = Vec::with_capacity(1);
         for i in 0..50000 {
             list.push(Association {
                 id: i,
-                time: i as u64
+                time: i as u64,
             });
         }
-        let alist = AssociationList{
-            list: list
-        };
+        let alist = AssociationList { list: list };
 
         let mut data = vec![];
         let assoc_des = match alist.serialize(&mut data) {

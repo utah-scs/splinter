@@ -37,15 +37,15 @@ use db::e2d2::scheduler::*;
 use db::config;
 use db::cycles::*;
 use db::dispatch::Dispatch;
+use db::install::Installer;
 use db::master::Master;
 use db::sched::RoundRobin;
 use db::task::TaskPriority;
-use db::install::Installer;
 
 use spin::RwLock;
 
-use nix::sys::signal;
 use libc::ucontext_t;
+use nix::sys::signal;
 
 /// Interval in milliseconds at which all schedulers in the system will be scanned for misbehaving
 /// tasks.
@@ -229,7 +229,11 @@ fn config_and_init_netbricks(config: &config::ServerConfig) -> NetbricksContext 
 }
 
 /// Custom signal handler for stack overflows.
-extern fn handle_sigsegv(_signum: i32, _siginfo: *mut libc::siginfo_t, context: *mut libc::c_void) {
+extern "C" fn handle_sigsegv(
+    _signum: i32,
+    _siginfo: *mut libc::siginfo_t,
+    context: *mut libc::c_void,
+) {
     // We can't do much as it's different stack all together; swapcontext() might help.
     // Enter into an infinite while loop so that the watchdog catches this thread.
     let ucontext: &mut ucontext_t = unsafe { &mut *(context as *mut ucontext_t) };
@@ -265,12 +269,14 @@ fn main() {
     for tenant in 1..(config.num_tenants + 1) {
         master.fill_test(tenant, 1, 1 * 1000 * 1000);
         // master.fill_tao(tenant, 500000);
+        // master.fill_aggregate(tenant, 1, 3 * 100 * 1000);
+
         master.load_test(tenant);
     }
 
     // Create tenants with data and extensions for Sanity
-    master.load_test(100);
-    master.fill_test(100, 100, 0);
+    // master.load_test(100);
+    // master.fill_test(100, 100, 0);
 
     info!("Finished populating data and extensions");
 
@@ -340,7 +346,10 @@ fn main() {
 
             let tid = sched.thread();
             let core = sched.core();
-            warn!("Detected misbehaving task {} on core {}.", tid, core);
+            warn!(
+                "Detected misbehaving task {} on core {}. Current: {}, Latest: {}, Cycles/s {}",
+                tid, core, current, latest, cycles_per_second(),
+            );
 
             // There might be an uncooperative task on this scheduler. Dequeue it's tasks and any
             // pending response packets.

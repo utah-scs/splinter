@@ -13,19 +13,19 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::cell::{Cell, RefCell};
 use std::str;
 use std::sync::Arc;
-use std::cell::{Cell, RefCell};
 
-use super::tenant::Tenant;
 use super::alloc::Allocator;
+use super::tenant::Tenant;
 use super::wireformat::{InvokeRequest, InvokeResponse};
 
+use sandstorm::buf::{MultiReadBuf, ReadBuf, WriteBuf};
 use sandstorm::db::DB;
-use sandstorm::buf::{ReadBuf, WriteBuf};
 
-use e2d2::interface::Packet;
 use e2d2::common::EmptyMetadata;
+use e2d2::interface::Packet;
 
 /// The maximum number of bytes that can be allocated by an instance of an
 /// extension on the table heap.
@@ -139,6 +139,40 @@ impl DB for Context {
                     .and_then(| object | { self.heap.resolve(object) })
                     // Return the value wrapped up inside a safe type.
                     .and_then(| (_k, v) | { unsafe { Some(ReadBuf::new(v)) } })
+    }
+
+    /// Lookup the `DB` trait for documentation on this method.
+    fn multiget(&self, table_id: u64, key_len: u16, keys: &[u8]) -> Option<MultiReadBuf> {
+        // Lookup the database for each key in the supplied list of keys. If all exist,
+        // return a MultiReadBuf to the extension.
+        if let Some(table) = self.tenant.get_table(table_id) {
+            let mut objs = Vec::new();
+
+            // Iterate through the list of keys. Lookup each one of them at the database.
+            for key in keys.chunks(key_len as usize) {
+                if key.len() != key_len as usize {
+                    break;
+                }
+
+                let r = table
+                    .get(key)
+                    .and_then(|obj| self.heap.resolve(obj))
+                    .and_then(|(_k, v)| {
+                        objs.push(v);
+                        Some(())
+                    });
+
+                if r.is_none() {
+                    return None;
+                }
+            }
+
+            unsafe {
+                return Some(MultiReadBuf::new(objs));
+            }
+        }
+
+        return None;
     }
 
     /// Lookup the `DB` trait for documentation on this method.

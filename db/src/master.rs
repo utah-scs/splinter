@@ -241,11 +241,14 @@ impl Master {
             .expect("Failed to init test table.");
 
         // The number of records per aggregation.
-        const N_AGG: u32 = 4;
+        const N_AGG: u32 = 12;
         // The length of each record's key.
         const K_LEN: u32 = 30;
         // The length of each record's value.
         const V_LEN: u32 = 100;
+
+        // The total number of records.
+        let records: u32 = 4 * (num + 1);
 
         // First, add in the indirection records. Keys are 8 bytes, and values are
         // lists of 30 Byte keys.
@@ -258,7 +261,7 @@ impl Master {
 
             for e in 0..N_AGG {
                 let mut k = vec![0; K_LEN as usize];
-                let t: [u8; 4] = unsafe { transmute((i * N_AGG + e).to_le()) };
+                let t: [u8; 4] = unsafe { transmute(((i * N_AGG + e) % records).to_le()) };
                 &k[0..4].copy_from_slice(&t);
 
                 val.extend_from_slice(&k);
@@ -271,7 +274,7 @@ impl Master {
         }
 
         // Next, populate the actual records.
-        for i in 1..((num + 1) * N_AGG) {
+        for i in 1..records {
             let mut key = vec![0; K_LEN as usize];
             let mut val = vec![0; V_LEN as usize];
 

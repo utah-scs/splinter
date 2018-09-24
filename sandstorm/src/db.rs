@@ -13,7 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use super::buf::{ReadBuf, WriteBuf};
+use super::buf::{ReadBuf, WriteBuf, MultiReadBuf};
 
 /// Definition of the DB trait that will allow extensions to access
 /// the database.
@@ -33,6 +33,8 @@ pub trait DB {
     /// A handle that can be used to read the value if the key-value pair
     /// exists inside the database.
     fn get(&self, table: u64, key: &[u8]) -> Option<ReadBuf>;
+
+    fn multiget(&self, table: u64, key_len: u16, keys: &[u8]) -> Option<MultiReadBuf>;
 
     /// This method will allocate space for a key-value pair inside the
     /// database, and if the allocation was successfull, return a handle that

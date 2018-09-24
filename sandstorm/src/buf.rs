@@ -14,6 +14,9 @@
  */
 
 extern crate bytes;
+
+use std::cell::Cell;
+
 use self::bytes::{BufMut, Bytes, BytesMut};
 
 /// This type represents a read-only buffer of bytes that can be received from
@@ -41,9 +44,7 @@ impl ReadBuf {
     /// # Return
     /// The `ReadBuf` wrapping the passed in buffer.
     pub unsafe fn new(buffer: Bytes) -> ReadBuf {
-        ReadBuf {
-            inner: buffer,
-        }
+        ReadBuf { inner: buffer }
     }
 
     /// This method returns the number of bytes present inside the `ReadBuf`.
@@ -178,9 +179,13 @@ impl WriteBuf {
     /// space left inside the `WriteBuf` to perform the write.
     pub fn write_u16(&mut self, data: u16, le: bool) {
         match le {
-            true => { self.inner.put_u16_le(data); }
+            true => {
+                self.inner.put_u16_le(data);
+            }
 
-            false => { self.inner.put_u16_be(data); }
+            false => {
+                self.inner.put_u16_be(data);
+            }
         }
     }
 
@@ -198,9 +203,13 @@ impl WriteBuf {
     /// space left inside the `WriteBuf` to perform the write.
     pub fn write_u32(&mut self, data: u32, le: bool) {
         match le {
-            true => { self.inner.put_u32_le(data); }
+            true => {
+                self.inner.put_u32_le(data);
+            }
 
-            false => { self.inner.put_u32_be(data); }
+            false => {
+                self.inner.put_u32_be(data);
+            }
         }
     }
 
@@ -218,9 +227,13 @@ impl WriteBuf {
     /// space left inside the `WriteBuf` to perform the write.
     pub fn write_u64(&mut self, data: u64, le: bool) {
         match le {
-            true => { self.inner.put_u64_le(data); }
+            true => {
+                self.inner.put_u64_le(data);
+            }
 
-            false => { self.inner.put_u64_be(data); }
+            false => {
+                self.inner.put_u64_be(data);
+            }
         }
     }
 
@@ -233,6 +246,76 @@ impl WriteBuf {
     /// A `Bytes` handle to the underlying data that can no longer be mutated.
     pub unsafe fn freeze(self) -> (u64, Bytes) {
         (self.table, self.inner.freeze())
+    }
+}
+
+pub struct MultiReadBuf {
+    inner: Vec<Bytes>,
+
+    index: Cell<usize>,
+
+    panic: Cell<bool>,
+}
+
+impl MultiReadBuf {
+    pub unsafe fn new(list: Vec<Bytes>) -> MultiReadBuf {
+        MultiReadBuf {
+            inner: list,
+            index: Cell::new(0),
+            panic: Cell::new(false),
+        }
+    }
+
+    pub fn num(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn len(&self) -> usize {
+        if self.panic.get() {
+            panic!("Out of bounds on MultiReadBuf.");
+        }
+
+        self.inner[self.index.get()].len()
+    }
+
+    pub fn next(&self) -> bool {
+        let curr = self.index.get();
+
+        match curr >= self.inner.len() - 1 {
+            true => {
+                self.panic.set(true);
+                return false;
+            }
+
+            false => {
+                self.index.set(curr + 1);
+                return true;
+            }
+        }
+    }
+
+    pub fn prev(&self) -> bool {
+        let curr = self.index.get();
+
+        match curr == 0 {
+            true => {
+                self.panic.set(true);
+                return false;
+            }
+
+            false => {
+                self.index.set(curr - 1);
+                return true;
+            }
+        }
+    }
+
+    pub fn read(&self) -> &[u8] {
+        if self.panic.get() {
+            panic!("Out of bounds on MultiReadBuf.");
+        }
+
+        self.inner[self.index.get()].as_ref()
     }
 }
 
