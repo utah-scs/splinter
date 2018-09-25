@@ -95,6 +95,8 @@ pub struct ServerConfig {
     pub client_ip: String,
     pub num_tenants: u32,
     pub install_addr: String,
+    pub workload: String,
+    pub num_records: u32,
 }
 
 impl ServerConfig {

@@ -263,22 +263,48 @@ fn main() {
     info!("Starting up Sandstorm server with config {:?}", config);
 
     let master = Arc::new(Master::new());
-    info!("Populating test data table and extensions...");
 
-    // Create tenants with data and extensions for YCSB.
-    for tenant in 1..(config.num_tenants + 1) {
-        master.fill_test(tenant, 1, 1 * 1000 * 1000);
-        // master.fill_tao(tenant, 500000);
-        // master.fill_aggregate(tenant, 1, 3 * 100 * 1000);
+    // Create tenants with data and extensions.
+    match config.workload.as_str() {
+        "YCSB" => {
+            info!(
+                "Populating YCSB data, {} tenants, {} records/tenant",
+                config.num_tenants, config.num_records
+            );
+            for tenant in 1..(config.num_tenants + 1) {
+                master.fill_test(tenant, 1, config.num_records);
+                master.load_test(tenant);
+            }
+        }
 
-        master.load_test(tenant);
+        "TAO" => {
+            info!(
+                "Populating TAO data, {} tenants, {} records/tenant",
+                config.num_tenants, config.num_records
+            );
+            for tenant in 1..(config.num_tenants + 1) {
+                master.fill_tao(tenant, config.num_records);
+                master.load_test(tenant);
+            }
+        }
+
+        "AGGREGATE" => {
+            info!(
+                "Populating AGGREGATE data, {} tenants, {} records/tenant",
+                config.num_tenants, config.num_records
+            );
+            for tenant in 1..(config.num_tenants + 1) {
+                master.fill_aggregate(tenant, 1, config.num_records);
+                master.load_test(tenant);
+            }
+        }
+
+        _ => {
+            info!("Populating SANITY data for tenant 100");
+            master.fill_test(100, 100, 0);
+            master.load_test(100);
+        }
     }
-
-    // Create tenants with data and extensions for Sanity
-    // master.load_test(100);
-    // master.fill_test(100, 100, 0);
-
-    info!("Finished populating data and extensions");
 
     // Setup Netbricks.
     let mut net_context: NetbricksContext = config_and_init_netbricks(&config);
@@ -348,7 +374,11 @@ fn main() {
             let core = sched.core();
             warn!(
                 "Detected misbehaving task {} on core {}. Current: {}, Latest: {}, Cycles/s {}",
-                tid, core, current, latest, cycles_per_second(),
+                tid,
+                core,
+                current,
+                latest,
+                cycles_per_second(),
             );
 
             // There might be an uncooperative task on this scheduler. Dequeue it's tasks and any
@@ -393,7 +423,8 @@ fn main() {
             while temp.read().len() == 0 {}
 
             // Enqueue all tasks and response packets from the previous scheduler.
-            let new = temp.write()
+            let new = temp
+                .write()
                 .pop()
                 .expect("Failed to retrieve added scheduler.");
             *sched = new;
