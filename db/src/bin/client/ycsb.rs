@@ -35,6 +35,8 @@ use db::e2d2::allocators::*;
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
 use db::log::*;
+use db::rpc::*;
+use db::wireformat::*;
 
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
@@ -205,8 +207,11 @@ impl YcsbSend {
         // The payload on an invoke() based put request consists of the extensions name ("put"),
         // the table id to perform the lookup on, the length of the key to lookup, the key, and the
         // value to be inserted into the database.
-        let payload_len = "put".as_bytes().len() + mem::size_of::<u64>() + mem::size_of::<u16>()
-            + config.key_len + config.value_len;
+        let payload_len = "put".as_bytes().len()
+            + mem::size_of::<u64>()
+            + mem::size_of::<u16>()
+            + config.key_len
+            + config.value_len;
         let mut payload_put = Vec::with_capacity(payload_len);
         payload_put.extend_from_slice("put".as_bytes());
         payload_put.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
@@ -318,6 +323,15 @@ where
     // Vector of sampled request latencies. Required to calculate distributions once all responses
     // have been received.
     latencies: Vec<u64>,
+
+    // If true, this receiver will make latency measurements.
+    master: bool,
+
+    // If true, then responses will be considered to correspond to native gets and puts.
+    native: bool,
+
+    // Time stamp in cycles at which measurement stopped.
+    stop: u64,
 }
 
 // Implementation of methods on YcsbRecv.
@@ -329,20 +343,61 @@ where
     ///
     /// # Arguments
     ///
-    /// * `port` : Network port on which responses will be polled for.
-    /// * `resps`: The number of responses to wait for before calculating statistics.
+    /// * `port` :  Network port on which responses will be polled for.
+    /// * `resps`:  The number of responses to wait for before calculating statistics.
+    /// * `master`: Boolean indicating if the receiver should make latency measurements.
+    /// * `native`: If true, responses will be considered to correspond to native gets and puts.
     ///
     /// # Return
     ///
     /// A YCSB response receiver that measures the median latency and throughput of a Sandstorm
     /// server.
-    fn new(port: T, resps: u64) -> YcsbRecv<T> {
+    fn new(port: T, resps: u64, master: bool, native: bool) -> YcsbRecv<T> {
         YcsbRecv {
             receiver: dispatch::Receiver::new(port),
             responses: resps,
             start: cycles::rdtsc(),
             recvd: 0,
-            latencies: Vec::with_capacity(2 * 1000 * 1000),
+            latencies: Vec::with_capacity(resps as usize),
+            master: master,
+            native: native,
+            stop: 0,
+        }
+    }
+}
+
+// Implementation of the `Drop` trait on YcsbRecv.
+impl<T> Drop for YcsbRecv<T>
+where
+    T: PacketTx + PacketRx + Display + Clone + 'static,
+{
+    fn drop(&mut self) {
+        // Calculate & print the throughput for all client threads.
+        println!(
+            "YCSB Throughput {}",
+            self.recvd as f64 / cycles::to_seconds(self.stop - self.start)
+        );
+
+        // Calculate & print median & tail latency only on the master thread.
+        if self.master {
+            self.latencies.sort();
+
+            let m;
+            let t = self.latencies[(self.latencies.len() * 99) / 100];
+            match self.latencies.len() % 2 {
+                0 => {
+                    let n = self.latencies.len();
+                    m = (self.latencies[n / 2] + self.latencies[(n / 2) + 1]) / 2;
+                }
+
+                _ => m = self.latencies[self.latencies.len() / 2],
+            }
+
+            println!(
+                ">>> {} {}",
+                cycles::to_seconds(m) * 1e9,
+                cycles::to_seconds(t) * 1e9
+            );
         }
     }
 }
@@ -354,55 +409,61 @@ where
 {
     // Called internally by Netbricks.
     fn execute(&mut self) {
-        // Do nothing if all responses have been received.
+        // Don't do anything after all responses have been received.
         if self.responses <= self.recvd {
             return;
         }
 
-        // Try to receive packets from the network port. If there are packets, sample the latency
-        // of the Sandstorm server.
+        // Try to receive packets from the network port.
+        // If there are packets, sample the latency of the server.
         if let Some(mut packets) = self.receiver.recv_res() {
             while let Some(packet) = packets.pop() {
                 self.recvd += 1;
 
-                // While sampling, read the time-stamp at which the request was generated from the
-                // received packet's payload.
-                if self.recvd & 0xf == 0 {
+                // Measure latency on the master client after the first 2 million requests.
+                // The start timestamp is present on the RPC response header.
+                if self.recvd > 2 * 1000 * 1000 && self.master {
                     let curr = cycles::rdtsc();
 
-                    // XXX Uncomment to print out responses.
-                    // println!("{:?}", packet.get_payload());
+                    match self.native {
+                        // The response corresponds to an invoke() RPC.
+                        false => {
+                            let p = packet.parse_header::<InvokeResponse>();
+                            self.latencies
+                                .push(curr - p.get_header().common_header.stamp);
+                            p.free_packet();
+                        }
 
-                    let sent = &packet.get_payload()[1..9];
-                    let sent = 0 | sent[0] as u64 | (sent[1] as u64) << 8 | (sent[2] as u64) << 16
-                        | (sent[3] as u64) << 24
-                        | (sent[4] as u64) << 32
-                        | (sent[5] as u64) << 40
-                        | (sent[6] as u64) << 48
-                        | (sent[7] as u64) << 56;
+                        // The response corresponds to a get() or put() RPC.
+                        // The opcode on the response identifies the RPC type.
+                        true => match parse_rpc_opcode(&packet) {
+                            OpCode::SandstormGetRpc => {
+                                let p = packet.parse_header::<GetResponse>();
+                                self.latencies
+                                    .push(curr - p.get_header().common_header.stamp);
+                                p.free_packet();
+                            }
 
-                    self.latencies.push(curr - sent);
+                            OpCode::SandstormPutRpc => {
+                                let p = packet.parse_header::<PutResponse>();
+                                self.latencies
+                                    .push(curr - p.get_header().common_header.stamp);
+                                p.free_packet();
+                            }
+
+                            _ => packet.free_packet(),
+                        },
+                    }
+                } else {
+                    packet.free_packet();
                 }
-
-                packet.free_packet();
             }
         }
 
-        // The moment all response packets have been received, output the measured latency
-        // distribution and throughput.
+        // The moment all response packets have been received, set the value of the
+        // stop timestamp so that throughput can be estimated later.
         if self.responses <= self.recvd {
-            let stop = cycles::rdtsc();
-
-            self.latencies.sort();
-            let median = self.latencies[self.latencies.len() / 2];
-            let tail = self.latencies[(self.latencies.len() * 99) / 100];
-
-            info!(
-                "Median(ns): {} Tail(ns): {} Throughput(Kops/s): {}",
-                cycles::to_seconds(median) * 1e9,
-                cycles::to_seconds(tail) * 1e9,
-                self.recvd as f64 / cycles::to_seconds(stop - self.start)
-            );
+            self.stop = cycles::rdtsc();
         }
     }
 
@@ -458,8 +519,16 @@ fn setup_send<S>(
 ///
 /// * `ports`:     Network port on which packets will be sent.
 /// * `scheduler`: Netbricks scheduler to which YcsbRecv will be added.
-fn setup_recv<S>(ports: Vec<CacheAligned<PortQueue>>, scheduler: &mut S, _core: i32)
-where
+/// * `master`:    If true, the added YcsbRecv will make latency measurements.
+/// * `native`:    If true, the added YcsbRecv will assume that responses correspond to gets
+///                and puts.
+fn setup_recv<S>(
+    ports: Vec<CacheAligned<PortQueue>>,
+    scheduler: &mut S,
+    _core: i32,
+    master: bool,
+    native: bool,
+) where
     S: Scheduler + Sized,
 {
     if ports.len() != 1 {
@@ -468,7 +537,12 @@ where
     }
 
     // Add the receiver to a netbricks pipeline.
-    match scheduler.add_task(YcsbRecv::new(ports[0].clone(), 32 * 1000 * 1000 as u64)) {
+    match scheduler.add_task(YcsbRecv::new(
+        ports[0].clone(),
+        34 * 1000 * 1000 as u64,
+        master,
+        native,
+    )) {
         Ok(_) => {
             info!(
                 "Successfully added YcsbRecv with rx queue {}.",
@@ -515,17 +589,23 @@ fn main() {
             .expect("Failed to retrieve network port!")
             .clone();
 
+        let mut master = false;
+        if i == 0 {
+            master = true;
+        }
+
+        let native = !config.use_invoke;
+
         // Setup the receive side.
         net_context
             .add_pipeline_to_core(
                 receive[i],
                 Arc::new(
                     move |_ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
-                        setup_recv(port.clone(), sched, core)
+                        setup_recv(port.clone(), sched, core, master, native)
                     },
                 ),
-            )
-            .expect("Failed to initialize receive side.");
+            ).expect("Failed to initialize receive side.");
 
         // Setup the send side.
         net_context
@@ -536,16 +616,18 @@ fn main() {
                         setup_send(&config::ClientConfig::load(), ports, sched, core)
                     },
                 ),
-            )
-            .expect("Failed to initialize send side.");
+            ).expect("Failed to initialize send side.");
     }
+
+    // Allow the system to bootup fully.
+    std::thread::sleep(std::time::Duration::from_secs(1));
 
     // Run the client.
     net_context.execute();
 
     // Sleep for an amount of time approximately equal to the estimated execution time, and then
     // shutdown the client.
-    std::thread::sleep(std::time::Duration::from_secs(exec as u64 + 10));
+    std::thread::sleep(std::time::Duration::from_secs(exec as u64 + 11));
 
     // Stop the client.
     net_context.stop();
@@ -611,7 +693,10 @@ mod test {
     // Convert a key to u32 assuming little endian.
     fn convert_key(key: &[u8]) -> u32 {
         assert_eq!(4, key.len());
-        let k: u32 = 0 | key[0] as u32 | (key[1] as u32) << 8 | (key[2] as u32) << 16
+        let k: u32 = 0
+            | key[0] as u32
+            | (key[1] as u32) << 8
+            | (key[2] as u32) << 16
             | (key[3] as u32) << 24;
         k
     }
@@ -684,7 +769,8 @@ mod test {
         let ht = hist.lock().unwrap();
         let mut kvs: Vec<_> = ht.iter().collect();
         kvs.sort();
-        let v: Vec<_> = kvs.iter()
+        let v: Vec<_> = kvs
+            .iter()
             .map(|&(k, v)| println!("Key {:?}: {:?} gets/puts", k, v))
             .collect();
         println!("Unique key count: {}", v.len());
