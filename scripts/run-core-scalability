@@ -47,8 +47,10 @@ cores=(1 2 4 8)
 rates=(1000000)
 
 # Header for the output file. Required inorder to plot the results.
-echo "Offered 50 99 Thrpt Tenants TSkew Cores" > ../ycsb_invoke_"$invoke".out
+echo "Offered 50 99 Thrpt Tenants TSkew Cores" > ../ycsb_invoke_"$invoke".data
 
+# Sets the request rate vector based on the value of invoke & a passed in
+# argument (number of cores).
 set_rates() {
     if [ "$invoke" == "true" ]
     then
@@ -99,10 +101,21 @@ do
         # Configure the client TOML file with the request rate.
         sed -i "s/req_rate = [1-9][0-9]*/req_rate = $rate/g" client.toml
 
-        # Run YCSB, and write out the median, 99th, and throughput.
-        RUST_LOG=debug ./target/release/ycsb 2>&1 | grep "Median(ns)" | \
-                awk "{ print $rate, \$3, \$5, \$7, $tenants, $tenant_skew, $core }" \
-                >> ../ycsb_invoke_"$invoke".out
+        # Run YCSB, and write out the output to a file.
+        rm -f ../samples.temp
+        RUST_LOG=debug ./target/release/ycsb >> ../samples.temp 2>&1
+
+        # Calculate the total measured server throughput.
+        thrpt=$(cat ../samples.temp | grep "YCSB Throughput" | \
+                awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+
+        # Print final numbers to a file.
+        cat ../samples.temp | grep ">>>" | \
+                awk "{ print $rate, \$2, \$3, $tenants, $tenant_skew, $cores, $thrpt }" >> \
+                ../ycsb_invoke_"$invoke".data
+
+        # Cleanup temp file.
+        rm ../samples.temp
     done
 done
 
