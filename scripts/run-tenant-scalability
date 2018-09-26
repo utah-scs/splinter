@@ -45,16 +45,28 @@ cores=$(cat client.toml | grep "server_udp_ports" | awk '{ print $NF }')
 
 # The different request rates that the YCSB client will be configured and run
 # with.
-rates=(900000 925000 950000 975000 1000000 1025000 1050000 1075000 1100000)
+rates=(850000 875000 900000 925000 950000 975000 1000000 1025000 1050000 1075000)
 
 # Header for the output file. Required inorder to plot the results.
-echo "Offered 50 99 Thrpt Tenants TSkew Cores" > ../ycsb_invoke_"$invoke".out
+echo "Offered 50 99 Tenants TSkew Cores Thrpt" > ../ycsb_invoke_"$invoke".data
+
+# Sets the request rate vector based on the value of invoke.
+set_rates() {
+    if [ "$invoke" == "false" ]
+    then
+        rates=(975000 1000000 1025000 1050000 1075000 1100000 1125000 1150000 \
+              1175000 1200000 1225000 1250000 1275000 1300000)
+    fi
+}
 
 # Run YCSB stressing a different number of tenants on the server.
 for tenant in ${tenants[@]}
 do
     # Configure the client TOML file with the number of tenants to stress.
     sed -i "s/num_tenants = [1-9][0-9]*/num_tenants = $tenant/g" client.toml
+
+    # Set the list of request rates that YCSB should generate.
+    set_rates
 
     # Run YCSB for each of the above request rates.
     for rate in ${rates[@]}
@@ -64,10 +76,21 @@ do
         # Configure the client TOML file with the request rate.
         sed -i "s/req_rate = [1-9][0-9]*/req_rate = $rate/g" client.toml
 
-        # Run YCSB, and write out the median, 99th, and throughput.
-        RUST_LOG=debug ./target/release/ycsb 2>&1 | grep "Median(ns)" | \
-                awk "{ print $rate, \$3, \$5, \$7, $tenant, $tenant_skew, $cores }" \
-                >> ../ycsb_invoke_"$invoke".out
+        # Run YCSB, and write out the output to a file.
+        rm -f ../samples.temp
+        RUST_LOG=debug ./target/release/ycsb >> ../samples.temp 2>&1
+
+        # Calculate the total measured server throughput.
+        thrpt=$(cat ../samples.temp | grep "YCSB Throughput" | \
+                awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+
+        # Print final numbers to a file.
+        cat ../samples.temp | grep ">>>" | \
+                awk "{ print $rate, \$2, \$3, $tenant, $tenant_skew, $cores, $thrpt }" >> \
+                ../ycsb_invoke_"$invoke".data
+
+        # Cleanup temp file.
+        rm ../samples.temp
     done
 done
 
