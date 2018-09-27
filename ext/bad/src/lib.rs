@@ -39,9 +39,9 @@ use sandstorm::db::DB;
 #[allow(unused_assignments)]
 pub fn init(_db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
     Box::new(move || {
-        // loop {}
-        let array: [i64; 5000000000000] = [0;5000000000000];
-        println!("{}", array[50000000]);
+        loop {}
+        // let array: [i64; 5000000000000] = [0;5000000000000];
+        // println!("{}", array[50000000]);
 
         // These two statements are needed to make the compiler happy.
         yield 0;

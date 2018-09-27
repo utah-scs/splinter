@@ -79,7 +79,7 @@ fn main() {
     let mut load = Vec::with_capacity(10000000);
     let mut enter = Vec::with_capacity(10000000);
 
-    for _ in 0..100000 {
+    for _ in 0..1000000 {
         for p in proc_names.iter() {
             let l = rdtsc();
             let mut ext = ext_manager.get(0, &p)
@@ -110,8 +110,14 @@ fn main() {
     load.sort();
     enter.sort();
 
-    println!("Load: {} ns, Enter: {} ns", to_seconds(load[load.len() / 2]) * 1e9,
-             to_seconds(enter[enter.len() / 2]) * 1e9,
+    let lm = load[load.len() / 2];
+    let em = enter[enter.len() / 2];
+
+    println!("Load: {} cycles {} ns, Enter: {} cycles {} ns",
+             lm,
+             to_seconds(lm) * 1e9,
+             em,
+             to_seconds(em) * 1e9,
              );
 
     db.assert_messages(expected.as_slice());

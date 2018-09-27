@@ -42,6 +42,9 @@ use sandstorm::db::DB;
 #[allow(unused_assignments)]
 pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
     Box::new(move || {
+        // XXX Return immediately so that we can measure task switch costs.
+        return 0;
+
         yield 0;
 
         let mut y = Vec::with_capacity(1000000);

@@ -12,9 +12,9 @@ all: netbricks
 
 so-test: netbricks
 	(cd db; cargo build --release)
-	(cd ext/tao; cargo build --release)
-	$(foreach i,$(shell seq 0 99),cp ext/tao/target/release/deps/libtao.so ext/tao/target/release/deps/libtao$(i).so;)
-	(cd db; RUST_BACKTRACE=1 cargo run --release --bin ext_bench)
+	(cd ext/test; cargo build --release)
+	$(foreach i,$(shell seq 0 99),cp ext/test/target/release/deps/libtest.so ext/get/target/release/deps/libtest$(i).so;)
+	(cd db; LD_LIBRARY_PATH=../net/target/native RUST_BACKTRACE=1 cargo run --release --bin ext_bench)
 
 bench: netbricks
 	(cd db; cargo run --release --bin table_bench)

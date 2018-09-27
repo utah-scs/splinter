@@ -40,7 +40,8 @@ use sandstorm::db::DB;
 pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
     Box::new(move || {
         // Basically a get() extension times 32.
-        for _i in 0u16..10u16 {
+        for i in 0u16..128u16 {
+            let mut y_n = 0;
             let mut obj = None;
 
             {
@@ -59,12 +60,16 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
                 // Next, split the arguments into a view over the table identifier
                 // (first eight bytes), and a view over the key to be looked up.
                 // De-serialize the table identifier into a u64.
-                let (table, key) = args.split_at(8);
+                let (table, val) = args.split_at(8);
                 let table: u64 =
                     0 | table[0] as u64 | (table[1] as u64) << 8 | (table[2] as u64) << 16
                         | (table[3] as u64) << 24 | (table[4] as u64) << 32
                         | (table[5] as u64) << 40 | (table[6] as u64) << 48
                         | (table[7] as u64) << 56;
+
+                // Next, retrieve the frequency at which we should yield.
+                let (y, key) = val.split_at(1);
+                y_n = y[0];
 
                 // Finally, lookup the database for the object.
                 obj = db.get(table, key);
@@ -74,7 +79,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             match obj {
                 // If the object was found, write it to the response.
                 Some(val) => {
-                    db.resp(val.read());
+                    db.resp(val.read().split_at(8).0);
                 }
 
                 // If the object was not found, write an error message to the
@@ -87,7 +92,9 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             }
 
             // Yield down to the database for a bit.
-            yield 0;
+            if i & ((y_n as u16) - 1) == 0  && (y_n as u16) < 128 {
+                yield 0;
+            }
         }
 
         // Procedure completed.
