@@ -79,3 +79,8 @@ combined = true
 
 # The percentage of assoc_range() requests.
 assocs_p = 40
+
+############################### LONG CLIENT CONFIG #############################
+
+# The percentage of invoke() based requests that are long running.
+long_pct = 20

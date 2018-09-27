@@ -154,6 +154,8 @@ pub struct ClientConfig {
 
     pub combined: bool,
     pub assocs_p: usize,
+
+    pub long_pct: usize,
 }
 
 impl ClientConfig {
