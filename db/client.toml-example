@@ -85,6 +85,9 @@ assocs_p = 40
 # The percentage of invoke() based requests that are long running.
 long_pct = 20
 
+# The frequency at which the extension should yield to the database.
+yield_f = 0
+
 ############################### BAD CLIENT CONFIG ##############################
 
 # The number of bad requests to generate for every 10 million operations.

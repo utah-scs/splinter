@@ -194,11 +194,13 @@ impl LongSend {
         payload_get.resize(payload_len, 0);
 
         // The payload on an invoke() based long request consists of the extensions name ("long"),
-        // the table id to perform the lookup on, and the key to lookup.
-        let payload_len = "long".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
+        // the table id to perform the lookup on, the yield frequency, and the key to lookup.
+        let payload_len =
+            "long".as_bytes().len() + mem::size_of::<u64>() + mem::size_of::<u8>() + config.key_len;
         let mut payload_long = Vec::with_capacity(payload_len);
         payload_long.extend_from_slice("long".as_bytes());
         payload_long.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
+        payload_long.extend_from_slice(&unsafe { transmute::<u8, [u8; 1]>(config.yield_f.to_le()) });
         payload_long.resize(payload_len, 0);
 
         LongSend {
@@ -252,10 +254,10 @@ impl Executable for LongSend {
                     self.sender.send_invoke(tenant, 3, &p_get, curr)
                 },
                 |tenant, key| {
-                    // First 12 bytes on the payload were already pre-populated with the
-                    // extension name (4 bytes), and the table id (8 bytes). Just write in the
-                    // first 4 bytes of the key.
-                    p_long[12..16].copy_from_slice(&key[0..4]);
+                    // First 13 bytes on the payload were already pre-populated with the
+                    // extension name (4 bytes), the table id (8 bytes), and the yield frequency.
+                    // Just write in the first 4 bytes of the key.
+                    p_long[13..17].copy_from_slice(&key[0..4]);
                     self.sender.send_invoke(tenant, 4, &p_long, curr)
                 },
             );
@@ -460,12 +462,8 @@ fn setup_send<S>(
 /// * `ports`:     Network port on which packets will be sent.
 /// * `scheduler`: Netbricks scheduler to which LongRecv will be added.
 /// * `master`:    If true, the added LongRecv will make latency measurements.
-fn setup_recv<S>(
-    ports: Vec<CacheAligned<PortQueue>>,
-    scheduler: &mut S,
-    _core: i32,
-    master: bool,
-) where
+fn setup_recv<S>(ports: Vec<CacheAligned<PortQueue>>, scheduler: &mut S, _core: i32, master: bool)
+where
     S: Scheduler + Sized,
 {
     if ports.len() != 1 {

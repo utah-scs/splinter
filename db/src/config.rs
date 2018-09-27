@@ -156,6 +156,7 @@ pub struct ClientConfig {
     pub assocs_p: usize,
 
     pub long_pct: usize,
+    pub yield_f: u8,
 
     pub bad_ptm: usize,
 }
