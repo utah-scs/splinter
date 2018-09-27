@@ -156,6 +156,8 @@ pub struct ClientConfig {
     pub assocs_p: usize,
 
     pub long_pct: usize,
+
+    pub bad_ptm: usize,
 }
 
 impl ClientConfig {

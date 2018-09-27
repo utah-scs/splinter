@@ -25,60 +25,34 @@ if [[ ! -f client.toml ]]; then
     exit -1
 fi
 
-# If a command line argument was provided, use it as a request rate for YCSB.
-if [ $# -eq 1 ]
-then
-    # Configure the client TOML file with the request rate.
-    sed -i "s/req_rate = [1-9][0-9]*/req_rate = $1/g" client.toml
-
-    # Run YCSB.
-    RUST_LOG=debug ./target/release/bad
-
-    exit 0
-fi
-
-# Get the "use_invoke" field from the client configuration. The output file
-# will be markes with the value of this field, allowing to distinguish between
-# experiments run with an invoke based YCSB, and experiments run with a native
-# operation based YCSB.
-invoke=$(cat client.toml | grep "use_invoke" | awk '{ print $NF }')
-
-# The number of tenants requests are being generated for. Each data point in the
-# output file is marked with this number.
-tenants=$(cat client.toml | grep "num_tenants" | awk '{ print $NF }')
-
-# The skew with which tenants are chosen by the client. Each data point in the
-# output file is marked with this number.
-tenant_skew=$(cat client.toml | grep "tenant_skew" | awk '{ print $NF }')
-
-# The number of server cores being stressed by YCSB. Each data point in the
-# output file is marked with this number.
-cores=$(cat client.toml | grep "server_udp_ports" | awk '{ print $NF }')
-
-# The request rate that the YCSB client will be configured and run with.
-rate=800000
+# The request rate that the Bad client will be configured and run with.
+rate=750000
 
 # Configure the client TOML file with the request rate.
 sed -i "s/req_rate = [1-9][0-9]*/req_rate = $rate/g" client.toml
 
-# The percentage of bad running requests to generate.
-pcts=(0 0.00001 0.0001 0.001 0.01 0.1 1 10 5)
+# If a command line argument was provided, use it as a request rate for YCSB.
+if [ $# -eq 1 ]
+then
+    # Configure the client TOML file with the bad rate.
+    sed -i "s/bad_ptm = [0-9][0-9]*/bad_ptm = $1/g" client.toml
 
-# Header for the output file. Required inorder to plot the results.
-echo "Offered 50 99 Thrpt Tenants TSkew Cores Pct" > ../ycsb_invoke_"$invoke".out
+    # Remove any preexisting temp files.
+    rm -f ../samples.temp
 
-# Run YCSB for each of the above request rates.
-for pct in ${pcts[@]}
-do
-    echo "rate=$rate, invoke=$invoke, tenants=$tenants, tenant_skew=$tenant_skew, cores=$cores, pct=$pct"
+    # Run YCSB.
+    RUST_LOG=debug ./target/release/bad >> ../samples.temp
 
-    # Configure the client TOML file with the request rate.
-    sed -i "s/put_pct = *[0-9]*/put_pct = $pct/g" client.toml
+    # Calculate the total throughput.
+    thrpt=$(cat ../samples.temp | grep "BAD Throughput" | \
+            awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
 
-    # Run YCSB, and write out the median, 99th, and throughput.
-    RUST_LOG=debug ./target/release/bad 2>&1 | grep "Median(ns)" | \
-            awk "{ print $rate, \$3, \$5, \$7, $tenants, $tenant_skew, $cores, $pct }" \
-            >> ../ycsb_invoke_"$invoke".out
-done
+    # Print out final numbers.
+    m=$(cat ../samples.temp | grep ">>>" | awk '{ print $2 }')
+    t=$(cat ../samples.temp | grep ">>>" | awk '{ print $3 }')
+    echo ""
+    echo "Median(ns): $m, Tail(ns): $t, Throughput(op/s): $thrpt"
+    rm -f ../samples.temp
 
-exit 0
+    exit 0
+fi
