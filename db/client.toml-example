@@ -92,4 +92,3 @@ yield_f = 0
 
 # The number of bad requests to generate for every 10 million operations.
 bad_ptm = 1
-bad_ptm = 1

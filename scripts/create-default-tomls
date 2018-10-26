@@ -1,0 +1,50 @@
+#!/bin/bash
+
+client=$1
+
+if [[ "$client" == "" ]]; then
+	echo "Usage: $0 <client-host>"
+	exit -1
+fi
+
+echo Fetching nic_info from $client
+
+scp $client:~/Sandstorm/nic_info client_nic_info
+
+server_pci=$(awk '/^pci/ { print $2; }' < nic_info)
+server_mac=$(awk '/^mac/ { print $2; }' < nic_info)
+
+client_pci=$(awk '/^pci/ { print $2; }' < client_nic_info)
+client_mac=$(awk '/^mac/ { print $2; }' < client_nic_info)
+
+echo Generating client.toml
+
+awk \
+	-v client_pci="$client_pci" \
+	-v client_mac="$client_mac" \
+	-v server_mac="$server_mac" \
+'
+	/^nic_pci/ { print "nic_pci = \"" client_pci "\""; next }
+	/^mac_address/ { print "mac_address = \"" client_mac "\""; next }
+	/^server_mac_address/ { print "server_mac_address = \"" server_mac "\""; next }
+	{ print }
+' < db/client.toml-example > db/client.toml
+
+echo Copying to $client
+
+scp db/client.toml $client:~/Sandstorm/db/client.toml && rm db/client.toml
+
+echo Generating server.toml
+
+awk \
+	-v server_pci="$server_pci" \
+	-v client_mac="$client_mac" \
+	-v server_mac="$server_mac" \
+'
+	/^nic_pci/ { print "nic_pci = \"" server_pci "\""; next }
+	/^mac_address/ { print "mac_address = \"" server_mac "\""; next }
+	/^client_mac/ { print "client_mac= \"" client_mac "\""; next }
+	{ print }
+' < db/server.toml-example > db/server.toml
+
+echo Done
