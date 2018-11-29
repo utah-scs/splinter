@@ -49,8 +49,7 @@ def setupCargo():
     cmd = "cd ext/test; " + fix + "cd ../../"
     subprocess.check_call(cmd, shell=True)
 
-"""This function first compiles DPDK using Netbricks scripts on CloudLab's d430.
-   It then binds an active 10 GigE NIC to the compiled igb_uio driver.
+"""This function first compiles DPDK using Netbricks scripts on CloudLab's xl170.
 """
 def setupDpdk():
     printColor("bold", "=============== Compiling DPDK =======================")
@@ -60,13 +59,8 @@ def setupDpdk():
     printColor("bold", "=============== Binding NIC to DPDK ==================")
     # First, find the PCI-ID of the first active 10 GigE NIC.
     cmd = "./net/3rdparty/dpdk/usertools/dpdk-devbind.py --status-dev=net |" + \
-            " grep 10GbE | grep Active | tail -1 | awk '{ print $1 }'"
+            " grep ens1f1 | grep Active | tail -1 | awk '{ print $1 }'"
     pci = subprocess.check_output(cmd, shell=True)
-
-    # Next, load the necessary kernel modules.
-    cmd = "sudo insmod ./net/3rdparty/dpdk/build/kmod/igb_uio.ko"
-    subprocess.check_call("sudo modprobe uio", shell=True)
-    subprocess.check_call(cmd, shell=True)
 
     # Print out the PCI and MAC address of the NIC.
     cmd = "ls /sys/bus/pci/devices/" + str(pci).rstrip() + "/net/"
@@ -82,11 +76,6 @@ def setupDpdk():
                             "\" >> ./nic_info", shell=True)
     subprocess.check_output("echo \"mac: " + str(mac).rstrip() + \
                             "\" >> ./nic_info", shell=True)
-
-    # Then, bind the NIC to igb_uio.
-    cmd = "sudo ./net/3rdparty/dpdk/usertools/dpdk-devbind.py --force -b " + \
-            "igb_uio " + str(pci)
-    subprocess.check_call(cmd, shell=True)
 
     return
 
