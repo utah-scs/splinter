@@ -41,6 +41,7 @@ mod native;
 // Public modules for binaries.
 pub mod rpc;
 pub mod cycles;
+pub mod cyclecounter;
 pub mod config;
 pub mod dispatch;
 pub mod ext;
