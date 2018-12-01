@@ -18,7 +18,7 @@ use super::cycles;
 pub struct CycleCounter {
     total: u64,
     start_time: u64,
-    run_count: u64,
+    event_count: u64,
     measurement_count: u64,
 }
 
@@ -37,7 +37,7 @@ impl CycleCounter {
         CycleCounter {
             total: 0,
             start_time: 0,
-            run_count: 0,
+            event_count: 0,
             measurement_count: m_count,
         }
     }
@@ -53,13 +53,14 @@ impl CycleCounter {
     // #Return
     //
     // The number of CPU cycles spent for the current event.
-    pub fn stop(&mut self) -> u64 {
+    pub fn stop(&mut self, events:u64) -> u64 {
         let elapsed = cycles::rdtsc() - self.start_time;
         self.total += elapsed;
-        self.run_count += 1;
-        if self.run_count == self.measurement_count {
-            info!("{}", cycles::to_seconds(self.total / self.run_count) * 1000000.);
-            self.run_count = 0;
+        self.event_count += events;
+
+        if self.event_count >= self.measurement_count {
+            info!("{}", self.total/self.event_count);
+            self.event_count = 0;
             self.total = 0;
         }
         elapsed
