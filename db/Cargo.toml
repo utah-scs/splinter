@@ -61,3 +61,10 @@ toml         = "0.4.5"
 zipf         = "2.0"
 sandstorm    = {path = "../sandstorm"}
 e2d2         = {path = "../net/framework"}
+
+# Add feature name in default features to enable cyclecounter for the given stage,
+# where stage name can be ["dispatch", "extension"].
+[features]
+default = []
+dispatch = []
+extension = []

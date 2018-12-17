@@ -22,6 +22,8 @@ use std::sync::Arc;
 use super::common;
 use super::config;
 use super::cycles;
+#[cfg(feature = "dispatch")]
+use super::cyclecounter::CycleCounter;
 use super::master::Master;
 use super::rpc::*;
 use super::sched::RoundRobin;
@@ -100,6 +102,11 @@ where
 
     /// Unique identifier for a Dispatch task. Currently required for measurement purposes.
     id: i32,
+
+    /// The CPU cycle counter to count the number of cycles per event. Need to use start() and
+    /// stop() a code block or function call to profile the events.
+    #[cfg(feature = "dispatch")]
+    cycle_counter: CycleCounter,
 }
 
 impl<T> Dispatch<T>
@@ -132,6 +139,8 @@ where
         id: i32,
     ) -> Dispatch<T> {
         let rx_batch_size: u8 = 32;
+        #[cfg(feature = "dispatch")]
+        let measurement_count = 100000;
 
         // Create a common udp header for response packets.
         let udp_src_port: u16 = config.udp_port;
@@ -193,6 +202,8 @@ where
             time: 0,
             priority: TaskPriority::DISPATCH,
             id: id,
+            #[cfg(feature = "dispatch")]
+            cycle_counter: CycleCounter::new(measurement_count),
         }
     }
 
@@ -662,7 +673,11 @@ where
 
         // Run the dispatch task, polling for received packets and sending out pending responses.
         self.state = TaskState::RUNNING;
+        #[cfg(feature = "dispatch")]
+        self.cycle_counter.start();
         self.poll();
+        #[cfg(feature = "dispatch")]
+        self.cycle_counter.stop(1);
         self.state = TaskState::YIELDED;
 
         // Update the time the task spent executing and return.

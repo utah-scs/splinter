@@ -43,9 +43,15 @@ impl CycleCounter {
     }
 
     // Starts the CPU cycle counting and store it in self.start_time.
+    #[cfg(any(feature = "dispatch", feature="extension"))]
+    #[inline]
     pub fn start(&mut self) {
         self.start_time = cycles::rdtsc();
     }
+
+    #[cfg(not(any(feature = "dispatch",feature="extension")))]
+    #[inline]
+    pub fn start(&mut self) {}
 
     // Stops the cycle counting and reset the counter when self.measurement_count number of events
     // are completed.
@@ -53,6 +59,8 @@ impl CycleCounter {
     // #Return
     //
     // The number of CPU cycles spent for the current event.
+    #[cfg(any(feature = "dispatch",feature="extension"))]
+    #[inline]
     pub fn stop(&mut self, events:u64) -> u64 {
         let elapsed = cycles::rdtsc() - self.start_time;
         self.total += elapsed;
@@ -64,5 +72,11 @@ impl CycleCounter {
             self.total = 0;
         }
         elapsed
+    }
+
+    #[cfg(not(any(feature = "dispatch",feature="extension")))]
+    #[inline]
+    pub fn stop(&mut self, _events:u64) -> u64 {
+        0
     }
 }

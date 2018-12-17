@@ -41,6 +41,8 @@ mod native;
 // Public modules for binaries.
 pub mod rpc;
 pub mod cycles;
+#[allow(dead_code)]
+#[allow(unused_imports)]
 pub mod cyclecounter;
 pub mod config;
 pub mod dispatch;
