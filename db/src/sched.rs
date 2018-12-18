@@ -15,6 +15,7 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
+use std::cell::RefCell;
 
 use super::cycles;
 use super::rpc;
@@ -50,6 +51,10 @@ pub struct RoundRobin {
     // Response packets returned by completed tasks. Will be picked up and sent out the network by
     // the Dispatch task.
     responses: RwLock<Vec<Packet<IpHeader, EmptyMetadata>>>,
+
+    // task_completed is incremented after the completion of each task. Reset to zero
+    // after every 1M tasks.
+    task_completed: RefCell<u64>,
 }
 
 // Implementation of methods on RoundRobin.
@@ -69,6 +74,7 @@ impl RoundRobin {
             core: AtomicIsize::new(core as isize),
             waiting: RwLock::new(VecDeque::new()),
             responses: RwLock::new(Vec::new()),
+            task_completed: RefCell::new(0),
         }
     }
 
@@ -155,6 +161,7 @@ impl RoundRobin {
 
     /// Picks up a task from the waiting queue, and runs it until it either yields or completes.
     pub fn poll(&self) {
+        let mut total_time:u64 = 0;
         loop {
             // Set the time-stamp of the latest scheduling decision.
             self.latest
@@ -178,6 +185,17 @@ impl RoundRobin {
                         self.responses
                             .write()
                             .push(rpc::fixup_header_length_fields(res));
+                    }
+                    if  cfg!(feature = "execution") {
+                        total_time += task.time();
+                        let mut count = self.task_completed.borrow_mut();
+                        *count += 1;
+                        let every = 1000000;
+                        if *count >= every {
+                            info!("{}", total_time/(*count));
+                            *count = 0;
+                            total_time = 0;
+                        }
                     }
                 } else {
                     // The task did not complete execution. Add it back to the waiting list so that it

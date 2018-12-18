@@ -63,8 +63,9 @@ sandstorm    = {path = "../sandstorm"}
 e2d2         = {path = "../net/framework"}
 
 # Add feature name in default features to enable cyclecounter for the given stage,
-# where stage name can be ["dispatch", "extension"].
+# where stage name can be ["dispatch", "extension", "execution"].
 [features]
 default = []
 dispatch = []
 extension = []
+execution = []
