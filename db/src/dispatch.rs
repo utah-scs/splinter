@@ -140,7 +140,7 @@ where
     ) -> Dispatch<T> {
         let rx_batch_size: u8 = 32;
         #[cfg(feature = "dispatch")]
-        let measurement_count = 100000;
+        let measurement_count = 1000000;
 
         // Create a common udp header for response packets.
         let udp_src_port: u16 = config.udp_port;
@@ -673,17 +673,16 @@ where
 
         // Run the dispatch task, polling for received packets and sending out pending responses.
         self.state = TaskState::RUNNING;
-        #[cfg(feature = "dispatch")]
-        self.cycle_counter.start();
         self.poll();
-        #[cfg(feature = "dispatch")]
-        self.cycle_counter.stop(1);
         self.state = TaskState::YIELDED;
 
         // Update the time the task spent executing and return.
         let exec = cycles::rdtsc() - start;
 
         self.time += exec;
+
+        #[cfg(feature = "dispatch")]
+        self.cycle_counter.total_cycles(exec);
 
         return (self.state.clone(), exec);
     }
