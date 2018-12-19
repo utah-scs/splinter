@@ -72,9 +72,9 @@ impl CycleCounter {
     /// The caller pass the CPU cycles and this function sum those cycles.
     /// And averages for 1M such invocations.
     #[inline]
-    pub fn total_cycles(&mut self, cycles:u64) {
+    pub fn total_cycles(&mut self, cycles:u64, count:u64) {
         self.total += cycles;
-        self.event_count += 1;
+        self.event_count += count;
         if self.event_count >= self.measurement_count {
             info!("{}", self.total/self.event_count);
             self.event_count = 0;

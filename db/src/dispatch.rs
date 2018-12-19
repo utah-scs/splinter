@@ -629,8 +629,12 @@ where
     /// This method polls the dispatchers network port for any received packets,
     /// dispatches them to the appropriate service, and sends out responses over
     /// the network port.
+    ///
+    /// # Return
+    ///
+    /// The number of packets received.
     #[inline]
-    fn poll(&mut self) {
+    fn poll(&mut self) -> u64 {
         // First, send any pending response packets out.
         let responses = self.scheduler.responses();
         if responses.len() > 0 {
@@ -645,8 +649,11 @@ where
             let mut packets = self.parse_udp_headers(packets);
 
             // Dispatch these packets to the appropriate service.
+            let count = packets.len();
             self.dispatch_requests(packets);
+            count as u64
         } else {
+            let mut count = 0;
             // There were no packets at the receive queue. Try to steal some from the sibling.
             if let Some(stolen) = self.try_steal_packets() {
                 // Perform basic network processing on the stolen packets.
@@ -655,8 +662,10 @@ where
                 let mut stolen = self.parse_udp_headers(stolen);
 
                 // Dispatch these packets to the appropriate service.
+                count = stolen.len();
                 self.dispatch_requests(stolen);
             }
+            count as u64
         }
     }
 }
@@ -673,7 +682,7 @@ where
 
         // Run the dispatch task, polling for received packets and sending out pending responses.
         self.state = TaskState::RUNNING;
-        self.poll();
+        let _count = self.poll();
         self.state = TaskState::YIELDED;
 
         // Update the time the task spent executing and return.
@@ -682,7 +691,7 @@ where
         self.time += exec;
 
         #[cfg(feature = "dispatch")]
-        self.cycle_counter.total_cycles(exec);
+        self.cycle_counter.total_cycles(exec, _count);
 
         return (self.state.clone(), exec);
     }
