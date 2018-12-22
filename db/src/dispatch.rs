@@ -13,6 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#[cfg(feature = "dispatch")]
+use std::cell::RefCell;
 use std::fmt::Display;
 use std::net::Ipv4Addr;
 use std::option::Option;
@@ -34,6 +36,43 @@ use super::wireformat;
 use super::e2d2::common::EmptyMetadata;
 use super::e2d2::headers::*;
 use super::e2d2::interface::*;
+
+/// This is a thread local variable to count the number of occurrences
+/// of cycle counting to average for 1 M events.
+#[cfg(feature = "dispatch")]
+thread_local!(static COUNTER: RefCell<u64> = RefCell::new(0));
+
+/// This type stores the cycle counter variable for various parts in dispatch stage.
+/// poll: Cycle counter for full polling stage.
+/// rx_tx: Cycle counter for packets receive and transmit stage.
+/// parse: Cycle counter for packet parsing stage.
+/// dispatch: Cycle counter for generator and task creation stage.
+#[cfg(feature = "dispatch")]
+struct DispatchCounters {
+    poll: CycleCounter,
+    rx_tx: CycleCounter,
+    parse: CycleCounter,
+    dispatch: CycleCounter
+}
+
+#[cfg(feature = "dispatch")]
+impl DispatchCounters {
+
+    /// Creates and return an object of DispatchCounters. This object is used for
+    /// couting CPU cycles for various parts in dispatch stage.
+    ///
+    /// # Return
+    ///
+    /// New instance of DispatchCounters struct
+    fn new() -> DispatchCounters {
+        DispatchCounters {
+            poll: CycleCounter::new(),
+            rx_tx: CycleCounter::new(),
+            parse: CycleCounter::new(),
+            dispatch: CycleCounter::new(),
+        }
+    }
+}
 
 /// This type represents a requests-dispatcher in Sandstorm. When added to a
 /// Netbricks scheduler, this dispatcher polls a network port for RPCs,
@@ -106,7 +145,7 @@ where
     /// The CPU cycle counter to count the number of cycles per event. Need to use start() and
     /// stop() a code block or function call to profile the events.
     #[cfg(feature = "dispatch")]
-    cycle_counter: CycleCounter,
+    cycle_counter: DispatchCounters,
 }
 
 impl<T> Dispatch<T>
@@ -139,8 +178,6 @@ where
         id: i32,
     ) -> Dispatch<T> {
         let rx_batch_size: u8 = 32;
-        #[cfg(feature = "dispatch")]
-        let measurement_count = 1000000;
 
         // Create a common udp header for response packets.
         let udp_src_port: u16 = config.udp_port;
@@ -203,7 +240,7 @@ where
             priority: TaskPriority::DISPATCH,
             id: id,
             #[cfg(feature = "dispatch")]
-            cycle_counter: CycleCounter::new(measurement_count),
+            cycle_counter: DispatchCounters::new(),
         }
     }
 
@@ -636,6 +673,8 @@ where
     #[inline]
     fn poll(&mut self) -> u64 {
         // First, send any pending response packets out.
+        #[cfg(feature = "dispatch")]
+        self.cycle_counter.rx_tx.start();
         let responses = self.scheduler.responses();
         if responses.len() > 0 {
             self.try_send_packets(responses);
@@ -643,14 +682,25 @@ where
 
         // Next, try to receive packets from the network.
         if let Some(packets) = self.try_receive_packets() {
+            #[cfg(feature = "dispatch")]
+            self.cycle_counter.rx_tx.stop(packets.len() as u64);
+
             // Perform basic network processing on the received packets.
+            #[cfg(feature = "dispatch")]
+            self.cycle_counter.parse.start();
             let mut packets = self.parse_mac_headers(packets);
             let mut packets = self.parse_ip_headers(packets);
             let mut packets = self.parse_udp_headers(packets);
+            let count = packets.len();
+            #[cfg(feature = "dispatch")]
+            self.cycle_counter.parse.stop(count as u64);
 
             // Dispatch these packets to the appropriate service.
-            let count = packets.len();
+            #[cfg(feature = "dispatch")]
+            self.cycle_counter.dispatch.start();
             self.dispatch_requests(packets);
+            #[cfg(feature = "dispatch")]
+            self.cycle_counter.dispatch.stop(count as u64);
             count as u64
         } else {
             let mut count = 0;
@@ -689,10 +739,21 @@ where
         let exec = cycles::rdtsc() - start;
 
         self.time += exec;
+        #[cfg(feature = "dispatch")]
+        self.cycle_counter.poll.total_cycles(exec, _count);
 
         #[cfg(feature = "dispatch")]
-        self.cycle_counter.total_cycles(exec, _count);
-
+        COUNTER.with(|count_a| {
+            let mut count = count_a.borrow_mut();
+            *count += 1;
+            let every = 1000000;
+            if *count >= every {
+                    info!("Poll {}, RX-TX {}, Parse {}, Dispatch {}",
+                    self.cycle_counter.poll.get_average(),  self.cycle_counter.rx_tx.get_average(),
+                    self.cycle_counter.parse.get_average(), self.cycle_counter.dispatch.get_average());
+                    *count = 0;
+            }
+        });
         return (self.state.clone(), exec);
     }
 

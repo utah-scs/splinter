@@ -16,29 +16,25 @@
 use super::cycles;
 
 pub struct CycleCounter {
+    average: u64,
     total: u64,
     start_time: u64,
     event_count: u64,
-    measurement_count: u64,
 }
 
 impl CycleCounter {
     // Creates and returns the CycleCounter Object. This object can be used to measure the
-    // number of cycles for measurement_count of events.
-    //
-    // # Argument
-    //
-    // The maximum number of events to average out the time spend in that particular stage.
+    // number of cycles for different number of events.
     //
     // # Return
     //
     // New instance of CycleCounter.
-    pub fn new(m_count: u64) -> CycleCounter {
+    pub fn new() -> CycleCounter {
         CycleCounter {
+            average: 0,
             total: 0,
             start_time: 0,
             event_count: 0,
-            measurement_count: m_count,
         }
     }
 
@@ -48,8 +44,7 @@ impl CycleCounter {
         self.start_time = cycles::rdtsc();
     }
 
-    // Stops the cycle counting and reset the counter when self.measurement_count number of events
-    // are completed.
+    // Stops the cycle counting and reset the counter in get_average() function.
     //
     // #Return
     //
@@ -59,26 +54,30 @@ impl CycleCounter {
         let elapsed = cycles::rdtsc() - self.start_time;
         self.total += elapsed;
         self.event_count += events;
-
-        if self.event_count >= self.measurement_count {
-            info!("{}", self.total/self.event_count);
-            self.event_count = 0;
-            self.total = 0;
-        }
         elapsed
     }
 
     /// Count the total number of cycles for a function or a code block.
     /// The caller pass the CPU cycles and this function sum those cycles.
-    /// And averages for 1M such invocations.
     #[inline]
     pub fn total_cycles(&mut self, cycles:u64, count:u64) {
         self.total += cycles;
         self.event_count += count;
-        if self.event_count >= self.measurement_count {
-            info!("{}", self.total/self.event_count);
+    }
+
+    /// This function averages the CPU cycles for the events happended till now.
+    /// It also reset the counter and sum.
+    /// 
+    /// # Return
+    /// 
+    /// Returns the average CPU cycles for the number of events occurred till now.
+    pub fn get_average(&mut self) -> u64 {
+        if self.event_count > 0 {
+            self.average = self.total/self.event_count;
             self.event_count = 0;
             self.total = 0;
+            return self.average;
         }
+        return 0
     }
 }
