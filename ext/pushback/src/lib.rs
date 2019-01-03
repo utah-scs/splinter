@@ -24,9 +24,6 @@ use std::ops::Generator;
 
 use sandstorm::db::DB;
 
-#[macro_use]
-macro_rules! noop { () => (); }
-
 /// This function implements the get() extension using the sandstorm interface.
 ///
 /// # Arguments
@@ -42,17 +39,18 @@ macro_rules! noop { () => (); }
 #[allow(unused_assignments)]
 pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
     Box::new(move || {
-        //First half of the extension, which does 1 us of CPU work and yields.
-        for _i in 0..1000000 {
-            noop!();
+        let mut sum:u64 = 0;
+        //First half of the extension, which does .5 us of CPU work and yields.
+        for i in 0..2000 {
+            sum *= i;
         }
         db.debug_log("");
         yield 0;
 
-        // Second half of the extension, which does 1 us of CPU works and returns.
-        for _i in 0..1000000 {
-            noop!();
+        // Second half of the extension, which does .5 us of CPU works and returns.
+        for i in 0..2000 {
+            sum *= i;
         }
-        return 0;
+        return sum;
     })
 }
