@@ -332,6 +332,12 @@ impl Master {
         if self.extensions.load(name, tenant, "aggregate") == false {
             panic!("Failed to load aggregate() extension.");
         }
+
+        // Load the pushback() extension.
+        let name = "../ext/pushback/target/release/libpushback.so";
+        if self.extensions.load(name, tenant, "pushback") == false {
+            panic!("Failed to load pushback() extension.");
+        }
     }
 
     /// Loads the get(), put(), and tao() extensions once, and shares them across multiple tenants.
