@@ -38,6 +38,10 @@ name = "aggregate"
 path = "src/bin/client/aggregate.rs"
 
 [[bin]]
+name = "pushback"
+path = "src/bin/client/pushback.rs"
+
+[[bin]]
 name = "ext_bench"
 path = "src/bin/ext_bench.rs"
 
