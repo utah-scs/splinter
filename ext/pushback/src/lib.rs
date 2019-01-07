@@ -87,7 +87,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
         yield 0;
 
         // Second half of the extension, which does .5 us of CPU works and returns.
-        let mut mul:u64 = 0;
+        let mut mul:u64 = 1;
         for i in 1..2000 {
             mul *= i;
         }

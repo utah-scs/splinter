@@ -383,6 +383,12 @@ where
                                         self.map.remove(&p.get_header().common_header.stamp);
                                     }
                                     p.free_packet();
+                                    // Resume the work here
+                                    let mut mul:u64 = 1;
+                                    for i in 1..2000 {
+                                        mul *= i;
+                                    }
+                                    debug!("{}", mul);
                                 },
 
                                 _ => p.free_packet(),
