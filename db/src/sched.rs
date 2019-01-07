@@ -21,6 +21,7 @@ use super::cycles;
 use super::rpc;
 use super::task::Task;
 use super::task::TaskState::*;
+use super::task::TaskPriority;
 
 use e2d2::common::EmptyMetadata;
 use e2d2::headers::IpHeader;
@@ -198,9 +199,27 @@ impl RoundRobin {
                         }
                     }
                 } else {
-                    // The task did not complete execution. Add it back to the waiting list so that it
-                    // gets to run again.
-                    self.waiting.write().push_back(task);
+                    // The task did not complete execution. EITHER add it back to the waiting list so that it
+                    // gets to run again OR run the pushback mechanism.
+                    if  cfg!(feature = "pushback") {
+                        match task.priority() {
+                            TaskPriority::DISPATCH => {
+                                self.waiting.write().push_back(task);
+                            }
+
+                            TaskPriority::REQUEST => {
+                                task.set_state(STOPPED);
+                                if let Some((req, res)) = unsafe { task.tear() } {
+                                req.free_packet();
+                                self.responses
+                                    .write()
+                                    .push(rpc::fixup_header_length_fields(res));
+                                }
+                            }
+                        }
+                    } else {
+                        self.waiting.write().push_back(task);
+                    }
                 }
             }
         }

@@ -145,4 +145,9 @@ impl Task for Native {
     )> {
         self.res.replace(None)
     }
+
+    /// Refer to the `Task` trait for Documentation.
+    fn set_state(&mut self, state: TaskState) {
+        self.state = state;
+    }
 }

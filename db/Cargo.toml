@@ -69,6 +69,7 @@ e2d2         = {path = "../net/framework"}
 # Add feature name in default features to enable cyclecounter for the given stage,
 # where stage name can be ["dispatch", "execution"].
 [features]
-default = []
+default = ["pushback"]
 dispatch = []
 execution = []
+pushback = []

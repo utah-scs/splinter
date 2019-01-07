@@ -782,4 +782,9 @@ where
         // The Dispatch task does not return any packets.
         None
     }
+
+    /// Refer to the `Task` trait for Documentation.
+    fn set_state(&mut self, state: TaskState) {
+        self.state = state;
+    }
 }

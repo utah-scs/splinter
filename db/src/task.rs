@@ -36,6 +36,10 @@ pub enum TaskState {
     /// A task is in this state when it has finished executing completely, and
     /// it's results are ready.
     COMPLETED = 0x04,
+
+    /// A task is in this state when it has been stopped without completion, after
+    /// setting this state, the pushback mechanism will run.
+    STOPPED = 0x5,
 }
 
 /// This enum represents the priority of a task in the system. A smaller value
@@ -98,4 +102,11 @@ pub trait Task {
         Packet<UdpHeader, EmptyMetadata>,
         Packet<UdpHeader, EmptyMetadata>,
     )>;
+
+    /// When called, this method will change the task state to `state` and will return.
+    ///
+    /// # Arguments
+    ///
+    /// * `state`: The state, which will be assigned to the task.
+    fn set_state(&mut self, state: TaskState);
 }
