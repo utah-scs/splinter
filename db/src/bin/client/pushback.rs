@@ -269,7 +269,7 @@ where
                 config.key_len,
                 config.value_len,
                 config.n_keys,
-                config.put_pct,
+                0, //config.put_pct,
                 config.skew,
                 config.num_tenants,
                 config.tenant_skew,

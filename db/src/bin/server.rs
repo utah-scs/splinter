@@ -302,7 +302,7 @@ fn main() {
         "PUSHBACK" => {
             info!("Populating PUSHBACK data for tenant 1024");
             for tenant in 1..(config.num_tenants + 1) {
-                master.fill_test(tenant,1,0);
+                master.fill_test(tenant,1,config.num_records);
                 master.load_test(tenant);
             }
         }

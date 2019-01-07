@@ -39,18 +39,58 @@ use sandstorm::db::DB;
 #[allow(unused_assignments)]
 pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
     Box::new(move || {
-        let mut sum:u64 = 0;
-        //First half of the extension, which does .5 us of CPU work and yields.
-        for i in 0..2000 {
-            sum *= i;
+        let mut obj = None;
+
+        {
+            // First off, retrieve the arguments to the extension.
+            let args = db.args();
+
+            // Check that the arguments received is long enough to contain an
+            // 8 byte table id and a key to be looked up. If not, then write
+            // an error message to the response and return to the database.
+            if args.len() <= 8 {
+                let error = "Invalid args";
+                db.resp(error.as_bytes());
+                println!("Invalid Args");
+                return 1;
+            }
+
+            // Next, split the arguments into a view over the table identifier
+            // (first eight bytes), and a view over the key to be looked up.
+            // De-serialize the table identifier into a u64.
+            let (table, key) = args.split_at(8);
+
+            let table: u64 = 0 | table[0] as u64 | (table[1] as u64) << 8 |
+                            (table[2] as u64) << 16 | (table[3] as u64) << 24 |
+                            (table[4] as u64) << 32 | (table[5] as u64) << 40 |
+                            (table[6] as u64) << 48 | (table[7] as u64) << 56;
+
+
+            // Finally, lookup the database for the object.
+            obj = db.get(table, key);
         }
-        db.debug_log("");
+
+        // Populate a response to the tenant.
+        match obj {
+            // If the object was found, write it to the response.
+            Some(val) => {
+                db.resp(val.read());
+            }
+
+            // If the object was not found, write an error message to the
+            // response.
+            None => {
+                let error = "Object does not exist";
+                db.resp(error.as_bytes());
+            }
+        }
         yield 0;
 
         // Second half of the extension, which does .5 us of CPU works and returns.
-        for i in 0..2000 {
-            sum *= i;
+        let mut mul:u64 = 0;
+        for i in 1..2000 {
+            mul *= i;
         }
-        return sum;
+        return mul;
     })
 }
