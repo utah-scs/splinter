@@ -24,6 +24,7 @@ mod dispatch;
 mod setup;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::mem;
 use std::mem::transmute;
@@ -138,8 +139,35 @@ impl Pushback {
     }
 }
 
-/// Sends out PUSHBACK based RPC requests to a Sandstorm server.
-struct PushbackSend {
+/// Receives responses to PUSHBACK requests sent out by PushbackSend.
+struct PushbackRecvSend<T>
+where
+    T: PacketTx + PacketRx + Display + Clone + 'static,
+{
+    // The network stack required to receives RPC response packets from a network port.
+    receiver: dispatch::Receiver<T>,
+
+    // The number of response packets to wait for before printing out statistics.
+    responses: u64,
+
+    // Time stamp in cycles at which measurement started. Required to calculate observed
+    // throughput of the Sandstorm server.
+    start: u64,
+
+    // The total number of responses received so far.
+    recvd: u64,
+
+    // Vector of sampled request latencies. Required to calculate distributions once all responses
+    // have been received.
+    latencies: Vec<u64>,
+
+    // If true, this receiver will make latency measurements.
+    master: bool,
+
+    // Time stamp in cycles at which measurement stopped.
+    stop: u64,
+
+
     // The actual PUSHBACK workload. Required to generate keys and values for get() and put() requests.
     workload: RefCell<Pushback>,
 
@@ -156,9 +184,6 @@ struct PushbackSend {
     // between two request generations in cycles.
     rate_inv: u64,
 
-    // The time stamp at which the workload started generating requests in cycles.
-    start: u64,
-
     // The time stamp at which the next request must be issued in cycles.
     next: u64,
 
@@ -173,29 +198,42 @@ struct PushbackSend {
     // Payload for an invoke() based put operation. Required in order to avoid making intermediate
     // copies of the extension name, table id, key length, key, and value.
     payload_put: RefCell<Vec<u8>>,
+
+    // Flag to indicate if the procedure is finished or not.
+    finished: bool,
+
+    // To keep the mapping between sent and received packets. The client doesn't want to send
+    // more than 32(XXX) outstanding packets.
+    map: HashMap<u64, u64>,
 }
 
-// Implementation of methods on PushbackSend.
-impl PushbackSend {
-    /// Constructs a PushbackSend.
+// Implementation of methods on PushbackRecv.
+impl<T> PushbackRecvSend<T>
+where
+    T: PacketTx + PacketRx + Display + Clone + 'static,
+{
+    /// Constructs a PushbackRecv.
     ///
     /// # Arguments
     ///
-    /// * `config`:    Client configuration with PUSHBACK related (key and value length etc.) as well as
-    ///                Network related (Server and Client MAC address etc.) parameters.
-    /// * `port`:      Network port over which requests will be sent out.
-    /// * `reqs`:      The number of requests to be issued to the server.
-    /// * `dst_ports`: The total number of UDP ports the server is listening on.
+    /// * `port` :  Network port on which responses will be polled for.
+    /// * `resps`:  The number of responses to wait for before calculating statistics.
+    /// * `master`: Boolean indicating if the receiver should make latency measurements.
+    /// * `native`: If true, responses will be considered to correspond to native gets and puts.
     ///
     /// # Return
     ///
-    /// A PUSHBACK request generator.
+    /// A PUSHBACK response receiver that measures the median latency and throughput of a Sandstorm
+    /// server.
     fn new(
+        rx_port: T,
+        resps: u64,
+        master: bool,
         config: &config::ClientConfig,
-        port: CacheAligned<PortQueue>,
+        tx_port: CacheAligned<PortQueue>,
         reqs: u64,
         dst_ports: u16,
-    ) -> PushbackSend {
+    ) -> PushbackRecvSend<T> {
         // The payload on an invoke() based get request consists of the extensions name ("get"),
         // the table id to perform the lookup on, and the key to lookup.
         let payload_len = "pushback".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
@@ -219,8 +257,14 @@ impl PushbackSend {
             transmute::<u16, [u8; 2]>((config.key_len as u16).to_le())
         });
         payload_put.resize(payload_len, 0);
-
-        PushbackSend {
+        PushbackRecvSend {
+            receiver: dispatch::Receiver::new(rx_port),
+            responses: resps,
+            start: cycles::rdtsc(),
+            recvd: 0,
+            latencies: Vec::with_capacity(resps as usize),
+            master: master,
+            stop: 0,
             workload: RefCell::new(Pushback::new(
                 config.key_len,
                 config.value_len,
@@ -230,23 +274,20 @@ impl PushbackSend {
                 config.num_tenants,
                 config.tenant_skew,
             )),
-            sender: dispatch::Sender::new(config, port, dst_ports),
+            sender: dispatch::Sender::new(config, tx_port, dst_ports),
             requests: reqs,
             sent: 0,
             rate_inv: cycles::cycles_per_second() / config.req_rate as u64,
-            start: cycles::rdtsc(),
             next: 0,
             native: !config.use_invoke,
             payload_get: RefCell::new(payload_get),
             payload_put: RefCell::new(payload_put),
+            finished: false,
+            map: HashMap::with_capacity(32),
         }
     }
-}
 
-// The Executable trait allowing PushbackSend to be scheduled by Netbricks.
-impl Executable for PushbackSend {
-    // Called internally by Netbricks.
-    fn execute(&mut self) {
+    fn send(&mut self) {
         // Return if there are no more requests to generate.
         if self.requests <= self.sent {
             return;
@@ -257,7 +298,7 @@ impl Executable for PushbackSend {
 
         // If it is either time to send out a request, or if a request has never been sent out,
         // then, do so.
-        if curr >= self.next || self.next == 0 {
+        if (curr >= self.next || self.next == 0) && (self.map.len() < 8) {
             if self.native == true {
                 // Configured to issue native RPCs, issue a regular get()/put() operation.
                 self.workload.borrow_mut().abc(
@@ -288,6 +329,8 @@ impl Executable for PushbackSend {
                         self.sender.send_invoke(tenant, 8, &p_put, curr)
                     },
                 );
+                let count = self.map.entry(curr).or_insert(0);
+                *count += 1;
             }
 
             // Update the time stamp at which the next request should be generated, assuming that
@@ -297,77 +340,128 @@ impl Executable for PushbackSend {
         }
     }
 
-    fn dependencies(&mut self) -> Vec<usize> {
-        vec![]
-    }
-}
+    fn recv(&mut self) {
+        // Don't do anything after all responses have been received.
+        if self.responses <= self.recvd {
+            self.finished = true;
+            return;
+        }
 
-/// Receives responses to PUSHBACK requests sent out by PushbackSend.
-struct PushbackRecv<T>
-where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
-{
-    // The network stack required to receives RPC response packets from a network port.
-    receiver: dispatch::Receiver<T>,
+        // Try to receive packets from the network port.
+        // If there are packets, sample the latency of the server.
+        if let Some(mut packets) = self.receiver.recv_res() {
+            while let Some(packet) = packets.pop() {
+                self.recvd += 1;
 
-    // The number of response packets to wait for before printing out statistics.
-    responses: u64,
+                // Measure latency on the master client after the first 2 million requests.
+                // The start timestamp is present on the RPC response header.
+                if self.recvd > 2 * 1000 * 1000 && self.master {
+                    let curr = cycles::rdtsc();
 
-    // Time stamp in cycles at which measurement started. Required to calculate observed
-    // throughput of the Sandstorm server.
-    start: u64,
+                    match self.native {
+                        // The response corresponds to an invoke() RPC.
+                        false => {
+                            let p = packet.parse_header::<InvokeResponse>();
+                            match p.get_header().common_header.status {
+                                // If the status is StatusOk then add the stamp to the latencies and
+                                // free the packet.
+                                RpcStatus::StatusOk => {
+                                    self.latencies
+                                        .push(curr - p.get_header().common_header.stamp);
+                                    unsafe{
+                                        self.map.remove(&p.get_header().common_header.stamp);
+                                    }
+                                    p.free_packet();
+                                },
 
-    // The total number of responses received so far.
-    recvd: u64,
+                                // If the status is StatusPushback then compelete the task, add the
+                                // stamp to the latencies, and free the packet.
+                                RpcStatus::StatusPushback => {
+                                    self.latencies
+                                        .push(curr - p.get_header().common_header.stamp);
+                                    unsafe{
+                                        self.map.remove(&p.get_header().common_header.stamp);
+                                    }
+                                    p.free_packet();
+                                },
 
-    // Vector of sampled request latencies. Required to calculate distributions once all responses
-    // have been received.
-    latencies: Vec<u64>,
+                                _ => p.free_packet(),
+                            }
+                        },
 
-    // If true, this receiver will make latency measurements.
-    master: bool,
+                        // The response corresponds to a get() or put() RPC.
+                        // The opcode on the response identifies the RPC type.
+                        true => match parse_rpc_opcode(&packet) {
+                            OpCode::SandstormGetRpc => {
+                                let p = packet.parse_header::<GetResponse>();
+                                self.latencies
+                                    .push(curr - p.get_header().common_header.stamp);
+                                unsafe{
+                                    self.map.remove(&p.get_header().common_header.stamp);
+                                }
+                                p.free_packet();
+                            }
 
-    // If true, then responses will be considered to correspond to native gets and puts.
-    native: bool,
+                            OpCode::SandstormPutRpc => {
+                                let p = packet.parse_header::<PutResponse>();
+                                self.latencies
+                                    .push(curr - p.get_header().common_header.stamp);
+                                unsafe {
+                                    self.map.remove(&p.get_header().common_header.stamp);
+                                }
+                                p.free_packet();
+                            }
 
-    // Time stamp in cycles at which measurement stopped.
-    stop: u64,
-}
+                            _ => packet.free_packet(),
+                        },
+                    }
+                } else {
+                    match self.native {
+                        // The response corresponds to an invoke() RPC.
+                        false => {
+                            let p = packet.parse_header::<InvokeResponse>();
+                            unsafe{
+                                self.map.remove(&p.get_header().common_header.stamp);
+                            }
+                            p.free_packet();
+                        }
 
-// Implementation of methods on PushbackRecv.
-impl<T> PushbackRecv<T>
-where
-    T: PacketTx + PacketRx + Display + Clone + 'static,
-{
-    /// Constructs a PushbackRecv.
-    ///
-    /// # Arguments
-    ///
-    /// * `port` :  Network port on which responses will be polled for.
-    /// * `resps`:  The number of responses to wait for before calculating statistics.
-    /// * `master`: Boolean indicating if the receiver should make latency measurements.
-    /// * `native`: If true, responses will be considered to correspond to native gets and puts.
-    ///
-    /// # Return
-    ///
-    /// A PUSHBACK response receiver that measures the median latency and throughput of a Sandstorm
-    /// server.
-    fn new(port: T, resps: u64, master: bool, native: bool) -> PushbackRecv<T> {
-        PushbackRecv {
-            receiver: dispatch::Receiver::new(port),
-            responses: resps,
-            start: cycles::rdtsc(),
-            recvd: 0,
-            latencies: Vec::with_capacity(resps as usize),
-            master: master,
-            native: native,
-            stop: 0,
+                        // The response corresponds to a get() or put() RPC.
+                        // The opcode on the response identifies the RPC type.
+                        true => match parse_rpc_opcode(&packet) {
+                            OpCode::SandstormGetRpc => {
+                                let p = packet.parse_header::<GetResponse>();
+                                unsafe{
+                                    self.map.remove(&p.get_header().common_header.stamp);
+                                }
+                                p.free_packet();
+                            }
+
+                            OpCode::SandstormPutRpc => {
+                                let p = packet.parse_header::<PutResponse>();
+                                unsafe {
+                                    self.map.remove(&p.get_header().common_header.stamp);
+                                }
+                                p.free_packet();
+                            }
+
+                            _ => packet.free_packet(),
+                        },
+                    }
+                }
+            }
+        }
+
+        // The moment all response packets have been received, set the value of the
+        // stop timestamp so that throughput can be estimated later.
+        if self.responses <= self.recvd {
+            self.stop = cycles::rdtsc();
         }
     }
 }
 
 // Implementation of the `Drop` trait on PushbackRecv.
-impl<T> Drop for PushbackRecv<T>
+impl<T> Drop for PushbackRecvSend<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
@@ -403,67 +497,16 @@ where
 }
 
 // Executable trait allowing PushbackRecv to be scheduled by Netbricks.
-impl<T> Executable for PushbackRecv<T>
+impl<T> Executable for PushbackRecvSend<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
     // Called internally by Netbricks.
     fn execute(&mut self) {
-        // Don't do anything after all responses have been received.
-        if self.responses <= self.recvd {
+        self.send();
+        self.recv();
+        if self.finished == true {
             return;
-        }
-
-        // Try to receive packets from the network port.
-        // If there are packets, sample the latency of the server.
-        if let Some(mut packets) = self.receiver.recv_res() {
-            while let Some(packet) = packets.pop() {
-                self.recvd += 1;
-
-                // Measure latency on the master client after the first 2 million requests.
-                // The start timestamp is present on the RPC response header.
-                if self.recvd > 2 * 1000 * 1000 && self.master {
-                    let curr = cycles::rdtsc();
-
-                    match self.native {
-                        // The response corresponds to an invoke() RPC.
-                        false => {
-                            let p = packet.parse_header::<InvokeResponse>();
-                            self.latencies
-                                .push(curr - p.get_header().common_header.stamp);
-                            p.free_packet();
-                        }
-
-                        // The response corresponds to a get() or put() RPC.
-                        // The opcode on the response identifies the RPC type.
-                        true => match parse_rpc_opcode(&packet) {
-                            OpCode::SandstormGetRpc => {
-                                let p = packet.parse_header::<GetResponse>();
-                                self.latencies
-                                    .push(curr - p.get_header().common_header.stamp);
-                                p.free_packet();
-                            }
-
-                            OpCode::SandstormPutRpc => {
-                                let p = packet.parse_header::<PutResponse>();
-                                self.latencies
-                                    .push(curr - p.get_header().common_header.stamp);
-                                p.free_packet();
-                            }
-
-                            _ => packet.free_packet(),
-                        },
-                    }
-                } else {
-                    packet.free_packet();
-                }
-            }
-        }
-
-        // The moment all response packets have been received, set the value of the
-        // stop timestamp so that throughput can be estimated later.
-        if self.responses <= self.recvd {
-            self.stop = cycles::rdtsc();
         }
     }
 
@@ -472,62 +515,12 @@ where
     }
 }
 
-/// Sets up PushbackSend by adding it to a Netbricks scheduler.
-///
-/// # Arguments
-///
-/// * `config`:    Network related configuration such as the MAC and IP address.
-/// * `ports`:     Network port on which packets will be sent.
-/// * `scheduler`: Netbricks scheduler to which PushbackSend will be added.
-fn setup_send<S>(
-    config: &config::ClientConfig,
-    ports: Vec<CacheAligned<PortQueue>>,
-    scheduler: &mut S,
-    _core: i32,
-) where
-    S: Scheduler + Sized,
-{
-    if ports.len() != 1 {
-        error!("Client should be configured with exactly 1 port!");
-        std::process::exit(1);
-    }
-
-    // Add the sender to a netbricks pipeline.
-    match scheduler.add_task(PushbackSend::new(
-        config,
-        ports[0].clone(),
-        config.num_reqs as u64,
-        config.server_udp_ports as u16,
-    )) {
-        Ok(_) => {
-            info!(
-                "Successfully added PushbackSend with tx queue {}.",
-                ports[0].txq()
-            );
-        }
-
-        Err(ref err) => {
-            error!("Error while adding to Netbricks pipeline {}", err);
-            std::process::exit(1);
-        }
-    }
-}
-
-/// Sets up PushbackRecv by adding it to a Netbricks scheduler.
-///
-/// # Arguments
-///
-/// * `ports`:     Network port on which packets will be sent.
-/// * `scheduler`: Netbricks scheduler to which PushbackRecv will be added.
-/// * `master`:    If true, the added PushbackRecv will make latency measurements.
-/// * `native`:    If true, the added PushbackRecv will assume that responses correspond to gets
-///                and puts.
-fn setup_recv<S>(
+fn setup_send_recv<S> (
     ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
     _core: i32,
     master: bool,
-    native: bool,
+    config: &config::ClientConfig,
 ) where
     S: Scheduler + Sized,
 {
@@ -537,15 +530,18 @@ fn setup_recv<S>(
     }
 
     // Add the receiver to a netbricks pipeline.
-    match scheduler.add_task(PushbackRecv::new(
+    match scheduler.add_task(PushbackRecvSend::new(
         ports[0].clone(),
         34 * 1000 * 1000 as u64,
         master,
-        native,
+        config,
+        ports[0].clone(),
+        config.num_reqs as u64,
+        config.server_udp_ports as u16,
     )) {
         Ok(_) => {
             info!(
-                "Successfully added PushbackRecv with rx queue {}.",
+                "Successfully added PushbackRecvSend with rx-tx queue {}.",
                 ports[0].rxq()
             );
         }
@@ -574,18 +570,17 @@ fn main() {
     net_context.start_schedulers();
 
     // The core id's which will run the sender and receiver threads.
-    // XXX The following two arrays heavily depend on the set of cores
+    // XXX The following array heavily depend on the set of cores
     // configured in setup.rs
-    let senders = [0, 2, 4, 6];
-    let receive = [1, 3, 5, 7];
-    assert!((senders.len() == 4) && (receive.len() == 4));
+    let senders_receivers = [0, 1, 2, 3, 4, 5, 6, 7];
+    assert!(senders_receivers.len() == 8);
 
-    // Setup 4 senders, and 4 receivers.
-    for i in 0..4 {
+    // Setup 8 senders, and receivers.
+    for i in 0..8 {
         // First, retrieve a tx-rx queue pair from Netbricks
         let port = net_context
             .rx_queues
-            .get(&senders[i])
+            .get(&senders_receivers[i])
             .expect("Failed to retrieve network port!")
             .clone();
 
@@ -594,29 +589,16 @@ fn main() {
             master = true;
         }
 
-        let native = !config.use_invoke;
-
-        // Setup the receive side.
+        // Setup the receive and transmit side.
         net_context
             .add_pipeline_to_core(
-                receive[i],
+                senders_receivers[i],
                 Arc::new(
                     move |_ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
-                        setup_recv(port.clone(), sched, core, master, native)
+                        setup_send_recv(port.clone(), sched, core, master, &config::ClientConfig::load())
                     },
                 ),
-            ).expect("Failed to initialize receive side.");
-
-        // Setup the send side.
-        net_context
-            .add_pipeline_to_core(
-                senders[i],
-                Arc::new(
-                    move |ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
-                        setup_send(&config::ClientConfig::load(), ports, sched, core)
-                    },
-                ),
-            ).expect("Failed to initialize send side.");
+            ).expect("Failed to initialize receive/transmit side.");
     }
 
     // Allow the system to bootup fully.
