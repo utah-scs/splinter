@@ -7,4 +7,5 @@ authors = ["ankitb"]
 crate-type = ["dylib"]
 
 [dependencies]
+db        = { path = "../../db" }
 sandstorm = { path = "../../sandstorm" }

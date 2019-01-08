@@ -17,7 +17,10 @@
 #![feature(no_unsafe)]
 #![feature(generators, generator_trait)]
 
+extern crate db;
 extern crate sandstorm;
+
+use db::cycles::*;
 
 use std::rc::Rc;
 use std::ops::Generator;
@@ -40,6 +43,7 @@ use sandstorm::db::DB;
 pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
     Box::new(move || {
         let mut obj = None;
+        let start = rdtsc();
 
         {
             // First off, retrieve the arguments to the extension.
@@ -84,7 +88,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
                 db.resp(error.as_bytes());
             }
         }
-        yield 0;
+        yield rdtsc() - start;
 
         // Second half of the extension, which does .5 us of CPU works and returns.
         let mut mul:u64 = 1;

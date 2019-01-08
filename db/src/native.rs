@@ -47,6 +47,9 @@ pub struct Native {
     // The total amount of time for which the task has run on the CPU in cycles.
     time: u64,
 
+    // The total amount of time for which the task has spent in DB in cycles.
+    db_time: u64,
+
     // The priority of the task. Required to determine when the task must be allowed to run next.
     priority: TaskPriority,
 
@@ -80,6 +83,7 @@ impl Native {
         Native {
             state: INITIALIZED,
             time: 0,
+            db_time: 0,
             priority: prio,
             gen: generator,
             res: Cell::new(None),
@@ -100,7 +104,8 @@ impl Task for Native {
             // As of 04/02/2018, calling resume() on a generator requires an unsafe block.
             unsafe {
                 match self.gen.resume() {
-                    GeneratorState::Yielded(_) => {
+                    GeneratorState::Yielded(time) => {
+                        self.db_time += time;
                         self.state = YIELDED;
                     }
 
@@ -129,6 +134,11 @@ impl Task for Native {
     /// Refer to the Task trait for documentation.
     fn time(&self) -> u64 {
         self.time.clone()
+    }
+
+    /// Refer to the Task trait for documentation.
+    fn db_time(&self) -> u64 {
+        self.db_time.clone()
     }
 
     /// Refer to the Task trait for documentation.

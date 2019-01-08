@@ -47,6 +47,10 @@ pub struct Container {
     // determine when the task should be run next, and for accounting purposes.
     time: u64,
 
+    // The total amount of time in cycles the task has spend inside the database.
+    // Required to determine the credit for each run of an extension.
+    db_time: u64,
+
     // An execution context for the task that implements the DB trait. Required
     // for the task to interact with the database.
     db: Cell<Option<Rc<Context>>>,
@@ -85,6 +89,7 @@ impl Container {
             state: INITIALIZED,
             priority: prio,
             time: 0,
+            db_time: 0,
             db: Cell::new(Some(context)),
             ext: ext,
             gen: Box::new(|| {
@@ -119,11 +124,13 @@ impl Task for Container {
             unsafe {
                 // Catch any panics thrown from within the extension.
                 let res = catch_unwind(AssertUnwindSafe(|| match self.gen.resume() {
-                    GeneratorState::Yielded(_) => {
+                    GeneratorState::Yielded(time) => {
+                        self.db_time += time;
                         self.state = YIELDED;
                     }
 
-                    GeneratorState::Complete(_) => {
+                    GeneratorState::Complete(time) => {
+                        self.db_time += time;
                         self.state = COMPLETED;
                     }
                 }));
@@ -154,6 +161,11 @@ impl Task for Container {
     /// Refer to the Task trait for Documentation.
     fn time(&self) -> u64 {
         self.time.clone()
+    }
+
+    /// Refer to the Task trait for Documentation.
+    fn db_time(&self) -> u64 {
+        self.db_time.clone()
     }
 
     /// Refer to the Task trait for Documentation.

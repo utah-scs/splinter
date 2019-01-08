@@ -163,6 +163,7 @@ impl RoundRobin {
     /// Picks up a task from the waiting queue, and runs it until it either yields or completes.
     pub fn poll(&self) {
         let mut total_time:u64 = 0;
+        let mut db_time:u64 = 0;
         loop {
             // Set the time-stamp of the latest scheduling decision.
             self.latest
@@ -189,13 +190,15 @@ impl RoundRobin {
                     }
                     if  cfg!(feature = "execution") {
                         total_time += task.time();
+                        db_time += task.db_time();
                         let mut count = self.task_completed.borrow_mut();
                         *count += 1;
                         let every = 1000000;
                         if *count >= every {
-                            info!("{}", total_time/(*count));
+                            info!("Total {}, DB {}", total_time/(*count), db_time/(*count));
                             *count = 0;
                             total_time = 0;
+                            db_time = 0;
                         }
                     }
                 } else {
@@ -208,7 +211,11 @@ impl RoundRobin {
                             }
 
                             TaskPriority::REQUEST => {
+                                // Use self.latest to make the decision about pushback.
+                                // Make some trigger point and use the pushback decision the only.
                                 task.set_state(STOPPED);
+
+
                                 if let Some((req, res)) = unsafe { task.tear() } {
                                 req.free_packet();
                                 self.responses

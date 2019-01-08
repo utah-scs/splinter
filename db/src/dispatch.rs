@@ -768,6 +768,11 @@ where
     }
 
     /// Refer to the `Task` trait for Documentation.
+    fn db_time(&self) -> u64 {
+        return 0;
+    }
+
+    /// Refer to the `Task` trait for Documentation.
     fn priority(&self) -> TaskPriority {
         self.priority.clone()
     }

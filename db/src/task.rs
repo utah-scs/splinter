@@ -82,6 +82,14 @@ pub trait Task {
     /// The total time for which the task has run in cycles.
     fn time(&self) -> u64;
 
+    /// When called, this method should return the total time for which the task
+    /// has spent in db operations since it was created.
+    ///
+    /// # Return
+    ///
+    /// The total time for which the task has spent in db operations in cycles.
+    fn db_time(&self) -> u64;
+
     /// When called, this method should return the priority of the task.
     ///
     /// # Return
