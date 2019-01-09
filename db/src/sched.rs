@@ -29,6 +29,8 @@ use e2d2::interface::Packet;
 
 use spin::RwLock;
 
+const MAX_RX_PACKETS: usize = 32;
+
 /// A simple round robin scheduler for Tasks in Sandstorm.
 pub struct RoundRobin {
     // The time-stamp at which the scheduler last ran. Required to identify whether there is an
@@ -179,6 +181,17 @@ impl RoundRobin {
             let task = self.waiting.write().pop_front();
 
             if let Some(mut task) = task {
+                let mut is_scheduler:bool = false;
+                let mut queue_length:usize = 0;
+                match task.priority() {
+                    TaskPriority::DISPATCH => {
+                        is_scheduler = true;
+                        queue_length = self.waiting.read().len();
+                    }
+
+                    _ => {}
+                }
+
                 if task.run().0 == COMPLETED {
                     // The task finished execution, check for request and response packets. If they
                     // exist, then free the request packet, and enqueue the response packet.
@@ -205,28 +218,28 @@ impl RoundRobin {
                     // The task did not complete execution. EITHER add it back to the waiting list so that it
                     // gets to run again OR run the pushback mechanism.
                     if  cfg!(feature = "pushback") {
-                        match task.priority() {
-                            TaskPriority::DISPATCH => {
-                                self.waiting.write().push_back(task);
-                            }
+                        if is_scheduler == true {
+                            let new_packets = self.waiting.read().len() - queue_length;
+                            if queue_length >= MAX_RX_PACKETS/2 &&  new_packets >= MAX_RX_PACKETS {
+                                for _i in 0..queue_length {
+                                    let mut yeilded_task = self.waiting.write().pop_front().unwrap();
 
-                            TaskPriority::REQUEST => {
-                                // Use self.latest to make the decision about pushback.
-                                // Make some trigger point and use the pushback decision the only.
-                                task.set_state(STOPPED);
-
-
-                                if let Some((req, res)) = unsafe { task.tear() } {
-                                req.free_packet();
-                                self.responses
-                                    .write()
-                                    .push(rpc::fixup_header_length_fields(res));
+                                    // Compute Ranking/Credit on the go for each task to pushback
+                                    // some of the tasks which are more than the threshold.
+                                    if yeilded_task.state() == YIELDED {
+                                        yeilded_task.set_state(STOPPED);
+                                        if let Some((req, res)) = unsafe { yeilded_task.tear() } {
+                                        req.free_packet();
+                                        self.responses
+                                            .write()
+                                            .push(rpc::fixup_header_length_fields(res));
+                                        }
+                                    }
                                 }
                             }
                         }
-                    } else {
-                        self.waiting.write().push_back(task);
                     }
+                    self.waiting.write().push_back(task);
                 }
             }
         }
