@@ -50,7 +50,7 @@ impl CycleCounter {
     //
     // The number of CPU cycles spent for the current event.
     #[inline]
-    pub fn stop(&mut self, events:u64) -> u64 {
+    pub fn stop(&mut self, events: u64) -> u64 {
         let elapsed = cycles::rdtsc() - self.start_time;
         self.total += elapsed;
         self.event_count += events;
@@ -60,24 +60,24 @@ impl CycleCounter {
     /// Count the total number of cycles for a function or a code block.
     /// The caller pass the CPU cycles and this function sum those cycles.
     #[inline]
-    pub fn total_cycles(&mut self, cycles:u64, count:u64) {
+    pub fn total_cycles(&mut self, cycles: u64, count: u64) {
         self.total += cycles;
         self.event_count += count;
     }
 
     /// This function averages the CPU cycles for the events happended till now.
     /// It also reset the counter and sum.
-    /// 
+    ///
     /// # Return
-    /// 
+    ///
     /// Returns the average CPU cycles for the number of events occurred till now.
     pub fn get_average(&mut self) -> u64 {
         if self.event_count > 0 {
-            self.average = self.total/self.event_count;
+            self.average = self.total / self.event_count;
             self.event_count = 0;
             self.total = 0;
             return self.average;
         }
-        return 0
+        return 0;
     }
 }

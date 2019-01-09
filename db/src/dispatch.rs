@@ -23,9 +23,9 @@ use std::sync::Arc;
 
 use super::common;
 use super::config;
-use super::cycles;
 #[cfg(feature = "dispatch")]
 use super::cyclecounter::CycleCounter;
+use super::cycles;
 use super::master::Master;
 use super::rpc::*;
 use super::sched::RoundRobin;
@@ -52,12 +52,11 @@ struct DispatchCounters {
     poll: CycleCounter,
     rx_tx: CycleCounter,
     parse: CycleCounter,
-    dispatch: CycleCounter
+    dispatch: CycleCounter,
 }
 
 #[cfg(feature = "dispatch")]
 impl DispatchCounters {
-
     /// Creates and return an object of DispatchCounters. This object is used for
     /// couting CPU cycles for various parts in dispatch stage.
     ///
@@ -527,7 +526,8 @@ where
             {
                 const MIN_LENGTH_IP: u16 = common::PACKET_IP_LEN + 2;
                 let ip_header: &IpHeader = packet.get_header();
-                valid = (ip_header.version() == 4) && (ip_header.ttl() > 0)
+                valid = (ip_header.version() == 4)
+                    && (ip_header.ttl() > 0)
                     && (ip_header.length() >= MIN_LENGTH_IP)
                     && (ip_header.dst() == self.network_ip_addr);
             }
@@ -748,10 +748,14 @@ where
             *count += 1;
             let every = 1000000;
             if *count >= every {
-                    info!("Poll {}, RX-TX {}, Parse {}, Dispatch {}",
-                    self.cycle_counter.poll.get_average(),  self.cycle_counter.rx_tx.get_average(),
-                    self.cycle_counter.parse.get_average(), self.cycle_counter.dispatch.get_average());
-                    *count = 0;
+                info!(
+                    "Poll {}, RX-TX {}, Parse {}, Dispatch {}",
+                    self.cycle_counter.poll.get_average(),
+                    self.cycle_counter.rx_tx.get_average(),
+                    self.cycle_counter.parse.get_average(),
+                    self.cycle_counter.dispatch.get_average()
+                );
+                *count = 0;
             }
         });
         return (self.state.clone(), exec);

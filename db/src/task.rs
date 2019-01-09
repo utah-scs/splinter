@@ -13,9 +13,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use e2d2::interface::Packet;
-use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
+use e2d2::headers::UdpHeader;
+use e2d2::interface::Packet;
 
 /// This enum represents the different states a task can be in.
 #[repr(u8)]

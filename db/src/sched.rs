@@ -13,15 +13,15 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
-use std::cell::RefCell;
 
 use super::cycles;
 use super::rpc;
 use super::task::Task;
-use super::task::TaskState::*;
 use super::task::TaskPriority;
+use super::task::TaskState::*;
 
 use e2d2::common::EmptyMetadata;
 use e2d2::headers::IpHeader;
@@ -169,8 +169,8 @@ impl RoundRobin {
 
     /// Picks up a task from the waiting queue, and runs it until it either yields or completes.
     pub fn poll(&self) {
-        let mut total_time : u64 = 0;
-        let mut db_time : u64 = 0;
+        let mut total_time: u64 = 0;
+        let mut db_time: u64 = 0;
         let credit = (CREDIT_LIMIT_US / 1000000f64) * (cycles::cycles_per_second() as f64);
         loop {
             // Set the time-stamp of the latest scheduling decision.
@@ -214,7 +214,7 @@ impl RoundRobin {
                         *count += 1;
                         let every = 1000000;
                         if *count >= every {
-                            info!("Total {}, DB {}", total_time/(*count), db_time/(*count));
+                            info!("Total {}, DB {}", total_time / (*count), db_time / (*count));
                             *count = 0;
                             total_time = 0;
                             db_time = 0;
@@ -226,7 +226,9 @@ impl RoundRobin {
                     if cfg!(feature = "pushback") {
                         if is_scheduler == true {
                             let new_packets = self.waiting.read().len() - queue_length;
-                            if (queue_length >= MAX_RX_PACKETS/2) && (new_packets >= MAX_RX_PACKETS) {
+                            if (queue_length >= MAX_RX_PACKETS / 2)
+                                && (new_packets >= MAX_RX_PACKETS)
+                            {
                                 for _i in 0..queue_length {
                                     let mut yeilded_task =
                                         self.waiting.write().pop_front().unwrap();
@@ -235,14 +237,14 @@ impl RoundRobin {
                                     // some of the tasks whose rank/credit is more than the threshold.
                                     if (yeilded_task.state() == YIELDED)
                                         && ((yeilded_task.time() - yeilded_task.db_time())
-                                        > credit as u64)
+                                            > credit as u64)
                                     {
                                         yeilded_task.set_state(STOPPED);
                                         if let Some((req, res)) = unsafe { yeilded_task.tear() } {
-                                        req.free_packet();
-                                        self.responses
-                                            .write()
-                                            .push(rpc::fixup_header_length_fields(res));
+                                            req.free_packet();
+                                            self.responses
+                                                .write()
+                                                .push(rpc::fixup_header_length_fields(res));
                                         }
                                     }
                                 }
