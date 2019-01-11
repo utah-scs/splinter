@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use super::alloc::Allocator;
 use super::tenant::Tenant;
-use super::wireformat::{InvokeRequest, InvokeResponse};
+use super::wireformat::{InvokeRequest, InvokeResponse, RpcStatus};
 
 use sandstorm::buf::{MultiReadBuf, OpType, ReadBuf, Record, WriteBuf, ReadWriteSetBuf};
 use sandstorm::db::DB;
@@ -127,6 +127,15 @@ impl Context {
         Packet<InvokeResponse, EmptyMetadata>,
     ) {
         return (self.request, self.response.into_inner());
+    }
+
+    /// This method modifies the response for the pushback. It changes the status in the response
+    /// from StatusOk to StatusPushback. Besides that the function also modifies the response
+    /// packet to remove the old response and attach the records which the extension has read or
+    /// written(Read Write Set), so that the client can resume the execution on its end.
+    pub fn prepare_for_pushback(&self) {
+        self.response.borrow_mut().get_mut_header().common_header.status = RpcStatus::StatusPushback;
+        // Remove the original payload and append the read-write set to the response payload.
     }
 }
 

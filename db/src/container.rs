@@ -25,7 +25,6 @@ use super::cycles;
 use super::ext::Extension;
 use super::task::TaskState::*;
 use super::task::{Task, TaskPriority, TaskState};
-use super::wireformat::*;
 
 use e2d2::common::EmptyMetadata;
 use e2d2::headers::UdpHeader;
@@ -192,12 +191,12 @@ impl Task for Container {
         let context = self.db.replace(None).unwrap();
         match Rc::try_unwrap(context) {
             Ok(db) => {
-                let (req, mut res) = db.commit();
-
                 // If the task is stopped without completion, set the status as StatusPushback.
                 if self.state == STOPPED {
-                    res.get_mut_header().common_header.status = RpcStatus::StatusPushback;
+                    db.prepare_for_pushback();
                 }
+
+                let (req, mut res) = db.commit();
 
                 let req = req.deparse_header(PACKET_UDP_LEN as usize);
                 let res = res.deparse_header(PACKET_UDP_LEN as usize);
