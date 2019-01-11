@@ -17,7 +17,7 @@ use std::fmt::Debug;
 
 use super::db::DB;
 
-use super::buf::{ReadBuf, WriteBuf, MultiReadBuf};
+use super::buf::{ReadBuf, Record, WriteBuf, MultiReadBuf};
 
 pub struct NullDB {}
 
@@ -61,4 +61,6 @@ impl DB for NullDB {
     fn resp(&self, _data: &[u8]) {}
 
     fn debug_log(&self, _message: &str) {}
+
+    fn populate_read_write_set(&self, _record: Record) {}
 }

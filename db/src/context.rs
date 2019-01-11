@@ -21,7 +21,7 @@ use super::alloc::Allocator;
 use super::tenant::Tenant;
 use super::wireformat::{InvokeRequest, InvokeResponse};
 
-use sandstorm::buf::{MultiReadBuf, ReadBuf, WriteBuf};
+use sandstorm::buf::{MultiReadBuf, OpType, ReadBuf, Record, WriteBuf, ReadWriteSetBuf};
 use sandstorm::db::DB;
 
 use e2d2::common::EmptyMetadata;
@@ -67,6 +67,9 @@ pub struct Context {
     // The total number of bytes allocated by the extension so far
     // (on the table heap).
     allocs: Cell<usize>,
+
+    // The buffer which maintains the read/write set per extension.
+    readwriteset: RefCell<ReadWriteSetBuf>,
 }
 
 // Methods on Context.
@@ -105,6 +108,7 @@ impl Context {
             tenant: tenant,
             heap: alloc,
             allocs: Cell::new(0),
+            readwriteset: RefCell::new(ReadWriteSetBuf::new()),
         }
     }
 
@@ -138,7 +142,10 @@ impl DB for Context {
                     // key and value.
                     .and_then(| object | { self.heap.resolve(object) })
                     // Return the value wrapped up inside a safe type.
-                    .and_then(| (_k, v) | { unsafe { Some(ReadBuf::new(v)) } })
+                    .and_then(| (k, v) | {
+                        self.populate_read_write_set(Record::new(OpType::SandstormRead, &k, &v));
+                        unsafe { Some(ReadBuf::new(v)) }
+                        })
     }
 
     /// Lookup the `DB` trait for documentation on this method.
@@ -157,7 +164,8 @@ impl DB for Context {
                 let r = table
                     .get(key)
                     .and_then(|obj| self.heap.resolve(obj))
-                    .and_then(|(_k, v)| {
+                    .and_then(|(k, v)| {
+                        self.populate_read_write_set(Record::new(OpType::SandstormRead, &k, &v));
                         objs.push(v);
                         Some(())
                     });
@@ -201,6 +209,7 @@ impl DB for Context {
         // If the table exists, write to the database.
         if let Some(table) = self.tenant.get_table(table_id) {
             return self.heap.resolve(buf.clone()).map_or(false, |(k, _v)| {
+                self.populate_read_write_set(Record::new(OpType::SandstormWrite, &k, &buf));
                 table.put(k, buf);
                 true
             });
@@ -240,4 +249,9 @@ impl DB for Context {
 
     /// Lookup the `DB` trait for documentation on this method.
     fn debug_log(&self, _msg: &str) {}
+
+    /// Lookup the `DB` trait for documentation on this method.
+    fn populate_read_write_set(&self, record: Record) {
+        self.readwriteset.borrow_mut().readwriteset.push(record);
+    }
 }

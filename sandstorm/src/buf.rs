@@ -319,6 +319,67 @@ impl MultiReadBuf {
     }
 }
 
+/// This enum represents the type of a completed database operation. A value 'SandstormRead'
+/// means that the operation was a get() operation  and a value 'SandstormWrite' means that the
+/// operation was a put() operation. The value is used in the response to represent if the record
+/// belongs to read set or the write set.
+#[repr(u8)]
+#[derive(PartialEq, Clone)]
+pub enum OpType {
+    /// When the value if SandstormRead, the record encapsulated in the response will be added to
+    /// the read set corresponding to that extension.
+    SandstormRead = 0x1,
+
+    /// When the value if SandstormWrite, the record encapsulated in the response will be added to
+    /// the write set corresponding to that extension.
+    SandstormWrite = 0x2,
+}
+
+/// This struct represents a record for a read/write set. Each record in the read/write set will
+/// be of this type.
+#[derive(Clone)]
+pub struct Record {
+    /// This variable shows the type of operation for the record, Read or Write.
+    optype: OpType,
+
+    /// This variable stores the Key for the record.
+    key: Bytes,
+
+    /// This variable stores the Value for the record.
+    object: Bytes,
+}
+
+impl Record {
+    pub fn new(r_optype: OpType, r_key: &[u8], r_object: &[u8]) -> Record {
+        Record {
+            optype: r_optype,
+            key : Bytes::from(r_key),
+            object: Bytes::from(r_object),
+        }
+    }
+}
+
+/// This struct maintains the read/write set per extension. When the extension is pushed-back
+/// without completing it on the server. This READ/WRITE set is also trasferred to the client.
+#[derive(Clone)]
+pub struct ReadWriteSetBuf {
+    pub readwriteset: Vec<Record>,
+}
+
+// Implementation of methods on ReadWriteSetBuf.
+impl ReadWriteSetBuf {
+    /// This function creates a new instance of ReadWriteSetBuf.
+    ///
+    /// # Return
+    ///
+    /// A `ReadWriteSetBuf` which can be used to store the read/write set per extension.
+    pub fn new() -> ReadWriteSetBuf {
+        ReadWriteSetBuf {
+            readwriteset: Vec::new(),
+        }
+    }
+}
+
 // This module implements simple unit tests for ReadBuf and WriteBuf.
 #[cfg(test)]
 mod tests {

@@ -13,7 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use super::buf::{ReadBuf, WriteBuf, MultiReadBuf};
+use super::buf::{ReadBuf, Record, WriteBuf, MultiReadBuf};
 
 /// Definition of the DB trait that will allow extensions to access
 /// the database.
@@ -102,4 +102,8 @@ pub trait DB {
     /// This method is meant for testing, and will not do anything in the real
     /// system.
     fn debug_log(&self, msg: &str);
+
+    /// This method populate the read/write set per extension and the read/write set is
+    /// trasmitted to the client is case of the extension pushback.
+    fn populate_read_write_set(&self, record: Record);
 }
