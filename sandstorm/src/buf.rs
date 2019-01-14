@@ -353,9 +353,24 @@ impl Record {
     pub fn new(r_optype: OpType, r_key: &[u8], r_object: &[u8]) -> Record {
         Record {
             optype: r_optype,
-            key : Bytes::from(r_key),
+            key: Bytes::from(r_key),
             object: Bytes::from(r_object),
         }
+    }
+
+    // Return the optype(Read/Write) for the operation.
+    pub fn get_optype(&self) -> OpType {
+        self.optype.clone()
+    }
+
+    // Return the key for the performed operation.
+    pub fn get_key(&self) -> Bytes {
+        self.key.clone()
+    }
+
+    // Return the object for the performed operation.
+    pub fn get_object(&self) -> Bytes {
+        self.object.clone()
     }
 }
 

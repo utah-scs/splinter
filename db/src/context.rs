@@ -14,14 +14,14 @@
  */
 
 use std::cell::{Cell, RefCell};
-use std::str;
 use std::sync::Arc;
+use std::{mem, slice, str};
 
 use super::alloc::Allocator;
 use super::tenant::Tenant;
 use super::wireformat::{InvokeRequest, InvokeResponse, RpcStatus};
 
-use sandstorm::buf::{MultiReadBuf, OpType, ReadBuf, Record, WriteBuf, ReadWriteSetBuf};
+use sandstorm::buf::{MultiReadBuf, OpType, ReadBuf, ReadWriteSetBuf, Record, WriteBuf};
 use sandstorm::db::DB;
 
 use e2d2::common::EmptyMetadata;
@@ -134,8 +134,38 @@ impl Context {
     /// packet to remove the old response and attach the records which the extension has read or
     /// written(Read Write Set), so that the client can resume the execution on its end.
     pub fn prepare_for_pushback(&self) {
-        self.response.borrow_mut().get_mut_header().common_header.status = RpcStatus::StatusPushback;
-        // Remove the original payload and append the read-write set to the response payload.
+        self.response
+            .borrow_mut()
+            .get_mut_header()
+            .common_header
+            .status = RpcStatus::StatusPushback;
+
+        // Append the read-write set to the response payload and remove the original payload.
+        let payload_len = self.response.borrow().get_payload().len();
+
+        let rwset = &self.readwriteset.borrow_mut().readwriteset;
+        for record in rwset.iter() {
+            let ptr = &record.get_optype() as *const _ as *const u8;
+            let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+            self.resp(slice);
+            self.resp(record.get_key().as_ref());
+            self.resp(record.get_object().as_ref());
+        }
+
+        match self
+            .response
+            .borrow_mut()
+            .remove_from_payload_head(payload_len)
+        {
+            Ok(_) => {}
+
+            Err(ref err) => {
+                error!(
+                    "Unable to delete previous payload while doing pushback {}",
+                    err
+                );
+            }
+        }
     }
 }
 
