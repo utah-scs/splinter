@@ -140,22 +140,12 @@ impl Context {
             .common_header
             .status = RpcStatus::StatusPushback;
 
-        // Append the read-write set to the response payload and remove the original payload.
+        // Remove the original payload and append the read-write set to the response payload.
         let payload_len = self.response.borrow().get_payload().len();
-
-        let rwset = &self.readwriteset.borrow_mut().readwriteset;
-        for record in rwset.iter() {
-            let ptr = &record.get_optype() as *const _ as *const u8;
-            let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
-            self.resp(slice);
-            self.resp(record.get_key().as_ref());
-            self.resp(record.get_object().as_ref());
-        }
-
         match self
             .response
             .borrow_mut()
-            .remove_from_payload_head(payload_len)
+            .remove_from_payload_tail(payload_len)
         {
             Ok(_) => {}
 
@@ -165,6 +155,15 @@ impl Context {
                     err
                 );
             }
+        }
+
+        let rwset = &self.readwriteset.borrow_mut().readwriteset;
+        for record in rwset.iter() {
+            let ptr = &record.get_optype() as *const _ as *const u8;
+            let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+            self.resp(slice);
+            self.resp(record.get_key().as_ref());
+            self.resp(record.get_object().as_ref());
         }
     }
 }
