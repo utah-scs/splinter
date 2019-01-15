@@ -333,6 +333,9 @@ pub enum OpType {
     /// When the value if SandstormWrite, the record encapsulated in the response will be added to
     /// the write set corresponding to that extension.
     SandstormWrite = 0x2,
+
+    /// Any value beyond this represents an invalid record.
+    InvalidRecord = 0x3,
 }
 
 /// This struct represents a record for a read/write set. Each record in the read/write set will

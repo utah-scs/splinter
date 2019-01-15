@@ -17,6 +17,7 @@
 
 extern crate db;
 extern crate rand;
+extern crate sandstorm;
 extern crate time;
 extern crate zipf;
 
@@ -38,6 +39,7 @@ use db::e2d2::scheduler::*;
 use db::log::*;
 use db::rpc::*;
 use db::wireformat::*;
+use sandstorm::buf::OpType;
 
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
@@ -166,7 +168,6 @@ where
 
     // Time stamp in cycles at which measurement stopped.
     stop: u64,
-
 
     // The actual PUSHBACK workload. Required to generate keys and values for get() and put() requests.
     workload: RefCell<Pushback>,
@@ -298,7 +299,7 @@ where
 
         // If it is either time to send out a request, or if a request has never been sent out,
         // then, do so.
-        if (curr >= self.next || self.next == 0) && (self.map.len() < 8) {
+        if (curr >= self.next || self.next == 0) && (self.map.len() < 32) {
             if self.native == true {
                 // Configured to issue native RPCs, issue a regular get()/put() operation.
                 self.workload.borrow_mut().abc(
@@ -368,32 +369,42 @@ where
                                 RpcStatus::StatusOk => {
                                     self.latencies
                                         .push(curr - p.get_header().common_header.stamp);
-                                    unsafe{
+                                    unsafe {
                                         self.map.remove(&p.get_header().common_header.stamp);
                                     }
-                                    p.free_packet();
                                 },
 
                                 // If the status is StatusPushback then compelete the task, add the
                                 // stamp to the latencies, and free the packet.
                                 RpcStatus::StatusPushback => {
+                                    let records = p.get_payload();
+                                    for record in records.chunks(131) {
+                                        match parse_record_optype(record) {
+                                            OpType::SandstormRead => {
+                                                // Add record to the read-Set
+                                            }
+
+                                            OpType::SandstormWrite => {
+                                                // Add record to the write-set
+
+                                            }
+
+                                            _ => {
+                                                // No record in RW-set. Do nothing.
+                                            }
+                                        }
+                                    }
                                     self.latencies
                                         .push(curr - p.get_header().common_header.stamp);
-                                    unsafe{
+                                    unsafe {
                                         self.map.remove(&p.get_header().common_header.stamp);
                                     }
-                                    p.free_packet();
-                                    // Resume the work here
-                                    let mut mul:u64 = 1;
-                                    for i in 1..2000 {
-                                        mul *= i;
-                                    }
-                                    debug!("{}", mul);
                                 },
 
-                                _ => p.free_packet(),
+                                _ => {}
                             }
-                        },
+                            p.free_packet();
+                        }
 
                         // The response corresponds to a get() or put() RPC.
                         // The opcode on the response identifies the RPC type.
@@ -402,7 +413,7 @@ where
                                 let p = packet.parse_header::<GetResponse>();
                                 self.latencies
                                     .push(curr - p.get_header().common_header.stamp);
-                                unsafe{
+                                unsafe {
                                     self.map.remove(&p.get_header().common_header.stamp);
                                 }
                                 p.free_packet();
@@ -426,7 +437,7 @@ where
                         // The response corresponds to an invoke() RPC.
                         false => {
                             let p = packet.parse_header::<InvokeResponse>();
-                            unsafe{
+                            unsafe {
                                 self.map.remove(&p.get_header().common_header.stamp);
                             }
                             p.free_packet();
@@ -437,7 +448,7 @@ where
                         true => match parse_rpc_opcode(&packet) {
                             OpCode::SandstormGetRpc => {
                                 let p = packet.parse_header::<GetResponse>();
-                                unsafe{
+                                unsafe {
                                     self.map.remove(&p.get_header().common_header.stamp);
                                 }
                                 p.free_packet();
@@ -521,7 +532,7 @@ where
     }
 }
 
-fn setup_send_recv<S> (
+fn setup_send_recv<S>(
     ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
     _core: i32,
@@ -601,7 +612,13 @@ fn main() {
                 senders_receivers[i],
                 Arc::new(
                     move |_ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
-                        setup_send_recv(port.clone(), sched, core, master, &config::ClientConfig::load())
+                        setup_send_recv(
+                            port.clone(),
+                            sched,
+                            core,
+                            master,
+                            &config::ClientConfig::load(),
+                        )
                     },
                 ),
             ).expect("Failed to initialize receive/transmit side.");

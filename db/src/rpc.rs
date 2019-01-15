@@ -16,6 +16,7 @@
 use std::mem::{size_of, transmute};
 
 use super::wireformat::*;
+use sandstorm::buf::OpType;
 
 use e2d2::common::EmptyMetadata;
 use e2d2::headers::{IpHeader, MacHeader, UdpHeader};
@@ -73,6 +74,31 @@ pub fn parse_rpc_opcode(request: &Packet<UdpHeader, EmptyMetadata>) -> OpCode {
 
         false => {
             return OpCode::InvalidOperation;
+        }
+    }
+}
+
+/// This function looks into the records encapsulated into the payload corresponding to an RPC
+/// request, and reads it's optype (assumed to be the first byte in each record in optype).
+///
+/// # Arguments
+///
+/// * `record`: A reference to a record encapsulated in response payload for a RPC request.
+///
+/// # Return
+///
+/// If valid, the optype for the given record. If invalid, an optype corresponding
+/// to an invalid type (InvalidRecord) will be returned.
+pub fn parse_record_optype(record: &[u8]) -> OpType {
+    let optype = record[0];
+    match optype.lt(&(OpType::InvalidRecord as u8)) {
+        true => unsafe {
+            let optype: OpType = transmute(optype);
+            return optype;
+        },
+
+        false => {
+            return OpType::InvalidRecord;
         }
     }
 }
