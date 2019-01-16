@@ -14,34 +14,6 @@ name = "server"
 path = "src/bin/server.rs"
 
 [[bin]]
-name = "sanity"
-path = "src/bin/client/sanity.rs"
-
-[[bin]]
-name = "tao"
-path = "src/bin/client/tao.rs"
-
-[[bin]]
-name = "bad"
-path = "src/bin/client/bad.rs"
-
-[[bin]]
-name = "ycsb"
-path = "src/bin/client/ycsb.rs"
-
-[[bin]]
-name = "long"
-path = "src/bin/client/long.rs"
-
-[[bin]]
-name = "aggregate"
-path = "src/bin/client/aggregate.rs"
-
-[[bin]]
-name = "pushback"
-path = "src/bin/client/pushback.rs"
-
-[[bin]]
 name = "ext_bench"
 path = "src/bin/ext_bench.rs"
 
@@ -62,7 +34,6 @@ libloading   = "0.3"
 serde        = "1.0.37"
 serde_derive = "1.0.37"
 toml         = "0.4.5"
-zipf         = "2.0"
 sandstorm    = {path = "../sandstorm"}
 e2d2         = {path = "../net/framework"}
 

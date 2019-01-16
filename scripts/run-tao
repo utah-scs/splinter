@@ -17,7 +17,7 @@
 # Export DPDK bindings to the current shell.
 export LD_LIBRARY_PATH=$(pwd)/net/target/native
 
-cd db
+cd splinter
 
 # Check for a TOML file with client related configuration.
 if [[ ! -f client.toml ]]; then

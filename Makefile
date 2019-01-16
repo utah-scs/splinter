@@ -1,5 +1,6 @@
 all: netbricks
 	(cd db; cargo build --release)
+	(cd splinter; cargo build --release)
 	(cd ext/bad; cargo build --release)
 	(cd ext/tao; cargo build --release)
 	(cd ext/get; cargo build --release)
@@ -13,6 +14,7 @@ all: netbricks
 
 so-test: netbricks
 	(cd db; cargo build --release)
+	(cd splinter; cargo build --release)
 	(cd ext/test; cargo build --release)
 	$(foreach i,$(shell seq 0 99),cp ext/test/target/release/deps/libtest.so ext/get/target/release/deps/libtest$(i).so;)
 	(cd db; LD_LIBRARY_PATH=../net/target/native RUST_BACKTRACE=1 cargo run --release --bin ext_bench)
@@ -30,6 +32,7 @@ netbricks:
 
 clean:
 	(cd db; cargo clean)
+	(cd splinter; cargo clean)
 	(cd ext/bad; cargo clean)
 	(cd ext/tao; cargo clean)
 	(cd ext/get; cargo clean)

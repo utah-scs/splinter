@@ -1,4 +1,4 @@
-/* Copyright (c) 2018 University of Utah
+/* Copyright (c) 2019 University of Utah
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -37,6 +37,7 @@ use db::e2d2::allocators::*;
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
 use db::log::*;
+use db::master::Master;
 use db::rpc::*;
 use db::wireformat::*;
 use sandstorm::buf::OpType;
@@ -372,7 +373,7 @@ where
                                     unsafe {
                                         self.map.remove(&p.get_header().common_header.stamp);
                                     }
-                                },
+                                }
 
                                 // If the status is StatusPushback then compelete the task, add the
                                 // stamp to the latencies, and free the packet.
@@ -382,6 +383,7 @@ where
                                         match parse_record_optype(record) {
                                             OpType::SandstormRead => {
                                                 // Add record to the read-Set
+                                                info!("Read {}", record.len());
                                             }
 
                                             OpType::SandstormWrite => {
@@ -399,7 +401,7 @@ where
                                     unsafe {
                                         self.map.remove(&p.get_header().common_header.stamp);
                                     }
-                                },
+                                }
 
                                 _ => {}
                             }
@@ -575,6 +577,14 @@ fn main() {
 
     let config = config::ClientConfig::load();
     info!("Starting up Sandstorm client with config {:?}", config);
+
+    let master = Arc::new(Master::new());
+
+    // Create tenants with extensions.
+    info!("Populating extension for {} tenants", config.num_tenants);
+    for tenant in 1..(config.num_tenants + 1) {
+        master.load_test(tenant);
+    }
 
     // Based on the supplied client configuration, compute the amount of time it will take to send
     // out `num_reqs` requests at a rate of `req_rate` requests per second.
