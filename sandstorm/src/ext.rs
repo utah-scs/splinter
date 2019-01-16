@@ -13,17 +13,17 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::collections::HashMap;
+use std::ops::Generator;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::ops::Generator;
-use std::collections::HashMap;
 
 use super::common::TenantId;
+use super::db::DB;
 
-use spin::RwLock;
-use sandstorm::db::DB;
-use libloading::Library;
 use libloading::os::unix::Symbol;
+use libloading::Library;
+use spin::RwLock;
 
 // Number of buckets in the `extensions` hashmap in Extension Manager.
 const EXT_BUCKETS: usize = 32;
@@ -239,19 +239,18 @@ impl ExtensionManager {
                     .write()
                     .insert((share, String::from(name)), ext);
                 Some(())
-            })
-            .is_some()
+            }).is_some()
     }
 }
 
 // This module contains simple tests for Extension and ExtensionManager.
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
     use std::ops::GeneratorState;
+    use std::rc::Rc;
 
-    use sandstorm::null::NullDB;
     use super::{Extension, ExtensionManager};
+    use sandstorm::null::NullDB;
 
     // This function attempts to load and run a test extension, and asserts
     // that both operations were successfull.

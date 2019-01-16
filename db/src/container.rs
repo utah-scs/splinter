@@ -19,10 +19,8 @@ use std::panic::*;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use super::common::PACKET_UDP_LEN;
 use super::context::Context;
 use super::cycles;
-use super::ext::Extension;
 use super::task::TaskState::*;
 use super::task::{Task, TaskPriority, TaskState};
 
@@ -30,7 +28,9 @@ use e2d2::common::EmptyMetadata;
 use e2d2::headers::UdpHeader;
 use e2d2::interface::Packet;
 
+use sandstorm::common::PACKET_UDP_LEN;
 use sandstorm::db::DB;
+use sandstorm::ext::Extension;
 
 /// A container for untrusted code that can be scheduled by the database.
 pub struct Container {

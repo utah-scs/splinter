@@ -22,10 +22,8 @@ use std::str::from_utf8;
 use std::sync::Arc;
 
 use super::alloc::Allocator;
-use super::common::{TableId, TenantId, PACKET_UDP_LEN};
 use super::container::Container;
 use super::context::Context;
-use super::ext::*;
 use super::native::Native;
 use super::service::Service;
 use super::task::{Task, TaskPriority};
@@ -37,6 +35,9 @@ use e2d2::headers::UdpHeader;
 use e2d2::interface::Packet;
 
 use spin::RwLock;
+
+use sandstorm::common::{TableId, TenantId, PACKET_UDP_LEN};
+use sandstorm::ext::*;
 
 // The number of buckets in the `tenants` hashtable inside of Master.
 const TENANT_BUCKETS: usize = 32;

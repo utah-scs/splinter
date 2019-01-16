@@ -17,9 +17,10 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use super::table::Table;
-use super::common::{TableId, TenantId};
 
 use spin::RwLock;
+
+use sandstorm::common::{TableId, TenantId};
 
 /// This type represents a tenant in Sandstorm. It helps uniquely identify
 /// a tenant, and maintains a map of all the data tables belonging to a

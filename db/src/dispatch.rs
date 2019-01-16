@@ -21,7 +21,6 @@ use std::option::Option;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use super::common;
 use super::config;
 #[cfg(feature = "dispatch")]
 use super::cyclecounter::CycleCounter;
@@ -36,6 +35,8 @@ use super::wireformat;
 use super::e2d2::common::EmptyMetadata;
 use super::e2d2::headers::*;
 use super::e2d2::interface::*;
+
+use sandstorm::common;
 
 /// This is a thread local variable to count the number of occurrences
 /// of cycle counting to average for 1 M events.

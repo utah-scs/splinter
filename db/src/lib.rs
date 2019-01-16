@@ -31,7 +31,6 @@ pub extern crate env_logger;
 pub extern crate log;
 
 mod alloc;
-mod common;
 mod container;
 mod context;
 mod service;
@@ -46,7 +45,6 @@ pub mod cycles;
 pub mod cyclecounter;
 pub mod config;
 pub mod dispatch;
-pub mod ext;
 pub mod table;
 pub mod wireformat;
 pub mod master;
