@@ -292,4 +292,9 @@ impl DB for Context {
     fn populate_read_write_set(&self, record: Record) {
         self.readwriteset.borrow_mut().readwriteset.push(record);
     }
+
+    /// Lookup the `DB` trait for documentation on this method.
+    fn search_get_in_cache(&self, _table: u64, _key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
+        (true, false, None)
+    }
 }

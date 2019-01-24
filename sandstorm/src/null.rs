@@ -63,4 +63,8 @@ impl DB for NullDB {
     fn debug_log(&self, _message: &str) {}
 
     fn populate_read_write_set(&self, _record: Record) {}
+
+    fn search_get_in_cache(&self, _table: u64, _key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
+        (false, false, None)
+    }
 }

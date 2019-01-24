@@ -111,4 +111,13 @@ impl DB for MockDB {
     fn populate_read_write_set(&self, _record: Record) {
         self.debug_log(&format!("Added a record to read/write set"));
     }
+
+    fn search_get_in_cache(&self, table: u64, key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
+        self.debug_log(&format!(
+            "Invoked search_get_in_cache() on table {} for key {:?}",
+            table, key
+        ));
+
+        (false, false, unsafe { Some(ReadBuf::new(Bytes::with_capacity(0))) })
+    }
 }
