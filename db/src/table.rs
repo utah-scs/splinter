@@ -17,6 +17,7 @@ use hashbrown::HashMap;
 
 use spin::{RwLock};
 use bytes::{Bytes};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // The number of buckets in the hash table. Must be a power of two.
 // If you want to change this number, then you will also have to modify
@@ -28,6 +29,21 @@ use bytes::{Bytes};
 //     64 buckets: 17.0 Million ops/s (read-only)
 //    128 buckets: 18.5 Million ops/s (read-only), 12.3 Million ops/s (50-50)
 const N_BUCKETS : usize = 128;
+
+// Each Entry in a Table has an associated Version that is per-key monotonic.
+// This is used for concurrency control to identify when the value associated
+// with a key has changed.
+struct Version(u64);
+
+// An Entry in a Table which stores metadata about the stored value and a smart
+// pointer to the value itself.
+struct Entry {
+  // A unique, per-table-key monotonic id for the value associated with this
+  // verison.
+  version: Version,
+  // A ref-counted smart pointer to a stored value.
+  value: Bytes,
+}
 
 /// This struct represents a single table in Sandstorm. A table is indexed using
 /// an unordered map, which hashes an object's key to it's value. Tables can be
@@ -48,7 +64,14 @@ pub struct Table {
     //        allowing for multiple threads/procedures to hold references to an
     //        object, without worrying about concurrent updates. An object will
     //        be dropped only when this ref-count goes to zero.
-    maps: [RwLock<HashMap<Bytes, Bytes>>; N_BUCKETS],
+    maps: [RwLock<HashMap<Bytes, Entry>>; N_BUCKETS],
+
+    // Represents the highest version number of any entry that was removed from
+    // map. This is used to ensure all future entries associated with that key
+    // will have a higher version. An attempt is made to raise this value
+    // in delete() and it is accessed in put() when a new entry is inserted
+    // into map.
+    max_deleted_version: AtomicU64,
 }
 
 // Implementation of the Default trait for Table.
@@ -122,7 +145,8 @@ impl Default for Table {
                    RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
                    RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
                    RwLock::new(HashMap::new()), RwLock::new(HashMap::new()),
-                ]
+                ],
+           max_deleted_version: AtomicU64::new(0),
         }
     }
 }
@@ -147,7 +171,7 @@ impl Table {
         let map = self.maps[bucket].read();
 
         // Perform the lookup, and return.
-        return map.get(key).and_then(| value | { Some(value.clone()) });
+        return map.get(key).and_then(| entry | { Some(entry.value.clone()) });
     }
 
     /// This function writes an object into a table.
@@ -157,18 +181,24 @@ impl Table {
     /// * `key`:    A Bytes wrapping the key for the object.
     /// * `object`: A Bytes wrapping the entire object to be written to
     ///             the table.
-    pub fn put(&self, key: Bytes, object: Bytes) {
+    pub fn put(&self, key: Bytes, value: Bytes) {
         // First, identify the bucket the key falls into.
         let bucket: usize = key.slice(0, 1)[0] as usize & (N_BUCKETS - 1);
         let mut map = self.maps[bucket].write();
 
-        // Next, remove the key from the hash map if it already exists.
-        if map.contains_key(&key) {
-            let _val = map.remove(&key);
+        if let Some(entry) = map.get_mut(&key) {
+            // If an entry already exists, then update it (we are holding a
+            // bucket lock).
+            entry.value = value;
+            entry.version.0 += 1;
+            return;
         }
 
-        // Perform the insert.
-        let _obj = map.insert(key, object);
+        // If an entry does not exist we need to insert it while making
+        // sure that its version number is higher than any version that
+        // could have previously been associated with this key.
+        let version = Version(self.max_deleted_version.load(Ordering::Relaxed) + 1);
+        let _entry = map.insert(key, Entry{version, value});
     }
 
     /// This function deletes an object from a table.
@@ -182,8 +212,17 @@ impl Table {
         let mut map = self.maps[bucket].write();
 
         // Next, remove the key from the hash map if it already exists.
-        if map.contains_key(key) {
-            let _val = map.remove(key);
+        if let Some(entry) = map.remove(key) {
+            // Record the version number so we never use a lower version for any
+            // future value associated with the key.
+
+            // Be careful here if this function eventually becomes lock-free:
+            // here removal of the entry isn't visible until after the
+            // max_deleted_version is incremented. This ensures all future inserts
+            // to the removed key will have a version number higher than the one
+            // on the removed entry. That invariant has to be maintained .
+
+            self.max_deleted_version.fetch_max(entry.version.0, Ordering::Relaxed);
         }
     }
 }
