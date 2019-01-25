@@ -18,10 +18,10 @@
 extern crate db;
 extern crate rand;
 extern crate sandstorm;
+extern crate splinter;
 extern crate time;
 extern crate zipf;
 
-mod dispatch;
 mod setup;
 
 use std::cell::RefCell;
@@ -45,6 +45,8 @@ use sandstorm::buf::OpType;
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
 use zipf::ZipfDistribution;
+
+use splinter::*;
 
 // PUSHBACK benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads

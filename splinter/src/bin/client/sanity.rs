@@ -18,8 +18,8 @@
 #![feature(duration_from_micros)]
 
 extern crate db;
+extern crate splinter;
 
-mod dispatch;
 mod setup;
 
 use std::fmt::Display;
@@ -35,6 +35,8 @@ use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
 use db::log::*;
 use db::wireformat::InstallRequest;
+
+use splinter::*;
 
 /// Send side logic for a simple client that issues put() and get() requests.
 struct SanitySend {
