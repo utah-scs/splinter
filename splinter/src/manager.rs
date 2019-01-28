@@ -78,7 +78,9 @@ impl TaskManager {
 
         if let Some(ext) = self.master.extensions.get(tenant_id, &name) {
             let db = Rc::new(ProxyDB::new(
-                self.id, /* XXX: Need to add a lot of things here*/
+                self.id,
+                Arc::clone(&self.payload),
+                self.name_length as usize,
             ));
             self.task
                 .push(Box::new(Container::new(TaskPriority::REQUEST, db, ext)));

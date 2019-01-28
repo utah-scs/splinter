@@ -13,6 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::sync::Arc;
+
 use sandstorm::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
 use sandstorm::db::DB;
 
@@ -20,12 +22,27 @@ extern crate bytes;
 use self::bytes::{Bytes, BytesMut};
 
 pub struct ProxyDB {
+    // After pushback, each subsequent request(get/put) will have the same packet identifier
+    // as the first request.
     parent_id: u64,
+
+    // The buffer consisting of the RPC payload that invoked the extension. This is required
+    // to potentially pass in arguments to an extension. For example, a get() extension might
+    // require a key and table identifier to be passed in.
+    req: Arc<Vec<u8>>,
+
+    // The offset inside the request packet/buffer's payload at which the
+    // arguments to the extension begin.
+    args_offset: usize,
 }
 
 impl ProxyDB {
-    pub fn new(id: u64) -> ProxyDB {
-        ProxyDB { parent_id: id }
+    pub fn new(id: u64, request: Arc<Vec<u8>>, name_length: usize) -> ProxyDB {
+        ProxyDB {
+            parent_id: id,
+            req: request,
+            args_offset: name_length,
+        }
     }
 }
 
@@ -73,8 +90,7 @@ impl DB for ProxyDB {
     }
 
     fn args(&self) -> &[u8] {
-        self.debug_log(&format!("Invoked args(), {}", self.parent_id));
-        return &[];
+        self.req.split_at(self.args_offset).1
     }
 
     fn resp(&self, data: &[u8]) {

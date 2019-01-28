@@ -420,7 +420,7 @@ where
                                         match parse_record_optype(record) {
                                             OpType::SandstormRead => {
                                                 // Add record to the read-Set
-                                                //info!("Read {}, {}", record.len(), self.manager.read().len());
+                                                // info!("Read {}, {}", record.len(), self.manager.borrow().len());
                                             }
 
                                             OpType::SandstormWrite => {
