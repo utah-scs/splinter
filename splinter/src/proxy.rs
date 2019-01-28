@@ -86,4 +86,9 @@ impl DB for ProxyDB {
     fn populate_read_write_set(&self, _record: Record) {
         self.debug_log(&format!("Added a record to read/write set"));
     }
+
+    /// Lookup the `DB` trait for documentation on this method.
+    fn search_get_in_cache(&self, _table: u64, _key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
+        (false, false, None)
+    }
 }
