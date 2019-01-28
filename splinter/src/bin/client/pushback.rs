@@ -44,9 +44,9 @@ use sandstorm::buf::OpType;
 
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
-use zipf::ZipfDistribution;
-
+use splinter::manager::TaskManager;
 use splinter::*;
+use zipf::ZipfDistribution;
 
 // PUSHBACK benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
@@ -209,6 +209,14 @@ where
     // To keep the mapping between sent and received packets. The client doesn't want to send
     // more than 32(XXX) outstanding packets.
     map: HashMap<u64, u64>,
+
+    /// A ref counted pointer to a master service. The master service
+    /// implements the primary interface to the database.
+    master_service: Arc<Master>,
+
+    // To keep a mapping between each packet and request parameters. This information will be used
+    // when the server pushes back the extension.
+    manager: RefCell<HashMap<u64, TaskManager>>,
 }
 
 // Implementation of methods on PushbackRecv.
@@ -237,6 +245,7 @@ where
         tx_port: CacheAligned<PortQueue>,
         reqs: u64,
         dst_ports: u16,
+        masterservice: Arc<Master>,
     ) -> PushbackRecvSend<T> {
         // The payload on an invoke() based get request consists of the extensions name ("get"),
         // the table id to perform the lookup on, and the key to lookup.
@@ -288,7 +297,30 @@ where
             payload_put: RefCell::new(payload_put),
             finished: false,
             map: HashMap::with_capacity(32),
+            master_service: Arc::clone(&masterservice),
+            manager: RefCell::new(HashMap::new()),
         }
+    }
+
+    fn add_request(&self, req: &[u8], tenant: u32, name_length: u32, id: u64) {
+        let req = TaskManager::new(
+            Arc::clone(&self.master_service),
+            &req,
+            tenant,
+            name_length,
+            id,
+        );
+        match self.manager.borrow_mut().insert(id, req) {
+            Some(_) => {
+                info!("Already present in the Hashmap");
+            }
+
+            None => {}
+        }
+    }
+
+    fn remove_request(&self, id: u64) {
+        self.manager.borrow_mut().remove(&id);
     }
 
     fn send(&mut self) {
@@ -322,6 +354,7 @@ where
                         // extension name (8 bytes), and the table id (8 bytes). Just write in the
                         // first 4 bytes of the key.
                         p_get[16..20].copy_from_slice(&key[0..4]);
+                        self.add_request(&p_get, tenant, 8, curr);
                         self.sender.send_invoke(tenant, 8, &p_get, curr)
                     },
                     |tenant, key, _val| {
@@ -330,6 +363,7 @@ where
                         // bytes). Just write in the first 4 bytes of the key. The value is anyway
                         // always zero.
                         p_put[18..22].copy_from_slice(&key[0..4]);
+                        self.add_request(&p_put, tenant, 8, curr);
                         self.sender.send_invoke(tenant, 8, &p_put, curr)
                     },
                 );
@@ -374,6 +408,7 @@ where
                                         .push(curr - p.get_header().common_header.stamp);
                                     unsafe {
                                         self.map.remove(&p.get_header().common_header.stamp);
+                                        self.remove_request(p.get_header().common_header.stamp);
                                     }
                                 }
 
@@ -385,7 +420,7 @@ where
                                         match parse_record_optype(record) {
                                             OpType::SandstormRead => {
                                                 // Add record to the read-Set
-                                                info!("Read {}", record.len());
+                                                //info!("Read {}, {}", record.len(), self.manager.read().len());
                                             }
 
                                             OpType::SandstormWrite => {
@@ -398,11 +433,24 @@ where
                                             }
                                         }
                                     }
-                                    self.latencies
-                                        .push(curr - p.get_header().common_header.stamp);
-                                    unsafe {
-                                        self.map.remove(&p.get_header().common_header.stamp);
+
+                                    let hdr = &p.get_header();
+                                    let timestamp = hdr.common_header.stamp;
+
+                                    // Create task and run the generator.
+                                    match self.manager.borrow_mut().get_mut(&timestamp) {
+                                        Some(manager) => {
+                                            manager.create_generator();
+                                            manager.execute_task();
+                                        }
+
+                                        None => {
+                                            info!("No manager with {} timestamp", timestamp);
+                                        }
                                     }
+                                    self.latencies.push(curr - timestamp);
+                                    self.map.remove(&timestamp);
+                                    self.remove_request(timestamp);
                                 }
 
                                 _ => {}
@@ -441,8 +489,15 @@ where
                         // The response corresponds to an invoke() RPC.
                         false => {
                             let p = packet.parse_header::<InvokeResponse>();
+                            match p.get_header().common_header.status {
+                                RpcStatus::StatusPushback => {
+                                    //XXX: handle here also.
+                                }
+                                _ => {}
+                            }
                             unsafe {
                                 self.map.remove(&p.get_header().common_header.stamp);
+                                self.remove_request(p.get_header().common_header.stamp);
                             }
                             p.free_packet();
                         }
@@ -542,6 +597,7 @@ fn setup_send_recv<S>(
     _core: i32,
     master: bool,
     config: &config::ClientConfig,
+    masterservice: Arc<Master>,
 ) where
     S: Scheduler + Sized,
 {
@@ -559,6 +615,7 @@ fn setup_send_recv<S>(
         ports[0].clone(),
         config.num_reqs as u64,
         config.server_udp_ports as u16,
+        masterservice,
     )) {
         Ok(_) => {
             info!(
@@ -580,12 +637,12 @@ fn main() {
     let config = config::ClientConfig::load();
     info!("Starting up Sandstorm client with config {:?}", config);
 
-    let master = Arc::new(Master::new());
+    let masterservice = Arc::new(Master::new());
 
     // Create tenants with extensions.
     info!("Populating extension for {} tenants", config.num_tenants);
     for tenant in 1..(config.num_tenants + 1) {
-        master.load_test(tenant);
+        masterservice.load_test(tenant);
     }
 
     // Based on the supplied client configuration, compute the amount of time it will take to send
@@ -618,6 +675,7 @@ fn main() {
             master = true;
         }
 
+        let master_service = Arc::clone(&masterservice);
         // Setup the receive and transmit side.
         net_context
             .add_pipeline_to_core(
@@ -630,6 +688,7 @@ fn main() {
                             core,
                             master,
                             &config::ClientConfig::load(),
+                            Arc::clone(&master_service),
                         )
                     },
                 ),

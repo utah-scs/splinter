@@ -53,7 +53,7 @@ pub struct Master {
     // An extension manager maintaining state concerning extensions loaded into the system.
     // Required to retrieve and determine if an extension belongs to a particular tenant while
     // handling an invocation request.
-    extensions: ExtensionManager,
+    pub extensions: ExtensionManager,
 
     // Manager of the table heap. Required to allow writes to the database.
     heap: Arc<Allocator>,

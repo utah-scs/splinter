@@ -13,6 +13,18 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-extern crate db;
+#![feature(generators, generator_trait, asm)]
 
+extern crate db;
+extern crate sandstorm;
+pub extern crate env_logger;
+#[macro_use]
+pub extern crate log;
+
+mod container;
+
+// Public modules for binaries.
+#[allow(unused_imports)]
 pub mod dispatch;
+pub mod manager;
+pub mod proxy;
