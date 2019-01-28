@@ -116,7 +116,7 @@ impl Task for Container {
         // Resume the task if need be. The task needs to be run/resumed only
         // if it is in the INITIALIZED or YIELDED state. Nothing needs to be
         // done if it has already completed, or was aborted.
-        if self.state == INITIALIZED || self.state == YIELDED {
+        if self.state == INITIALIZED || self.state == YIELDED || self.state == WAITING {
             self.state = RUNNING;
 
             // As of 04/02/2018, calling resume() on a generator requires an unsafe block.
@@ -126,6 +126,11 @@ impl Task for Container {
                     GeneratorState::Yielded(time) => {
                         self.db_time += time;
                         self.state = YIELDED;
+                        if let Some(proxydb) = self.db.get_mut() {
+                            if proxydb.get_waiting() ==  true {
+                                self.state = WAITING;
+                            }
+                        }
                     }
 
                     GeneratorState::Complete(time) => {

@@ -13,15 +13,21 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use sandstorm::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
 use sandstorm::db::DB;
 
+use super::dispatch::*;
+
 extern crate bytes;
 use self::bytes::{Bytes, BytesMut};
 
 pub struct ProxyDB {
+    // The tenant-id for which the invoke() function was called for the parent request.
+    tenant: u32,
+
     // After pushback, each subsequent request(get/put) will have the same packet identifier
     // as the first request.
     parent_id: u64,
@@ -34,20 +40,45 @@ pub struct ProxyDB {
     // The offset inside the request packet/buffer's payload at which the
     // arguments to the extension begin.
     args_offset: usize,
+
+    // The flag to indicate if the current extension is waiting for the DB operation to complete.
+    // This flag will be used by the scheduler to avoid scheduling the task until the response comes.
+    waiting: RefCell<bool>,
+
+    // Network stack required to actually send RPC requests out the network.
+    sender: Arc<Sender>,
 }
 
 impl ProxyDB {
-    pub fn new(id: u64, request: Arc<Vec<u8>>, name_length: usize) -> ProxyDB {
+    pub fn new(
+        tenant_id: u32,
+        id: u64,
+        request: Arc<Vec<u8>>,
+        name_length: usize,
+        sender_service: Arc<Sender>,
+    ) -> ProxyDB {
         ProxyDB {
+            tenant: tenant_id,
             parent_id: id,
             req: request,
             args_offset: name_length,
+            waiting: RefCell::new(false),
+            sender: sender_service,
         }
+    }
+
+    fn set_waiting(&self, value: bool) {
+        *self.waiting.borrow_mut() = value;
+    }
+
+    pub fn get_waiting(&self) -> bool {
+        self.waiting.borrow().clone()
     }
 }
 
 impl DB for ProxyDB {
     fn get(&self, table: u64, key: &[u8]) -> Option<ReadBuf> {
+        self.set_waiting(false);
         self.debug_log(&format!(
             "Invoked get() on table {} for key {:?}",
             table, key
@@ -104,7 +135,12 @@ impl DB for ProxyDB {
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn search_get_in_cache(&self, _table: u64, _key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
-        (false, false, None)
+    fn search_get_in_cache(&self, table: u64, key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
+        let found = false;
+        if found == false {
+            self.set_waiting(true);
+            self.sender.send_get(self.tenant, table, key, self.parent_id);
+        }
+        (false, found, None)
     }
 }

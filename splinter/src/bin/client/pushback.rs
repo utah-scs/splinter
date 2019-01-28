@@ -18,6 +18,7 @@
 extern crate db;
 extern crate rand;
 extern crate sandstorm;
+extern crate spin;
 extern crate splinter;
 extern crate time;
 extern crate zipf;
@@ -25,11 +26,13 @@ extern crate zipf;
 mod setup;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Display;
 use std::mem;
 use std::mem::transmute;
 use std::sync::Arc;
+
+use spin::RwLock;
 
 use db::config;
 use db::cycles;
@@ -39,6 +42,7 @@ use db::e2d2::scheduler::*;
 use db::log::*;
 use db::master::Master;
 use db::rpc::*;
+use db::task::TaskState::*;
 use db::wireformat::*;
 use sandstorm::buf::OpType;
 
@@ -176,7 +180,7 @@ where
     workload: RefCell<Pushback>,
 
     // Network stack required to actually send RPC requests out the network.
-    sender: dispatch::Sender,
+    sender: Arc<dispatch::Sender>,
 
     // Total number of requests to be sent out.
     requests: u64,
@@ -217,6 +221,10 @@ where
     // To keep a mapping between each packet and request parameters. This information will be used
     // when the server pushes back the extension.
     manager: RefCell<HashMap<u64, TaskManager>>,
+
+    // Run-queue of tasks waiting to execute. Tasks on this queue have either yielded, or have been
+    // recently enqueued and never run before.
+    waiting: RwLock<VecDeque<TaskManager>>,
 }
 
 // Implementation of methods on PushbackRecv.
@@ -287,7 +295,7 @@ where
                 config.num_tenants,
                 config.tenant_skew,
             )),
-            sender: dispatch::Sender::new(config, tx_port, dst_ports),
+            sender: Arc::new(dispatch::Sender::new(config, tx_port, dst_ports)),
             requests: reqs,
             sent: 0,
             rate_inv: cycles::cycles_per_second() / config.req_rate as u64,
@@ -299,12 +307,14 @@ where
             map: HashMap::with_capacity(32),
             master_service: Arc::clone(&masterservice),
             manager: RefCell::new(HashMap::new()),
+            waiting: RwLock::new(VecDeque::new()),
         }
     }
 
     fn add_request(&self, req: &[u8], tenant: u32, name_length: u32, id: u64) {
         let req = TaskManager::new(
             Arc::clone(&self.master_service),
+            Arc::clone(&self.sender),
             &req,
             tenant,
             name_length,
@@ -396,9 +406,9 @@ where
                 if self.recvd > 2 * 1000 * 1000 && self.master {
                     let curr = cycles::rdtsc();
 
-                    match self.native {
+                    match parse_rpc_opcode(&packet) {
                         // The response corresponds to an invoke() RPC.
-                        false => {
+                        OpCode::SandstormInvokeRpc => {
                             let p = packet.parse_header::<InvokeResponse>();
                             match p.get_header().common_header.status {
                                 // If the status is StatusOk then add the stamp to the latencies and
@@ -438,10 +448,10 @@ where
                                     let timestamp = hdr.common_header.stamp;
 
                                     // Create task and run the generator.
-                                    match self.manager.borrow_mut().get_mut(&timestamp) {
-                                        Some(manager) => {
+                                    match self.manager.borrow_mut().remove(&timestamp) {
+                                        Some(mut manager) => {
                                             manager.create_generator();
-                                            manager.execute_task();
+                                            self.waiting.write().push_back(manager);
                                         }
 
                                         None => {
@@ -450,7 +460,6 @@ where
                                     }
                                     self.latencies.push(curr - timestamp);
                                     self.map.remove(&timestamp);
-                                    self.remove_request(timestamp);
                                 }
 
                                 _ => {}
@@ -460,69 +469,81 @@ where
 
                         // The response corresponds to a get() or put() RPC.
                         // The opcode on the response identifies the RPC type.
-                        true => match parse_rpc_opcode(&packet) {
-                            OpCode::SandstormGetRpc => {
-                                let p = packet.parse_header::<GetResponse>();
-                                self.latencies
-                                    .push(curr - p.get_header().common_header.stamp);
-                                unsafe {
-                                    self.map.remove(&p.get_header().common_header.stamp);
+                        OpCode::SandstormGetRpc => {
+                            let p = packet.parse_header::<GetResponse>();
+                            self.latencies
+                                .push(curr - p.get_header().common_header.stamp);
+                            unsafe {
+                                if self.manager.borrow().contains_key(&p.get_header().common_header.stamp) {
+                                    let manager = self.manager.borrow_mut().remove(&p.get_header().common_header.stamp);
+                                    if let Some(mut manager) = manager {
+                                        self.waiting.write().push_back(manager);
+                                    }
                                 }
-                                p.free_packet();
+                                self.map.remove(&p.get_header().common_header.stamp);
                             }
+                            p.free_packet();
+                        }
 
-                            OpCode::SandstormPutRpc => {
-                                let p = packet.parse_header::<PutResponse>();
-                                self.latencies
-                                    .push(curr - p.get_header().common_header.stamp);
-                                unsafe {
-                                    self.map.remove(&p.get_header().common_header.stamp);
-                                }
-                                p.free_packet();
+                        OpCode::SandstormPutRpc => {
+                            let p = packet.parse_header::<PutResponse>();
+                            self.latencies
+                                .push(curr - p.get_header().common_header.stamp);
+                            unsafe {
+                                self.map.remove(&p.get_header().common_header.stamp);
                             }
+                            p.free_packet();
+                        }
 
-                            _ => packet.free_packet(),
-                        },
+                        _ => packet.free_packet(),
                     }
                 } else {
-                    match self.native {
+                    match parse_rpc_opcode(&packet) {
                         // The response corresponds to an invoke() RPC.
-                        false => {
+                        OpCode::SandstormInvokeRpc => {
                             let p = packet.parse_header::<InvokeResponse>();
                             match p.get_header().common_header.status {
                                 RpcStatus::StatusPushback => {
                                     //XXX: handle here also.
                                 }
+
+                                RpcStatus::StatusOk => {
+                                    self.remove_request(p.get_header().common_header.stamp);
+                                }
+
                                 _ => {}
                             }
                             unsafe {
                                 self.map.remove(&p.get_header().common_header.stamp);
-                                self.remove_request(p.get_header().common_header.stamp);
                             }
                             p.free_packet();
                         }
 
                         // The response corresponds to a get() or put() RPC.
                         // The opcode on the response identifies the RPC type.
-                        true => match parse_rpc_opcode(&packet) {
-                            OpCode::SandstormGetRpc => {
-                                let p = packet.parse_header::<GetResponse>();
-                                unsafe {
-                                    self.map.remove(&p.get_header().common_header.stamp);
+                        OpCode::SandstormGetRpc => {
+                            let p = packet.parse_header::<GetResponse>();
+                            unsafe {
+                                if self.manager.borrow().contains_key(&p.get_header().common_header.stamp) {
+                                    let manager = self.manager.borrow_mut().remove(&p.get_header().common_header.stamp);
+                                    if let Some(mut manager) = manager {
+                                        self.waiting.write().push_back(manager);
+                                    }
                                 }
-                                p.free_packet();
+                                self.map.remove(&p.get_header().common_header.stamp);
                             }
+                            p.free_packet();
+                        }
 
-                            OpCode::SandstormPutRpc => {
-                                let p = packet.parse_header::<PutResponse>();
-                                unsafe {
-                                    self.map.remove(&p.get_header().common_header.stamp);
-                                }
-                                p.free_packet();
+                        OpCode::SandstormPutRpc => {
+                            let p = packet.parse_header::<PutResponse>();
+                            unsafe {
+                                self.map.remove(&p.get_header().common_header.stamp);
                             }
+                            p.free_packet();
+                        }
 
-                            _ => packet.free_packet(),
-                        },
+                        _ => packet.free_packet(),
                     }
                 }
             }
@@ -532,6 +553,19 @@ where
         // stop timestamp so that throughput can be estimated later.
         if self.responses <= self.recvd {
             self.stop = cycles::rdtsc();
+        }
+    }
+
+    fn execute_task(&mut self) {
+        let manager = self.waiting.write().pop_front();
+        if let Some(mut manager) = manager {
+            let taskstate = manager.execute_task();
+            if taskstate == YIELDED {
+                self.waiting.write().push_back(manager);
+            }
+            else if taskstate == WAITING {
+                self.manager.borrow_mut().insert(manager.get_id(), manager);
+            }
         }
     }
 }
@@ -581,6 +615,7 @@ where
     fn execute(&mut self) {
         self.send();
         self.recv();
+        self.execute_task();
         if self.finished == true {
             return;
         }

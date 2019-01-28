@@ -17,10 +17,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::container::Container;
+use super::dispatch::*;
 use super::proxy::ProxyDB;
 
 use db::master::Master;
-use db::task::{Task, TaskPriority, TaskState::*};
+use db::task::{Task, TaskPriority, TaskState, TaskState::*};
 
 use sandstorm::common::TenantId;
 
@@ -43,11 +44,15 @@ pub struct TaskManager {
 
     //
     master: Arc<Master>,
+
+    //
+    sender: Arc<Sender>,
 }
 
 impl TaskManager {
     pub fn new(
         master_service: Arc<Master>,
+        sender_service: Arc<Sender>,
         req: &[u8],
         tenant_id: u32,
         name_len: u32,
@@ -60,7 +65,12 @@ impl TaskManager {
             id: timestamp,
             task: Vec::with_capacity(1),
             master: master_service,
+            sender: sender_service,
         }
+    }
+
+    pub fn get_id(&self) -> u64 {
+        self.id.clone()
     }
 
     fn get_payload(&self) -> &[u8] {
@@ -78,9 +88,11 @@ impl TaskManager {
 
         if let Some(ext) = self.master.extensions.get(tenant_id, &name) {
             let db = Rc::new(ProxyDB::new(
+                self.tenant,
                 self.id,
                 Arc::clone(&self.payload),
                 self.name_length as usize,
+                Arc::clone(&self.sender),
             ));
             self.task
                 .push(Box::new(Container::new(TaskPriority::REQUEST, db, ext)));
@@ -89,16 +101,18 @@ impl TaskManager {
         }
     }
 
-    pub fn execute_task(&mut self) {
+    pub fn execute_task(&mut self) -> TaskState {
         let task = self.task.pop();
+        let mut taskstate: TaskState = INITIALIZED;
         if let Some(mut task) = task {
             if task.run().0 == COMPLETED {
                 //Do something
+                taskstate = task.state();
             } else {
+                taskstate = task.state();
                 self.task.push(task);
             }
-        } else {
-            info!("No task to execute for the request");
         }
+        taskstate
     }
 }

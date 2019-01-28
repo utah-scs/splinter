@@ -40,6 +40,10 @@ pub enum TaskState {
     /// A task is in this state when it has been stopped without completion, after
     /// setting this state, the pushback mechanism will run.
     STOPPED = 0x5,
+
+    /// A task is in this state when it has been suspended due to IO. On the client side
+    /// the task can wait for the native operation responses.
+    WAITING = 0x6,
 }
 
 /// This enum represents the priority of a task in the system. A smaller value
