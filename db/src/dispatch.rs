@@ -797,4 +797,7 @@ where
     fn set_state(&mut self, state: TaskState) {
         self.state = state;
     }
+
+    /// Refer to the `Task` trait for Documentation.
+    fn update_cache(&mut self, _record: &[u8]) {}
 }

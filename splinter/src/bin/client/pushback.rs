@@ -44,7 +44,6 @@ use db::master::Master;
 use db::rpc::*;
 use db::task::TaskState::*;
 use db::wireformat::*;
-use sandstorm::buf::OpType;
 
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
@@ -314,7 +313,6 @@ where
     fn add_request(&self, req: &[u8], tenant: u32, name_length: u32, id: u64) {
         let req = TaskManager::new(
             Arc::clone(&self.master_service),
-            Arc::clone(&self.sender),
             &req,
             tenant,
             name_length,
@@ -426,31 +424,14 @@ where
                                 // stamp to the latencies, and free the packet.
                                 RpcStatus::StatusPushback => {
                                     let records = p.get_payload();
-                                    for record in records.chunks(131) {
-                                        match parse_record_optype(record) {
-                                            OpType::SandstormRead => {
-                                                // Add record to the read-Set
-                                                // info!("Read {}, {}", record.len(), self.manager.borrow().len());
-                                            }
-
-                                            OpType::SandstormWrite => {
-                                                // Add record to the write-set
-
-                                            }
-
-                                            _ => {
-                                                // No record in RW-set. Do nothing.
-                                            }
-                                        }
-                                    }
-
                                     let hdr = &p.get_header();
                                     let timestamp = hdr.common_header.stamp;
 
                                     // Create task and run the generator.
                                     match self.manager.borrow_mut().remove(&timestamp) {
                                         Some(mut manager) => {
-                                            manager.create_generator();
+                                            manager.create_generator(Arc::clone(&self.sender));
+                                            manager.update_rwset(records);
                                             self.waiting.write().push_back(manager);
                                         }
 
@@ -474,8 +455,15 @@ where
                             self.latencies
                                 .push(curr - p.get_header().common_header.stamp);
                             unsafe {
-                                if self.manager.borrow().contains_key(&p.get_header().common_header.stamp) {
-                                    let manager = self.manager.borrow_mut().remove(&p.get_header().common_header.stamp);
+                                if self
+                                    .manager
+                                    .borrow()
+                                    .contains_key(&p.get_header().common_header.stamp)
+                                {
+                                    let manager = self
+                                        .manager
+                                        .borrow_mut()
+                                        .remove(&p.get_header().common_header.stamp);
                                     if let Some(mut manager) = manager {
                                         self.waiting.write().push_back(manager);
                                     }
@@ -524,8 +512,15 @@ where
                         OpCode::SandstormGetRpc => {
                             let p = packet.parse_header::<GetResponse>();
                             unsafe {
-                                if self.manager.borrow().contains_key(&p.get_header().common_header.stamp) {
-                                    let manager = self.manager.borrow_mut().remove(&p.get_header().common_header.stamp);
+                                if self
+                                    .manager
+                                    .borrow()
+                                    .contains_key(&p.get_header().common_header.stamp)
+                                {
+                                    let manager = self
+                                        .manager
+                                        .borrow_mut()
+                                        .remove(&p.get_header().common_header.stamp);
                                     if let Some(mut manager) = manager {
                                         self.waiting.write().push_back(manager);
                                     }
@@ -562,8 +557,7 @@ where
             let taskstate = manager.execute_task();
             if taskstate == YIELDED {
                 self.waiting.write().push_back(manager);
-            }
-            else if taskstate == WAITING {
+            } else if taskstate == WAITING {
                 self.manager.borrow_mut().insert(manager.get_id(), manager);
             }
         }

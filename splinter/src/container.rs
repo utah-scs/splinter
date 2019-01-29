@@ -22,6 +22,7 @@ use std::sync::Arc;
 use super::proxy::ProxyDB;
 
 use db::cycles;
+use db::rpc::*;
 use db::task::TaskState::*;
 use db::task::{Task, TaskPriority, TaskState};
 
@@ -29,6 +30,7 @@ use db::e2d2::common::EmptyMetadata;
 use db::e2d2::headers::UdpHeader;
 use db::e2d2::interface::Packet;
 
+use sandstorm::buf::OpType;
 use sandstorm::db::DB;
 use sandstorm::ext::Extension;
 
@@ -127,7 +129,7 @@ impl Task for Container {
                         self.db_time += time;
                         self.state = YIELDED;
                         if let Some(proxydb) = self.db.get_mut() {
-                            if proxydb.get_waiting() ==  true {
+                            if proxydb.get_waiting() == true {
                                 self.state = WAITING;
                             }
                         }
@@ -184,11 +186,32 @@ impl Task for Container {
         Packet<UdpHeader, EmptyMetadata>,
         Packet<UdpHeader, EmptyMetadata>,
     )> {
+        // First, drop the generator. Doing so ensures that self.db is the
+        // only reference to the extension's execution context.
+        self.gen = Box::new(|| {
+            yield 0;
+            return 0;
+        });
         None
     }
 
     /// Refer to the `Task` trait for Documentation.
     fn set_state(&mut self, state: TaskState) {
         self.state = state;
+    }
+
+    /// Refer to the `Task` trait for Documentation.
+    fn update_cache(&mut self, record: &[u8]) {
+        if let Some(proxydb) = self.db.get_mut() {
+            match parse_record_optype(record) {
+                OpType::SandstormRead => {
+                    proxydb.set_read_record(record.split_at(1).1);
+                }
+
+                OpType::SandstormWrite => proxydb.set_write_record(record.split_at(1).1),
+
+                _ => {}
+            }
+        }
     }
 }

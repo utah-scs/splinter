@@ -121,4 +121,12 @@ pub trait Task {
     ///
     /// * `state`: The state, which will be assigned to the task.
     fn set_state(&mut self, state: TaskState);
+
+    /// This method is called after the pushback and updates the local RW set on the client
+    /// side.
+    ///
+    /// # Arguments
+    ///
+    /// * `record`: The record, which will be added to the RW set.
+    fn update_cache(&mut self, record: &[u8]);
 }
