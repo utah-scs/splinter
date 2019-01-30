@@ -650,7 +650,7 @@ where
             if parse_rpc_service(&request) == wireformat::Service::MasterService {
                 // The request is for Master, get it's opcode, and call into Master.
                 let opcode = parse_rpc_opcode(&request);
-                if FAST_PATH {
+                if !FAST_PATH {
                     match self.master_service.dispatch(opcode, request, response) {
                         Ok(task) => {
                             self.scheduler.enqueue(task);
