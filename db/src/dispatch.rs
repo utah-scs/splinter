@@ -26,6 +26,7 @@ use super::config;
 use super::cyclecounter::CycleCounter;
 use super::cycles;
 use super::master::Master;
+use super::rpc;
 use super::rpc::*;
 use super::sched::RoundRobin;
 use super::service::Service;
@@ -37,6 +38,10 @@ use super::e2d2::headers::*;
 use super::e2d2::interface::*;
 
 use sandstorm::common;
+
+/// This flag enables or disables fast path for native requests.
+/// Later, it will be set from the server.toml file probably.
+const FAST_PATH: bool = false;
 
 /// This is a thread local variable to count the number of occurrences
 /// of cycle counting to average for 1 M events.
@@ -621,6 +626,11 @@ where
         // operation.
         let mut ignore_packets = Vec::with_capacity(self.max_rx_packets as usize);
 
+        // This vector will hold response packets of native requests.
+        // It is then appended to scheduler's 'responses' queue
+        // so these reponses can be sent out next time dispatch task is run.
+        let mut native_responses = Vec::new();
+
         while let Some(request) = requests.pop() {
             // Allocate a packet for the response upfront, and add in MAC, IP, and UDP headers.
             let mut response = new_packet()
@@ -640,16 +650,67 @@ where
             if parse_rpc_service(&request) == wireformat::Service::MasterService {
                 // The request is for Master, get it's opcode, and call into Master.
                 let opcode = parse_rpc_opcode(&request);
-                match self.master_service.dispatch(opcode, request, response) {
-                    Ok(task) => {
-                        self.scheduler.enqueue(task);
-                    }
+                if FAST_PATH {
+                    match self.master_service.dispatch(opcode, request, response) {
+                        Ok(task) => {
+                            self.scheduler.enqueue(task);
+                        }
 
-                    Err((req, res)) => {
-                        // Master returned an error. The allocated request and response packets
-                        // need to be freed up.
-                        ignore_packets.push(req);
-                        ignore_packets.push(res);
+                        Err((req, res)) => {
+                            // Master returned an error. The allocated request and response packets
+                            // need to be freed up.
+                            ignore_packets.push(req);
+                            ignore_packets.push(res);
+                        }
+                    }
+                } else {
+                    match opcode {
+                        wireformat::OpCode::SandstormInvokeRpc => {
+                            // The request is for invoke. Dispatch RPC to its handler.
+                            match self.master_service.dispatch_invoke(request, response) {
+                                Ok(task) => {
+                                    self.scheduler.enqueue(task);
+                                }
+
+                                Err((req, res)) => {
+                                    // Master returned an error. The allocated request and response packets
+                                    // need to be freed up.
+                                    ignore_packets.push(req);
+                                    ignore_packets.push(res);
+                                }
+                            }
+                        }
+
+                        wireformat::OpCode::SandstormGetRpc
+                        | wireformat::OpCode::SandstormPutRpc
+                        | wireformat::OpCode::SandstormMultiGetRpc => {
+                            // The request is native. Service it right away.
+                            match self
+                                .master_service
+                                .service_native(opcode, request, response)
+                            {
+                                Ok((req, res)) => {
+                                    // Free request packet.
+                                    req.free_packet();
+
+                                    // Push response packet on the local queue of responses that are ready to be sent out.
+                                    native_responses.push(rpc::fixup_header_length_fields(res));
+                                }
+
+                                Err((req, res)) => {
+                                    // Master returned an error. The allocated request and response packets
+                                    // need to be freed up.
+                                    ignore_packets.push(req);
+                                    ignore_packets.push(res);
+                                }
+                            }
+                        }
+
+                        _ => {
+                            // The request is unknown.
+                            ignore_packets.push(request);
+                            ignore_packets.push(response);
+                        }
                     }
                 }
             } else {
@@ -659,6 +720,9 @@ where
                 ignore_packets.push(response);
             }
         }
+
+        // Enqueue completed native resps on to scheduler's responses queue
+        self.scheduler.append_resps(&mut native_responses);
 
         // Free the set of ignored packets.
         self.free_packets(ignore_packets);

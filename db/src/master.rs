@@ -21,7 +21,7 @@ use std::rc::Rc;
 use std::str::from_utf8;
 use std::sync::Arc;
 
-use super::alloc::Allocator;
+use super::alloc::Allocator; 
 use super::container::Container;
 use super::context::Context;
 use super::native::Native;
@@ -136,7 +136,8 @@ impl Master {
             &key[0..4].copy_from_slice(&temp);
             &val[0..4].copy_from_slice(&temp);
 
-            let obj = self.heap
+            let obj = self
+                .heap
                 .object(tenant_id, table_id, &key, &val)
                 .expect("Failed to create test object.");
             table.put(obj.0, obj.1);
@@ -174,7 +175,8 @@ impl Master {
             let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
             &key[0..4].copy_from_slice(&temp);
 
-            let obj = self.heap
+            let obj = self
+                .heap
                 .object(tenant_id, 1, &key, &val)
                 .expect("Failed to create test object.");
             table.put(obj.0, obj.1);
@@ -205,14 +207,16 @@ impl Master {
                 list.extend_from_slice(&[0; 12]);
 
                 // Add this assoc to the assoc table.
-                let obj = self.heap
+                let obj = self
+                    .heap
                     .object(tenant_id, 2, &key, &val)
                     .expect("Failed to create test object.");
                 table.put(obj.0, obj.1);
             }
 
             // Add the assoc list to the table too.
-            let obj = self.heap
+            let obj = self
+                .heap
                 .object(tenant_id, 2, &key[0..10], &list)
                 .expect("Failed to create test object.");
             table.put(obj.0, obj.1);
@@ -268,7 +272,8 @@ impl Master {
                 val.extend_from_slice(&k);
             }
 
-            let obj = self.heap
+            let obj = self
+                .heap
                 .object(tenant_id, table_id, &key, &val)
                 .expect("Failed to create test object.");
             table.put(obj.0, obj.1);
@@ -283,7 +288,8 @@ impl Master {
             &key[0..4].copy_from_slice(&temp);
             &val[0..4].copy_from_slice(&temp);
 
-            let obj = self.heap
+            let obj = self
+                .heap
                 .object(tenant_id, table_id, &key, &val)
                 .expect("Failed to create test object.");
             table.put(obj.0, obj.1);
@@ -451,11 +457,12 @@ impl Master {
         }
 
         // Next, add a header to the response packet.
-        let mut res = res.push_header(&GetResponse::new(
-            rpc_stamp,
-            OpCode::SandstormGetRpc,
-            tenant_id,
-        )).expect("Failed to setup GetResponse");
+        let mut res = res
+            .push_header(&GetResponse::new(
+                rpc_stamp,
+                OpCode::SandstormGetRpc,
+                tenant_id,
+            )).expect("Failed to setup GetResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < key_length as usize {
@@ -540,6 +547,121 @@ impl Master {
         return Ok(Box::new(Native::new(TaskPriority::REQUEST, gen)));
     }
 
+    /// Handed native get() RPC request.
+    #[allow(unreachable_code)]
+    #[allow(unused_assignments)]
+    fn get_native(
+        &self,
+        req: Packet<UdpHeader, EmptyMetadata>,
+        res: Packet<UdpHeader, EmptyMetadata>,
+    ) -> Result<
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+    > {
+        // First, parse the request packet.
+        let req = req.parse_header::<GetRequest>();
+
+        // Read fields off the request header.
+        let mut tenant_id: TenantId = 0;
+        let mut table_id: TableId = 0;
+        let mut key_length = 0;
+        let mut rpc_stamp = 0;
+
+        {
+            let hdr = req.get_header();
+            tenant_id = hdr.common_header.tenant as TenantId;
+            table_id = hdr.table_id as TableId;
+            key_length = hdr.key_length;
+            rpc_stamp = hdr.common_header.stamp;
+        }
+
+        // Next, add a header to the response packet.
+        let mut res = res
+            .push_header(&GetResponse::new(
+                rpc_stamp,
+                OpCode::SandstormGetRpc,
+                tenant_id,
+            )).expect("Failed to setup GetResponse");
+
+        // If the payload size is less than the key length, return an error.
+        if req.get_payload().len() < key_length as usize {
+            res.get_mut_header().common_header.status = RpcStatus::StatusMalformedRequest;
+            return Err((
+                req.deparse_header(PACKET_UDP_LEN as usize),
+                res.deparse_header(PACKET_UDP_LEN as usize),
+            ));
+        }
+
+        // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
+        // reference to Master in the generator below.
+        let tenant = self.get_tenant(tenant_id);
+        let alloc = self.heap.clone();
+
+        //let gen = Box::new(move || {
+        let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
+
+        let outcome =
+                // Check if the tenant exists. If it does, then check if the
+                // table exists, and update the status of the rpc.
+                tenant.and_then(| tenant | {
+                                status = RpcStatus::StatusTableDoesNotExist;
+                                tenant.get_table(table_id)
+                            })
+                // If the table exists, lookup the provided key, and update
+                // the status of the rpc.
+                .and_then(| table | {
+                                status = RpcStatus::StatusObjectDoesNotExist;
+                                let (key, _) = req.get_payload().split_at(key_length as usize);
+                                table.get(key)
+                            })
+                // If the lookup succeeded, obtain the value, and update the
+                // status of the rpc.
+                .and_then(| object | {
+                                status = RpcStatus::StatusInternalError;
+                                alloc.resolve(object)
+                            })
+                // If the value was obtained, then write to the response packet
+                // and update the status of the rpc.
+                .and_then(| (_k, value) | {
+                                status = RpcStatus::StatusInternalError;
+                                res.add_to_payload_tail(value.len(), &value[..]).ok()
+                            })
+                // If the value was written to the response payload,
+                // update the status of the rpc.
+                .and_then(| _ | {
+                                status = RpcStatus::StatusOk;
+                                Some(())
+                            });
+
+        match outcome {
+            // The RPC completed successfully. Update the response header with
+            // the status and value length.
+            Some(()) => {
+                let val_len = res.get_payload().len() as u32;
+
+                let hdr: &mut GetResponse = res.get_mut_header();
+                hdr.value_length = val_len;
+                hdr.common_header.status = status;
+            }
+
+            // The RPC failed. Update the response header with the status.
+            None => {
+                res.get_mut_header().common_header.status = status;
+            }
+        }
+
+        return Ok((
+            req.deparse_header(PACKET_UDP_LEN as usize),
+            res.deparse_header(PACKET_UDP_LEN as usize),
+        ));
+    }
+
     /// Handles the put() RPC request.
     ///
     /// If the issuing tenant is valid, a new key-value pair is allocated, and inserted into a
@@ -585,11 +707,12 @@ impl Master {
         }
 
         // Next, write a header into the response packet.
-        let mut res = res.push_header(&PutResponse::new(
-            rpc_stamp,
-            OpCode::SandstormPutRpc,
-            tenant_id,
-        )).expect("Failed to push PutResponse");
+        let mut res = res
+            .push_header(&PutResponse::new(
+                rpc_stamp,
+                OpCode::SandstormPutRpc,
+                tenant_id,
+            )).expect("Failed to push PutResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < key_length as usize {
@@ -656,6 +779,103 @@ impl Master {
         return Ok(Box::new(Native::new(TaskPriority::REQUEST, gen)));
     }
 
+    // This functions processes native put requests without creating a generator.
+    #[allow(unreachable_code)]
+    #[allow(unused_assignments)]
+    fn put_native(
+        &self,
+        req: Packet<UdpHeader, EmptyMetadata>,
+        res: Packet<UdpHeader, EmptyMetadata>,
+    ) -> Result<
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+    > {
+        // First, parse the request packet.
+        let req = req.parse_header::<PutRequest>();
+
+        // Read fields off the request header.
+        let mut tenant_id: TenantId = 0;
+        let mut table_id: TableId = 0;
+        let mut key_length = 0;
+        let mut rpc_stamp = 0;
+
+        {
+            let hdr = req.get_header();
+            tenant_id = hdr.common_header.tenant as TenantId;
+            table_id = hdr.table_id as TableId;
+            key_length = hdr.key_length;
+            rpc_stamp = hdr.common_header.stamp;
+        }
+
+        // Next, write a header into the response packet.
+        let mut res = res
+            .push_header(&PutResponse::new(
+                rpc_stamp,
+                OpCode::SandstormPutRpc,
+                tenant_id,
+            )).expect("Failed to push PutResponse");
+
+        // If the payload size is less than the key length, return an error.
+        if req.get_payload().len() < key_length as usize {
+            res.get_mut_header().common_header.status = RpcStatus::StatusMalformedRequest;
+            return Err((
+                req.deparse_header(PACKET_UDP_LEN as usize),
+                res.deparse_header(PACKET_UDP_LEN as usize),
+            ));
+        }
+
+        // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
+        // reference to Master in the generator below.
+        let tenant = self.get_tenant(tenant_id);
+        let alloc = self.heap.clone();
+
+        //let gen = Box::new(move || {
+        let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
+
+        // If the tenant exists, check if it has a table with the given id,
+        // and update the status of the rpc.
+        let outcome = tenant.and_then(|tenant| {
+            status = RpcStatus::StatusTableDoesNotExist;
+            tenant.get_table(table_id)
+        });
+
+        // If the table exists, update the status of the rpc, and allocate an
+        // object.
+        if let Some(table) = outcome {
+            // Get a reference to the key and value.
+            status = RpcStatus::StatusMalformedRequest;
+            let (key, val) = req.get_payload().split_at(key_length as usize);
+
+            // If there is a value, then write it in.
+            if val.len() > 0 {
+                status = RpcStatus::StatusInternalError;
+                let _result = alloc.object(tenant_id, table_id, key, val)
+                                    // If the allocation succeeds, update the
+                                    // status of the rpc, and insert the object
+                                    // into the table.
+                                    .and_then(| (key, obj) | {
+                                        status = RpcStatus::StatusOk;
+                                        table.put(key, obj);
+                                        Some(())
+                                    });
+            }
+        }
+
+        // Update the response header.
+        res.get_mut_header().common_header.status = status;
+
+        return Ok((
+            req.deparse_header(PACKET_UDP_LEN as usize),
+            res.deparse_header(PACKET_UDP_LEN as usize),
+        ));
+    }
+
     /// Handles the multiget() RPC request.
     ///
     /// If issued by a valid tenant for a valid table, lookups up a list of keys and returns
@@ -703,12 +923,13 @@ impl Master {
         }
 
         // Next, add a header to the response packet.
-        let mut res = res.push_header(&MultiGetResponse::new(
-            rpc_stamp,
-            OpCode::SandstormMultiGetRpc,
-            tenant_id,
-            0,
-        )).expect("Failed to setup MultiGetResponse");
+        let mut res = res
+            .push_header(&MultiGetResponse::new(
+                rpc_stamp,
+                OpCode::SandstormMultiGetRpc,
+                tenant_id,
+                0,
+            )).expect("Failed to setup MultiGetResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < ((key_length as u32) * num_keys) as usize {
@@ -798,6 +1019,126 @@ impl Master {
         return Ok(Box::new(Native::new(TaskPriority::REQUEST, gen)));
     }
 
+    // This functions processes native multiget requests without creating a generator.
+    #[allow(unreachable_code)]
+    #[allow(unused_assignments)]
+    fn multiget_native(
+        &self,
+        req: Packet<UdpHeader, EmptyMetadata>,
+        res: Packet<UdpHeader, EmptyMetadata>,
+    ) -> Result<
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+    > {
+        // First, parse the request packet.
+        let req = req.parse_header::<MultiGetRequest>();
+
+        // Read fields off the request header.
+        let mut tenant_id: TenantId = 0;
+        let mut table_id: TableId = 0;
+        let mut key_length = 0;
+        let mut num_keys = 0;
+        let mut rpc_stamp = 0;
+
+        {
+            let hdr = req.get_header();
+            tenant_id = hdr.common_header.tenant as TenantId;
+            table_id = hdr.table_id as TableId;
+            key_length = hdr.key_len;
+            num_keys = hdr.num_keys;
+            rpc_stamp = hdr.common_header.stamp;
+        }
+
+        // Next, add a header to the response packet.
+        let mut res = res
+            .push_header(&MultiGetResponse::new(
+                rpc_stamp,
+                OpCode::SandstormMultiGetRpc,
+                tenant_id,
+                0,
+            )).expect("Failed to setup MultiGetResponse");
+
+        // If the payload size is less than the key length, return an error.
+        if req.get_payload().len() < ((key_length as u32) * num_keys) as usize {
+            res.get_mut_header().common_header.status = RpcStatus::StatusMalformedRequest;
+            return Err((
+                req.deparse_header(PACKET_UDP_LEN as usize),
+                res.deparse_header(PACKET_UDP_LEN as usize),
+            ));
+        }
+
+        // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
+        // reference to Master in the generator below.
+        let tenant = self.get_tenant(tenant_id);
+        let alloc = self.heap.clone();
+
+        let mut n_recs: u32 = 0;
+        let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
+
+        let outcome =
+                // Check if the tenant exists. If it does, then check if the
+                // table exists, and update the status of the rpc.
+                tenant.and_then(| tenant | {
+                                status = RpcStatus::StatusTableDoesNotExist;
+                                tenant.get_table(table_id)
+                            });
+
+        // If the table exists, then lookup the keys in the database.
+        if let Some(table) = outcome {
+            status = RpcStatus::StatusObjectDoesNotExist;
+
+            // Iterate across keys in the request payload. There are `num_keys` keys, each
+            // of length `key_length`.
+            let mut n = 0;
+            for key in req.get_payload().chunks(key_length as usize) {
+                n += 1;
+                // Corner case: We've either already seen `num_keys` keys or the current key
+                // is not `key_length` bytes long.
+                if n > num_keys || key.len() != key_length as usize {
+                    break;
+                }
+
+                // Lookup the key, and add it to the response payload.
+                let res = table
+                    .get(key)
+                    .and_then(|object| alloc.resolve(object))
+                    .and_then(|(_k, value)| res.add_to_payload_tail(value.len(), &value[..]).ok());
+
+                // If the current lookup failed, then stop all lookups.
+                match res {
+                    Some(_) => n_recs += 1,
+
+                    None => break,
+                }
+            }
+
+            // Success if all keys could be looked up at the database.
+            if n_recs == num_keys {
+                status = RpcStatus::StatusOk;
+            }
+        }
+
+        // Write the status into the RPC response header.
+        res.get_mut_header().common_header.status = status.clone();
+
+        // If the RPC was handled successfully, then update the response header with the number
+        // of records that were read from the database.
+        if status == RpcStatus::StatusOk {
+            res.get_mut_header().num_records = n_recs;
+        }
+
+        return Ok((
+            req.deparse_header(PACKET_UDP_LEN as usize),
+            res.deparse_header(PACKET_UDP_LEN as usize),
+        ));
+    }
+
     /// Handles the invoke RPC request.
     ///
     /// If issued by a valid tenant for a valid extension, invokes the extension.
@@ -841,11 +1182,12 @@ impl Master {
         }
 
         // Next, add a header to the response packet.
-        let mut res = res.push_header(&InvokeResponse::new(
-            rpc_stamp,
-            OpCode::SandstormInvokeRpc,
-            tenant_id,
-        )).expect("Failed to push InvokeResponse");
+        let mut res = res
+            .push_header(&InvokeResponse::new(
+                rpc_stamp,
+                OpCode::SandstormInvokeRpc,
+                tenant_id,
+            )).expect("Failed to push InvokeResponse");
 
         // If the payload size is less than the sum of the name and args
         // length, return an error.
@@ -996,6 +1338,55 @@ impl Service for Master {
 
             OpCode::SandstormInvokeRpc => {
                 return self.invoke(req, res);
+            }
+
+            _ => {
+                return Err((req, res));
+            }
+        }
+    }
+
+    fn dispatch_invoke(
+        &self,
+        req: Packet<UdpHeader, EmptyMetadata>,
+        res: Packet<UdpHeader, EmptyMetadata>,
+    ) -> Result<
+        Box<Task>,
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+    > {
+        return self.invoke(req, res);
+    }
+
+    fn service_native(
+        &self,
+        op: OpCode,
+        req: Packet<UdpHeader, EmptyMetadata>,
+        res: Packet<UdpHeader, EmptyMetadata>,
+    ) -> Result<
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+    > {
+        // Based on the opcode, call the relevant RPC handler.
+        match op {
+            OpCode::SandstormGetRpc => {
+                return self.get_native(req, res);
+            }
+
+            OpCode::SandstormPutRpc => {
+                return self.put_native(req, res);
+            }
+
+            OpCode::SandstormMultiGetRpc => {
+                return self.multiget_native(req, res);
             }
 
             _ => {
