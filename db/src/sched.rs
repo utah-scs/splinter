@@ -246,6 +246,9 @@ impl RoundRobin {
                                                 .write()
                                                 .push(rpc::fixup_header_length_fields(res));
                                         }
+                                    } else {
+                                        // Not fair with the already yielded tasks, as being pushed at the end.
+                                        self.waiting.write().push_back(yeilded_task);
                                     }
                                 }
                             }
