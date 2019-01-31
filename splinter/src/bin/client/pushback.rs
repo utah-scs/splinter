@@ -331,6 +331,14 @@ where
         self.manager.borrow_mut().remove(&id);
     }
 
+    fn mul(&self, limit: u64) -> u64 {
+        let mut mul: u64 = 1;
+        for i in 1..limit {
+            mul *= i;
+        }
+        return mul;
+    }
+
     fn send(&mut self) {
         // Return if there are no more requests to generate.
         if self.requests <= self.sent {
@@ -397,11 +405,7 @@ where
         // If there are packets, sample the latency of the server.
         if let Some(mut packets) = self.receiver.recv_res() {
             while let Some(packet) = packets.pop() {
-                self.recvd += 1;
-
-                // Measure latency on the master client after the first 2 million requests.
-                // The start timestamp is present on the RPC response header.
-                if self.recvd > 2 * 1000 * 1000 && self.master {
+                if self.native == false {
                     let curr = cycles::rdtsc();
 
                     match parse_rpc_opcode(&packet) {
@@ -412,6 +416,7 @@ where
                                 // If the status is StatusOk then add the stamp to the latencies and
                                 // free the packet.
                                 RpcStatus::StatusOk => {
+                                    self.recvd += 1;
                                     self.latencies
                                         .push(curr - p.get_header().common_header.stamp);
                                     unsafe {
@@ -439,8 +444,9 @@ where
                                             info!("No manager with {} timestamp", timestamp);
                                         }
                                     }
-                                    self.latencies.push(curr - timestamp);
+                                    self.latencies.push(cycles::rdtsc() - timestamp);
                                     self.map.remove(&timestamp);
+                                    self.recvd += 1;
                                 }
 
                                 _ => {}
@@ -486,45 +492,16 @@ where
                         _ => packet.free_packet(),
                     }
                 } else {
+                    //The extension is executed locally on the client side.
+                    self.recvd += 1;
+                    let curr = cycles::rdtsc();
                     match parse_rpc_opcode(&packet) {
-                        // The response corresponds to an invoke() RPC.
-                        OpCode::SandstormInvokeRpc => {
-                            let p = packet.parse_header::<InvokeResponse>();
-                            match p.get_header().common_header.status {
-                                RpcStatus::StatusPushback => {
-                                    //XXX: handle here also.
-                                }
-
-                                RpcStatus::StatusOk => {
-                                    self.remove_request(p.get_header().common_header.stamp);
-                                }
-
-                                _ => {}
-                            }
-                            unsafe {
-                                self.map.remove(&p.get_header().common_header.stamp);
-                            }
-                            p.free_packet();
-                        }
-
-                        // The response corresponds to a get() or put() RPC.
-                        // The opcode on the response identifies the RPC type.
                         OpCode::SandstormGetRpc => {
                             let p = packet.parse_header::<GetResponse>();
+                            let _mul = self.mul(2000);
+                            self.latencies
+                                .push(cycles::rdtsc() - p.get_header().common_header.stamp);
                             unsafe {
-                                if self
-                                    .manager
-                                    .borrow()
-                                    .contains_key(&p.get_header().common_header.stamp)
-                                {
-                                    let manager = self
-                                        .manager
-                                        .borrow_mut()
-                                        .remove(&p.get_header().common_header.stamp);
-                                    if let Some(mut manager) = manager {
-                                        self.waiting.write().push_back(manager);
-                                    }
-                                }
                                 self.map.remove(&p.get_header().common_header.stamp);
                             }
                             p.free_packet();
@@ -532,6 +509,8 @@ where
 
                         OpCode::SandstormPutRpc => {
                             let p = packet.parse_header::<PutResponse>();
+                            self.latencies
+                                .push(curr - p.get_header().common_header.stamp);
                             unsafe {
                                 self.map.remove(&p.get_header().common_header.stamp);
                             }

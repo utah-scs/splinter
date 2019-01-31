@@ -184,52 +184,28 @@ impl ProxyDB {
 
 impl DB for ProxyDB {
     /// Lookup the `DB` trait for documentation on this method.
-    fn get(&self, table: u64, key: &[u8]) -> Option<ReadBuf> {
+    fn get(&self, _table: u64, _key: &[u8]) -> Option<ReadBuf> {
         self.set_waiting(false);
-        self.debug_log(&format!(
-            "Invoked get() on table {} for key {:?}",
-            table, key
-        ));
-
         unsafe { Some(ReadBuf::new(Bytes::with_capacity(0))) }
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn multiget(&self, table: u64, key_len: u16, keys: &[u8]) -> Option<MultiReadBuf> {
-        self.debug_log(&format!(
-            "Invoked multiget() on table {} for keys {:?} with key length {}",
-            table, keys, key_len
-        ));
-
+    fn multiget(&self, _table: u64, _key_len: u16, _keys: &[u8]) -> Option<MultiReadBuf> {
         unsafe { Some(MultiReadBuf::new(Vec::new())) }
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn alloc(&self, table: u64, key: &[u8], val_len: u64) -> Option<WriteBuf> {
-        self.debug_log(&format!(
-            "Invoked alloc(), table {}, key {:?}, val_len {}",
-            table, key, val_len
-        ));
-
+    fn alloc(&self, table: u64, _key: &[u8], _val_len: u64) -> Option<WriteBuf> {
         unsafe { Some(WriteBuf::new(table, BytesMut::with_capacity(0))) }
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn put(&self, buf: WriteBuf) -> bool {
-        unsafe {
-            self.debug_log(&format!("Invoked put(), buf {:?}", &buf.freeze().1[..]));
-        }
-
+    fn put(&self, _buf: WriteBuf) -> bool {
         return true;
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn del(&self, table: u64, key: &[u8]) {
-        self.debug_log(&format!(
-            "Invoked del() on table {} for key {:?}",
-            table, key
-        ));
-    }
+    fn del(&self, _table: u64, _key: &[u8]) {}
 
     /// Lookup the `DB` trait for documentation on this method.
     fn args(&self) -> &[u8] {
@@ -237,17 +213,13 @@ impl DB for ProxyDB {
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn resp(&self, data: &[u8]) {
-        self.debug_log(&format!("Invoked resp(), data {:?}", data));
-    }
+    fn resp(&self, _data: &[u8]) {}
 
     /// Lookup the `DB` trait for documentation on this method.
     fn debug_log(&self, _message: &str) {}
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn populate_read_write_set(&self, _record: Record) {
-        self.debug_log(&format!("Added a record to read/write set"));
-    }
+    fn populate_read_write_set(&self, _record: Record) {}
 
     /// Lookup the `DB` trait for documentation on this method.
     fn search_get_in_cache(&self, table: u64, key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
