@@ -97,6 +97,18 @@ def installRust():
     os.environ["PATH"] += ":" + os.environ["HOME"] + "/.cargo/bin"
     return
 
+def setupVScode():
+    printColor("bold","================ Installing IDE ===================")
+    subprocess.check_call("sudo apt update",  shell=True)
+    subprocess.check_call("sudo apt -y install libnotify4 libnspr4 libnss3 libnss3-nssdb", shell=True)
+    subprocess.check_call("sudo apt -y install libsecret-1-0 libsecret-common libxkbfile1", shell=True)
+    subprocess.check_call("sudo apt -y install notification-daemon gitk git-gui", shell=True)
+    subprocess.check_call("wget https://az764295.vo.msecnd.net/stable/61122f88f0bf01e2ac16bdb9e1bc4571755f5bd8/code_1.30.2-1546901646_amd64.deb",
+                           shell=True)
+    subprocess.check_call("sudo dpkg -i code_1.30.2-1546901646_amd64.deb", shell=True)
+    subprocess.check_call("rm  code_1.30.2-1546901646_amd64.deb", shell=True)
+    return
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=\
                                      'Setup a machine for Sandstorm')
@@ -110,6 +122,8 @@ if __name__ == "__main__":
                         help='Builds and installs DPDK.')
     parser.add_argument('--fixCargoDep', action='store_true',
                         help='Fixes all cargo dependencies.')
+    parser.add_argument('--installIDE', action='store_true',
+                        help='install VS code and git-gui.')
     args = parser.parse_args()
 
     # First, install Rust.
@@ -127,6 +141,9 @@ if __name__ == "__main__":
     # Finally, fix dependencies.
     if args.full or args.fixCargoDep:
         setupCargo()
+
+    if args.full or args.installIDE:
+        setupVScode()
 
     print "\n\tRun- source $HOME/.cargo/env\n"
     sys.exit(0)
