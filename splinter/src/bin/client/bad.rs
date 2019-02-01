@@ -17,10 +17,10 @@
 
 extern crate db;
 extern crate rand;
+extern crate splinter;
 extern crate time;
 extern crate zipf;
 
-mod dispatch;
 mod setup;
 
 use std::cell::RefCell;
@@ -40,6 +40,8 @@ use db::wireformat::*;
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
 use zipf::ZipfDistribution;
+
+use splinter::*;
 
 // Bad benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads

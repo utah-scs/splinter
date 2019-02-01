@@ -23,11 +23,11 @@ use std::rc::Rc;
 use std::ops::{Generator, GeneratorState};
 
 use db::cycles::*;
-use db::ext::ExtensionManager;
 
 use time::{Duration, PreciseTime};
 
 use sandstorm::db::DB;
+use sandstorm::ext::ExtensionManager;
 use sandstorm::null::NullDB;
 
 fn main() {

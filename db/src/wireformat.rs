@@ -106,6 +106,10 @@ pub enum RpcStatus {
     /// The RPC failed at the server because it requested for an
     /// invalid/unsupported operation.
     StatusInvalidOperation = 0x08,
+
+    /// The RPC was spending too much time on CPU, so the server pushed-back
+    /// the extension without completing it.
+    StatusPushback = 0x09,
 }
 
 /// This type represents the request header on a typical remote procedure call

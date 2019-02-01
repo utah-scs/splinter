@@ -13,16 +13,20 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#[cfg(feature = "dispatch")]
+use std::cell::RefCell;
 use std::fmt::Display;
 use std::net::Ipv4Addr;
 use std::option::Option;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use super::common;
 use super::config;
+#[cfg(feature = "dispatch")]
+use super::cyclecounter::CycleCounter;
 use super::cycles;
 use super::master::Master;
+use super::rpc;
 use super::rpc::*;
 use super::sched::RoundRobin;
 use super::service::Service;
@@ -32,6 +36,48 @@ use super::wireformat;
 use super::e2d2::common::EmptyMetadata;
 use super::e2d2::headers::*;
 use super::e2d2::interface::*;
+
+use sandstorm::common;
+
+/// This flag enables or disables fast path for native requests.
+/// Later, it will be set from the server.toml file probably.
+const FAST_PATH: bool = false;
+
+/// This is a thread local variable to count the number of occurrences
+/// of cycle counting to average for 1 M events.
+#[cfg(feature = "dispatch")]
+thread_local!(static COUNTER: RefCell<u64> = RefCell::new(0));
+
+/// This type stores the cycle counter variable for various parts in dispatch stage.
+/// poll: Cycle counter for full polling stage.
+/// rx_tx: Cycle counter for packets receive and transmit stage.
+/// parse: Cycle counter for packet parsing stage.
+/// dispatch: Cycle counter for generator and task creation stage.
+#[cfg(feature = "dispatch")]
+struct DispatchCounters {
+    poll: CycleCounter,
+    rx_tx: CycleCounter,
+    parse: CycleCounter,
+    dispatch: CycleCounter,
+}
+
+#[cfg(feature = "dispatch")]
+impl DispatchCounters {
+    /// Creates and return an object of DispatchCounters. This object is used for
+    /// couting CPU cycles for various parts in dispatch stage.
+    ///
+    /// # Return
+    ///
+    /// New instance of DispatchCounters struct
+    fn new() -> DispatchCounters {
+        DispatchCounters {
+            poll: CycleCounter::new(),
+            rx_tx: CycleCounter::new(),
+            parse: CycleCounter::new(),
+            dispatch: CycleCounter::new(),
+        }
+    }
+}
 
 /// This type represents a requests-dispatcher in Sandstorm. When added to a
 /// Netbricks scheduler, this dispatcher polls a network port for RPCs,
@@ -100,6 +146,11 @@ where
 
     /// Unique identifier for a Dispatch task. Currently required for measurement purposes.
     id: i32,
+
+    /// The CPU cycle counter to count the number of cycles per event. Need to use start() and
+    /// stop() a code block or function call to profile the events.
+    #[cfg(feature = "dispatch")]
+    cycle_counter: DispatchCounters,
 }
 
 impl<T> Dispatch<T>
@@ -193,6 +244,8 @@ where
             time: 0,
             priority: TaskPriority::DISPATCH,
             id: id,
+            #[cfg(feature = "dispatch")]
+            cycle_counter: DispatchCounters::new(),
         }
     }
 
@@ -479,7 +532,8 @@ where
             {
                 const MIN_LENGTH_IP: u16 = common::PACKET_IP_LEN + 2;
                 let ip_header: &IpHeader = packet.get_header();
-                valid = (ip_header.version() == 4) && (ip_header.ttl() > 0)
+                valid = (ip_header.version() == 4)
+                    && (ip_header.ttl() > 0)
                     && (ip_header.length() >= MIN_LENGTH_IP)
                     && (ip_header.dst() == self.network_ip_addr);
             }
@@ -572,6 +626,11 @@ where
         // operation.
         let mut ignore_packets = Vec::with_capacity(self.max_rx_packets as usize);
 
+        // This vector will hold response packets of native requests.
+        // It is then appended to scheduler's 'responses' queue
+        // so these reponses can be sent out next time dispatch task is run.
+        let mut native_responses = Vec::new();
+
         while let Some(request) = requests.pop() {
             // Allocate a packet for the response upfront, and add in MAC, IP, and UDP headers.
             let mut response = new_packet()
@@ -591,16 +650,67 @@ where
             if parse_rpc_service(&request) == wireformat::Service::MasterService {
                 // The request is for Master, get it's opcode, and call into Master.
                 let opcode = parse_rpc_opcode(&request);
-                match self.master_service.dispatch(opcode, request, response) {
-                    Ok(task) => {
-                        self.scheduler.enqueue(task);
-                    }
+                if !FAST_PATH {
+                    match self.master_service.dispatch(opcode, request, response) {
+                        Ok(task) => {
+                            self.scheduler.enqueue(task);
+                        }
 
-                    Err((req, res)) => {
-                        // Master returned an error. The allocated request and response packets
-                        // need to be freed up.
-                        ignore_packets.push(req);
-                        ignore_packets.push(res);
+                        Err((req, res)) => {
+                            // Master returned an error. The allocated request and response packets
+                            // need to be freed up.
+                            ignore_packets.push(req);
+                            ignore_packets.push(res);
+                        }
+                    }
+                } else {
+                    match opcode {
+                        wireformat::OpCode::SandstormInvokeRpc => {
+                            // The request is for invoke. Dispatch RPC to its handler.
+                            match self.master_service.dispatch_invoke(request, response) {
+                                Ok(task) => {
+                                    self.scheduler.enqueue(task);
+                                }
+
+                                Err((req, res)) => {
+                                    // Master returned an error. The allocated request and response packets
+                                    // need to be freed up.
+                                    ignore_packets.push(req);
+                                    ignore_packets.push(res);
+                                }
+                            }
+                        }
+
+                        wireformat::OpCode::SandstormGetRpc
+                        | wireformat::OpCode::SandstormPutRpc
+                        | wireformat::OpCode::SandstormMultiGetRpc => {
+                            // The request is native. Service it right away.
+                            match self
+                                .master_service
+                                .service_native(opcode, request, response)
+                            {
+                                Ok((req, res)) => {
+                                    // Free request packet.
+                                    req.free_packet();
+
+                                    // Push response packet on the local queue of responses that are ready to be sent out.
+                                    native_responses.push(rpc::fixup_header_length_fields(res));
+                                }
+
+                                Err((req, res)) => {
+                                    // Master returned an error. The allocated request and response packets
+                                    // need to be freed up.
+                                    ignore_packets.push(req);
+                                    ignore_packets.push(res);
+                                }
+                            }
+                        }
+
+                        _ => {
+                            // The request is unknown.
+                            ignore_packets.push(request);
+                            ignore_packets.push(response);
+                        }
                     }
                 }
             } else {
@@ -611,6 +721,9 @@ where
             }
         }
 
+        // Enqueue completed native resps on to scheduler's responses queue
+        self.scheduler.append_resps(&mut native_responses);
+
         // Free the set of ignored packets.
         self.free_packets(ignore_packets);
     }
@@ -618,9 +731,15 @@ where
     /// This method polls the dispatchers network port for any received packets,
     /// dispatches them to the appropriate service, and sends out responses over
     /// the network port.
+    ///
+    /// # Return
+    ///
+    /// The number of packets received.
     #[inline]
-    fn poll(&mut self) {
+    fn poll(&mut self) -> u64 {
         // First, send any pending response packets out.
+        #[cfg(feature = "dispatch")]
+        self.cycle_counter.rx_tx.start();
         let responses = self.scheduler.responses();
         if responses.len() > 0 {
             self.try_send_packets(responses);
@@ -628,14 +747,28 @@ where
 
         // Next, try to receive packets from the network.
         if let Some(packets) = self.try_receive_packets() {
+            #[cfg(feature = "dispatch")]
+            self.cycle_counter.rx_tx.stop(packets.len() as u64);
+
             // Perform basic network processing on the received packets.
+            #[cfg(feature = "dispatch")]
+            self.cycle_counter.parse.start();
             let mut packets = self.parse_mac_headers(packets);
             let mut packets = self.parse_ip_headers(packets);
             let mut packets = self.parse_udp_headers(packets);
+            let count = packets.len();
+            #[cfg(feature = "dispatch")]
+            self.cycle_counter.parse.stop(count as u64);
 
             // Dispatch these packets to the appropriate service.
+            #[cfg(feature = "dispatch")]
+            self.cycle_counter.dispatch.start();
             self.dispatch_requests(packets);
+            #[cfg(feature = "dispatch")]
+            self.cycle_counter.dispatch.stop(count as u64);
+            count as u64
         } else {
+            let mut count = 0;
             // There were no packets at the receive queue. Try to steal some from the sibling.
             if let Some(stolen) = self.try_steal_packets() {
                 // Perform basic network processing on the stolen packets.
@@ -644,8 +777,10 @@ where
                 let mut stolen = self.parse_udp_headers(stolen);
 
                 // Dispatch these packets to the appropriate service.
+                count = stolen.len();
                 self.dispatch_requests(stolen);
             }
+            count as u64
         }
     }
 }
@@ -662,14 +797,32 @@ where
 
         // Run the dispatch task, polling for received packets and sending out pending responses.
         self.state = TaskState::RUNNING;
-        self.poll();
+        let _count = self.poll();
         self.state = TaskState::YIELDED;
 
         // Update the time the task spent executing and return.
         let exec = cycles::rdtsc() - start;
 
         self.time += exec;
+        #[cfg(feature = "dispatch")]
+        self.cycle_counter.poll.total_cycles(exec, _count);
 
+        #[cfg(feature = "dispatch")]
+        COUNTER.with(|count_a| {
+            let mut count = count_a.borrow_mut();
+            *count += 1;
+            let every = 1000000;
+            if *count >= every {
+                info!(
+                    "Poll {}, RX-TX {}, Parse {}, Dispatch {}",
+                    self.cycle_counter.poll.get_average(),
+                    self.cycle_counter.rx_tx.get_average(),
+                    self.cycle_counter.parse.get_average(),
+                    self.cycle_counter.dispatch.get_average()
+                );
+                *count = 0;
+            }
+        });
         return (self.state.clone(), exec);
     }
 
@@ -681,6 +834,11 @@ where
     /// Refer to the `Task` trait for Documentation.
     fn time(&self) -> u64 {
         self.time.clone()
+    }
+
+    /// Refer to the `Task` trait for Documentation.
+    fn db_time(&self) -> u64 {
+        return 0;
     }
 
     /// Refer to the `Task` trait for Documentation.
@@ -698,4 +856,12 @@ where
         // The Dispatch task does not return any packets.
         None
     }
+
+    /// Refer to the `Task` trait for Documentation.
+    fn set_state(&mut self, state: TaskState) {
+        self.state = state;
+    }
+
+    /// Refer to the `Task` trait for Documentation.
+    fn update_cache(&mut self, _record: &[u8]) {}
 }

@@ -17,9 +17,9 @@
 
 extern crate db;
 extern crate rand;
+extern crate splinter;
 extern crate zipf;
 
-mod dispatch;
 mod setup;
 
 use std::mem::{size_of, transmute};
@@ -37,6 +37,8 @@ use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
 
 use zipf::ZipfDistribution;
+
+use splinter::*;
 
 /// This type implements the send half of a TAO client.
 struct TaoSend {

@@ -13,7 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use super::buf::{ReadBuf, WriteBuf, MultiReadBuf};
+use super::buf::{ReadBuf, Record, WriteBuf, MultiReadBuf};
 
 /// Definition of the DB trait that will allow extensions to access
 /// the database.
@@ -102,4 +102,26 @@ pub trait DB {
     /// This method is meant for testing, and will not do anything in the real
     /// system.
     fn debug_log(&self, msg: &str);
+
+    /// This method populate the read/write set per extension and the read/write set is
+    /// trasmitted to the client is case of the extension pushback.
+    fn populate_read_write_set(&self, record: Record);
+
+    /// This method will perform a lookup on a key-value pair inside the
+    /// local cache, and return a handle that can be used to read the value
+    /// if the key-value pair exists.
+    ///
+    /// # Arguments
+    ///
+    /// * `table`: An identifier of the data table the key-value pair
+    ///            belongs to.
+    /// * `key`:   A slice of bytes over the key to be looked up.
+    ///
+    /// # Return
+    ///
+    /// A tupule of the form (bool, bool, Option<ReadBuf>). The first member is True if the
+    /// function is called inside server; False otherwise. The second member is True of the search
+    /// is successful; False otherwise. And the third member represents a handle that can be used
+    /// to read the value if the key-value pair exists inside the local cache.
+    fn search_get_in_cache(&self, table: u64, key: &[u8]) -> (bool, bool, Option<ReadBuf>);
 }

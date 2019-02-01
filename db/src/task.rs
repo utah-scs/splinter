@@ -13,9 +13,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use e2d2::interface::Packet;
-use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
+use e2d2::headers::UdpHeader;
+use e2d2::interface::Packet;
 
 /// This enum represents the different states a task can be in.
 #[repr(u8)]
@@ -36,6 +36,14 @@ pub enum TaskState {
     /// A task is in this state when it has finished executing completely, and
     /// it's results are ready.
     COMPLETED = 0x04,
+
+    /// A task is in this state when it has been stopped without completion, after
+    /// setting this state, the pushback mechanism will run.
+    STOPPED = 0x5,
+
+    /// A task is in this state when it has been suspended due to IO. On the client side
+    /// the task can wait for the native operation responses.
+    WAITING = 0x6,
 }
 
 /// This enum represents the priority of a task in the system. A smaller value
@@ -78,6 +86,14 @@ pub trait Task {
     /// The total time for which the task has run in cycles.
     fn time(&self) -> u64;
 
+    /// When called, this method should return the total time for which the task
+    /// has spent in db operations since it was created.
+    ///
+    /// # Return
+    ///
+    /// The total time for which the task has spent in db operations in cycles.
+    fn db_time(&self) -> u64;
+
     /// When called, this method should return the priority of the task.
     ///
     /// # Return
@@ -98,4 +114,19 @@ pub trait Task {
         Packet<UdpHeader, EmptyMetadata>,
         Packet<UdpHeader, EmptyMetadata>,
     )>;
+
+    /// When called, this method will change the task state to `state` and will return.
+    ///
+    /// # Arguments
+    ///
+    /// * `state`: The state, which will be assigned to the task.
+    fn set_state(&mut self, state: TaskState);
+
+    /// This method is called after the pushback and updates the local RW set on the client
+    /// side.
+    ///
+    /// # Arguments
+    ///
+    /// * `record`: The record, which will be added to the RW set.
+    fn update_cache(&mut self, record: &[u8]);
 }

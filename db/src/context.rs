@@ -14,14 +14,14 @@
  */
 
 use std::cell::{Cell, RefCell};
-use std::str;
 use std::sync::Arc;
+use std::{mem, slice, str};
 
 use super::alloc::Allocator;
 use super::tenant::Tenant;
-use super::wireformat::{InvokeRequest, InvokeResponse};
+use super::wireformat::{InvokeRequest, InvokeResponse, RpcStatus};
 
-use sandstorm::buf::{MultiReadBuf, ReadBuf, WriteBuf};
+use sandstorm::buf::{MultiReadBuf, OpType, ReadBuf, ReadWriteSetBuf, Record, WriteBuf};
 use sandstorm::db::DB;
 
 use e2d2::common::EmptyMetadata;
@@ -67,6 +67,9 @@ pub struct Context {
     // The total number of bytes allocated by the extension so far
     // (on the table heap).
     allocs: Cell<usize>,
+
+    // The buffer which maintains the read/write set per extension.
+    readwriteset: RefCell<ReadWriteSetBuf>,
 }
 
 // Methods on Context.
@@ -105,6 +108,7 @@ impl Context {
             tenant: tenant,
             heap: alloc,
             allocs: Cell::new(0),
+            readwriteset: RefCell::new(ReadWriteSetBuf::new()),
         }
     }
 
@@ -124,6 +128,44 @@ impl Context {
     ) {
         return (self.request, self.response.into_inner());
     }
+
+    /// This method modifies the response for the pushback. It changes the status in the response
+    /// from StatusOk to StatusPushback. Besides that the function also modifies the response
+    /// packet to remove the old response and attach the records which the extension has read or
+    /// written(Read Write Set), so that the client can resume the execution on its end.
+    pub fn prepare_for_pushback(&self) {
+        self.response
+            .borrow_mut()
+            .get_mut_header()
+            .common_header
+            .status = RpcStatus::StatusPushback;
+
+        // Remove the original payload and append the read-write set to the response payload.
+        let payload_len = self.response.borrow().get_payload().len();
+        match self
+            .response
+            .borrow_mut()
+            .remove_from_payload_tail(payload_len)
+        {
+            Ok(_) => {}
+
+            Err(ref err) => {
+                error!(
+                    "Unable to delete previous payload while doing pushback {}",
+                    err
+                );
+            }
+        }
+
+        let rwset = &self.readwriteset.borrow_mut().readwriteset;
+        for record in rwset.iter() {
+            let ptr = &record.get_optype() as *const _ as *const u8;
+            let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+            self.resp(slice);
+            self.resp(record.get_key().as_ref());
+            self.resp(record.get_object().as_ref());
+        }
+    }
 }
 
 // The DB trait for Context.
@@ -138,7 +180,10 @@ impl DB for Context {
                     // key and value.
                     .and_then(| object | { self.heap.resolve(object) })
                     // Return the value wrapped up inside a safe type.
-                    .and_then(| (_k, v) | { unsafe { Some(ReadBuf::new(v)) } })
+                    .and_then(| (k, v) | {
+                        self.populate_read_write_set(Record::new(OpType::SandstormRead, &k, &v));
+                        unsafe { Some(ReadBuf::new(v)) }
+                        })
     }
 
     /// Lookup the `DB` trait for documentation on this method.
@@ -157,7 +202,8 @@ impl DB for Context {
                 let r = table
                     .get(key)
                     .and_then(|obj| self.heap.resolve(obj))
-                    .and_then(|(_k, v)| {
+                    .and_then(|(k, v)| {
+                        self.populate_read_write_set(Record::new(OpType::SandstormRead, &k, &v));
                         objs.push(v);
                         Some(())
                     });
@@ -201,6 +247,7 @@ impl DB for Context {
         // If the table exists, write to the database.
         if let Some(table) = self.tenant.get_table(table_id) {
             return self.heap.resolve(buf.clone()).map_or(false, |(k, _v)| {
+                self.populate_read_write_set(Record::new(OpType::SandstormWrite, &k, &buf));
                 table.put(k, buf);
                 true
             });
@@ -240,4 +287,14 @@ impl DB for Context {
 
     /// Lookup the `DB` trait for documentation on this method.
     fn debug_log(&self, _msg: &str) {}
+
+    /// Lookup the `DB` trait for documentation on this method.
+    fn populate_read_write_set(&self, record: Record) {
+        self.readwriteset.borrow_mut().readwriteset.push(record);
+    }
+
+    /// Lookup the `DB` trait for documentation on this method.
+    fn search_get_in_cache(&self, _table: u64, _key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
+        (true, false, None)
+    }
 }

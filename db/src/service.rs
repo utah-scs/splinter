@@ -26,7 +26,6 @@ pub trait Service {
     ///
     /// # Arguments
     ///
-    /// * `op`:  The opcode on the RPC request (ex: SandstormGetRpc)
     /// * `req`: The RPC request packet, parsed upto it's UDP header.
     /// * `res`: The RPC response packet. This has to be pre-allocated by the caller upto UDP.
     ///
@@ -41,6 +40,58 @@ pub trait Service {
         res: Packet<UdpHeader, EmptyMetadata>,
     ) -> Result<
         Box<Task>,
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+    >;
+
+    /// Dispatches extension invoke RPC, and generates a task that can scheduled.
+    /// This function is different from dispatch() in that it only processes invoke() calls
+    /// and is part of `fast path`.
+    ///
+    /// # Arguments
+    ///
+    /// * `req`: The RPC request packet parsed upto its UDP header.
+    /// * `res`: The RPC response packet. This has to be pre-allocated by the caller upto UDP.
+    ///
+    /// # Return
+    ///
+    /// A `Task` object that can be scheduled and run by the databse. In the case of an error, the
+    /// passed in request and response packets are returned.
+    fn dispatch_invoke(
+        &self,
+        req: Packet<UdpHeader, EmptyMetadata>,
+        res: Packet<UdpHeader, EmptyMetadata>,
+    ) -> Result<
+        Box<Task>,
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+    >;
+
+    /// Services native RPC calls for get(), put(), and multiget()
+    /// This function processes the request right away.
+    ///
+    /// # Arguments
+    ///
+    /// * `req`: The RPC request packet parsed upto its UDP header.
+    /// * `res`: The RPC response packet. This has to be pre-allocated by the caller upto UDP.
+    ///
+    /// # Return
+    ///
+    /// The request and response packets, latter containing the result of RPC.
+    fn service_native(
+        &self,
+        op: OpCode,
+        req: Packet<UdpHeader, EmptyMetadata>,
+        res: Packet<UdpHeader, EmptyMetadata>,
+    ) -> Result<
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
         (
             Packet<UdpHeader, EmptyMetadata>,
             Packet<UdpHeader, EmptyMetadata>,

@@ -1,0 +1,11 @@
+[package]
+name = "pushback"
+version = "0.1.0"
+authors = ["ankitb"]
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+db        = { path = "../../db" }
+sandstorm = { path = "../../sandstorm" }

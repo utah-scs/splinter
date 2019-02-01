@@ -13,10 +13,11 @@ Cargo.lock
 *.data
 *.data.gz
 *.pdf
+*.log
 
 # Ignore config files
 db/server.toml
-db/client.toml
+splinter/client.toml
 nic_info
 client_nic_info
 

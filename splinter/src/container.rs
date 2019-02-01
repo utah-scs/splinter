@@ -19,16 +19,18 @@ use std::panic::*;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use super::context::Context;
-use super::cycles;
-use super::task::TaskState::*;
-use super::task::{Task, TaskPriority, TaskState};
+use super::proxy::ProxyDB;
 
-use e2d2::common::EmptyMetadata;
-use e2d2::headers::UdpHeader;
-use e2d2::interface::Packet;
+use db::cycles;
+use db::rpc::*;
+use db::task::TaskState::*;
+use db::task::{Task, TaskPriority, TaskState};
 
-use sandstorm::common::PACKET_UDP_LEN;
+use db::e2d2::common::EmptyMetadata;
+use db::e2d2::headers::UdpHeader;
+use db::e2d2::interface::Packet;
+
+use sandstorm::buf::OpType;
 use sandstorm::db::DB;
 use sandstorm::ext::Extension;
 
@@ -52,7 +54,7 @@ pub struct Container {
 
     // An execution context for the task that implements the DB trait. Required
     // for the task to interact with the database.
-    db: Cell<Option<Rc<Context>>>,
+    db: Cell<Option<Rc<ProxyDB>>>,
 
     // A handle to the dynamically loaded extension. Required to initialize the
     // task, and ensure that the extension stays loaded for as long as the task
@@ -81,7 +83,7 @@ impl Container {
     /// # Return
     ///
     /// A container that when scheduled, runs the extension.
-    pub fn new(prio: TaskPriority, context: Rc<Context>, ext: Arc<Extension>) -> Container {
+    pub fn new(prio: TaskPriority, context: Rc<ProxyDB>, ext: Arc<Extension>) -> Container {
         // The generator is initialized to a dummy. The first call to run() will
         // retrieve the actual generator from the extension.
         Container {
@@ -116,7 +118,7 @@ impl Task for Container {
         // Resume the task if need be. The task needs to be run/resumed only
         // if it is in the INITIALIZED or YIELDED state. Nothing needs to be
         // done if it has already completed, or was aborted.
-        if self.state == INITIALIZED || self.state == YIELDED {
+        if self.state == INITIALIZED || self.state == YIELDED || self.state == WAITING {
             self.state = RUNNING;
 
             // As of 04/02/2018, calling resume() on a generator requires an unsafe block.
@@ -126,6 +128,11 @@ impl Task for Container {
                     GeneratorState::Yielded(time) => {
                         self.db_time += time;
                         self.state = YIELDED;
+                        if let Some(proxydb) = self.db.get_mut() {
+                            if proxydb.get_waiting() == true {
+                                self.state = WAITING;
+                            }
+                        }
                     }
 
                     GeneratorState::Complete(time) => {
@@ -185,29 +192,7 @@ impl Task for Container {
             yield 0;
             return 0;
         });
-
-        // Next, unwrap the execution context, and, retrieve and return the
-        // request and response packets.
-        let context = self.db.replace(None).unwrap();
-        match Rc::try_unwrap(context) {
-            Ok(db) => {
-                // If the task is stopped without completion, set the status as StatusPushback.
-                if self.state == STOPPED {
-                    db.prepare_for_pushback();
-                }
-
-                let (req, mut res) = db.commit();
-
-                let req = req.deparse_header(PACKET_UDP_LEN as usize);
-                let res = res.deparse_header(PACKET_UDP_LEN as usize);
-
-                return Some((req, res));
-            }
-
-            Err(_) => {
-                panic!("Failed to unwrap context!");
-            }
-        }
+        None
     }
 
     /// Refer to the `Task` trait for Documentation.
@@ -216,5 +201,17 @@ impl Task for Container {
     }
 
     /// Refer to the `Task` trait for Documentation.
-    fn update_cache(&mut self, _record: &[u8]) {}
+    fn update_cache(&mut self, record: &[u8]) {
+        if let Some(proxydb) = self.db.get_mut() {
+            match parse_record_optype(record) {
+                OpType::SandstormRead => {
+                    proxydb.set_read_record(record.split_at(1).1);
+                }
+
+                OpType::SandstormWrite => proxydb.set_write_record(record.split_at(1).1),
+
+                _ => {}
+            }
+        }
+    }
 }
