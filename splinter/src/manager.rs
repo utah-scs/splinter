@@ -141,21 +141,24 @@ impl TaskManager {
     /// # Return
     ///
     /// The taskstate on the completion, yielding, or waiting of the task.
-    pub fn execute_task(&mut self) -> TaskState {
+    pub fn execute_task(&mut self) -> (TaskState, u64) {
         let task = self.task.pop();
         let mut taskstate: TaskState = INITIALIZED;
+        let mut time: u64 = 0;
         if let Some(mut task) = task {
             if task.run().0 == COMPLETED {
                 taskstate = task.state();
+                time = task.time();
                 unsafe {
                     task.tear();
                 }
             // Do something for commit(Transaction commit?)
             } else {
                 taskstate = task.state();
+                time = task.time();
                 self.task.push(task);
             }
         }
-        taskstate
+        (taskstate, time)
     }
 }

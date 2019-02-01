@@ -35,6 +35,7 @@ use std::sync::Arc;
 use spin::RwLock;
 
 use db::config;
+use db::cyclecounter::CycleCounter;
 use db::cycles;
 use db::e2d2::allocators::*;
 use db::e2d2::interface::*;
@@ -211,7 +212,7 @@ where
 
     // To keep the mapping between sent and received packets. The client doesn't want to send
     // more than 32(XXX) outstanding packets.
-    map: HashMap<u64, u64>,
+    outstanding: u64,
 
     /// A ref counted pointer to a master service. The master service
     /// implements the primary interface to the database.
@@ -224,6 +225,14 @@ where
     // Run-queue of tasks waiting to execute. Tasks on this queue have either yielded, or have been
     // recently enqueued and never run before.
     waiting: RwLock<VecDeque<TaskManager>>,
+
+    // Number of tasks completed on the client, after server pushback. Wraps around
+    // after each 1L such tasks.
+    pushback_completed: u64,
+
+    // Counts the number of CPU cycle spent on the task execution when client executes the
+    // extensions on its end.
+    cycle_counter: CycleCounter,
 }
 
 // Implementation of methods on PushbackRecv.
@@ -303,10 +312,12 @@ where
             payload_get: RefCell::new(payload_get),
             payload_put: RefCell::new(payload_put),
             finished: false,
-            map: HashMap::with_capacity(32),
+            outstanding: 0,
             master_service: Arc::clone(&masterservice),
             manager: RefCell::new(HashMap::new()),
             waiting: RwLock::new(VecDeque::new()),
+            pushback_completed: 0,
+            cycle_counter: CycleCounter::new(),
         }
     }
 
@@ -350,7 +361,7 @@ where
 
         // If it is either time to send out a request, or if a request has never been sent out,
         // then, do so.
-        if (curr >= self.next || self.next == 0) && (self.map.len() < 32) {
+        if (curr >= self.next || self.next == 0) && (self.outstanding < 32) {
             if self.native == true {
                 // Configured to issue native RPCs, issue a regular get()/put() operation.
                 self.workload.borrow_mut().abc(
@@ -383,8 +394,7 @@ where
                         self.sender.send_invoke(tenant, 8, &p_put, curr)
                     },
                 );
-                let count = self.map.entry(curr).or_insert(0);
-                *count += 1;
+                self.outstanding += 1;
             }
 
             // Update the time stamp at which the next request should be generated, assuming that
@@ -419,10 +429,8 @@ where
                                     self.recvd += 1;
                                     self.latencies
                                         .push(curr - p.get_header().common_header.stamp);
-                                    unsafe {
-                                        self.map.remove(&p.get_header().common_header.stamp);
-                                        self.remove_request(p.get_header().common_header.stamp);
-                                    }
+                                    self.outstanding -= 1;
+                                    self.remove_request(p.get_header().common_header.stamp);
                                 }
 
                                 // If the status is StatusPushback then compelete the task, add the
@@ -445,7 +453,7 @@ where
                                         }
                                     }
                                     self.latencies.push(cycles::rdtsc() - timestamp);
-                                    self.map.remove(&timestamp);
+                                    self.outstanding -= 1;
                                     self.recvd += 1;
                                 }
 
@@ -474,7 +482,6 @@ where
                                         self.waiting.write().push_back(manager);
                                     }
                                 }
-                                self.map.remove(&p.get_header().common_header.stamp);
                             }
                             p.free_packet();
                         }
@@ -483,9 +490,6 @@ where
                             let p = packet.parse_header::<PutResponse>();
                             self.latencies
                                 .push(curr - p.get_header().common_header.stamp);
-                            unsafe {
-                                self.map.remove(&p.get_header().common_header.stamp);
-                            }
                             p.free_packet();
                         }
 
@@ -501,9 +505,7 @@ where
                             let _mul = self.mul(2000);
                             self.latencies
                                 .push(cycles::rdtsc() - p.get_header().common_header.stamp);
-                            unsafe {
-                                self.map.remove(&p.get_header().common_header.stamp);
-                            }
+                            self.outstanding -= 1;
                             p.free_packet();
                         }
 
@@ -511,9 +513,7 @@ where
                             let p = packet.parse_header::<PutResponse>();
                             self.latencies
                                 .push(curr - p.get_header().common_header.stamp);
-                            unsafe {
-                                self.map.remove(&p.get_header().common_header.stamp);
-                            }
+                            self.outstanding -= 1;
                             p.free_packet();
                         }
 
@@ -533,11 +533,21 @@ where
     fn execute_task(&mut self) {
         let manager = self.waiting.write().pop_front();
         if let Some(mut manager) = manager {
-            let taskstate = manager.execute_task();
+            let (taskstate, _time) = manager.execute_task();
             if taskstate == YIELDED {
                 self.waiting.write().push_back(manager);
             } else if taskstate == WAITING {
                 self.manager.borrow_mut().insert(manager.get_id(), manager);
+            } else if taskstate == COMPLETED && cfg!(feature = "execution") {
+                self.cycle_counter.total_cycles(_time, 1);
+                self.pushback_completed += 1;
+                if self.pushback_completed == 100000 {
+                    info!(
+                        "Completion time per extension {}",
+                        self.cycle_counter.get_average()
+                    );
+                    self.pushback_completed = 0;
+                }
             }
         }
     }

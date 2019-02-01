@@ -92,7 +92,7 @@ def setupDevEnvt():
 def installRust():
     printColor("bold", "=============== Installing Rust ======================")
     subprocess.check_call("curl -s https://sh.rustup.rs -sSf | " +\
-                          "sh -s -- --default-toolchain nightly-2018-08-02",
+                          "sh -s -- --default-toolchain nightly-2018-08-02 -y",
                           shell=True)
     os.environ["PATH"] += ":" + os.environ["HOME"] + "/.cargo/bin"
     return
