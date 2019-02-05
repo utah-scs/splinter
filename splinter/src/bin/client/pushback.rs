@@ -52,6 +52,9 @@ use splinter::manager::TaskManager;
 use splinter::*;
 use zipf::ZipfDistribution;
 
+// Number of operation performed by the extension in the native case.
+const NUM_OPS: u8 = 1;
+
 // PUSHBACK benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
 // share the same benchmark instance. Each thread can call `abc()` which
@@ -188,13 +191,6 @@ where
     // Number of requests that have been sent out so far.
     sent: u64,
 
-    // The inverse of the rate at which requests are to be generated. Basically, the time interval
-    // between two request generations in cycles.
-    rate_inv: u64,
-
-    // The time stamp at which the next request must be issued in cycles.
-    next: u64,
-
     // If true, RPC requests corresponding to native get() and put() operations are sent out. If
     // false, invoke() based RPC requests are sent out.
     native: bool,
@@ -233,6 +229,11 @@ where
     // Counts the number of CPU cycle spent on the task execution when client executes the
     // extensions on its end.
     cycle_counter: CycleCounter,
+
+    // Keeps track of the state of a multi-operation request. For example, an extension performs
+    // four get operations before performing aggregation and all these get operations are dependent
+    // on the previous value.
+    native_state: RefCell<HashMap<u64, u8>>,
 }
 
 // Implementation of methods on PushbackRecv.
@@ -306,8 +307,6 @@ where
             sender: Arc::new(dispatch::Sender::new(config, tx_port, dst_ports)),
             requests: reqs,
             sent: 0,
-            rate_inv: cycles::cycles_per_second() / config.req_rate as u64,
-            next: 0,
             native: !config.use_invoke,
             payload_get: RefCell::new(payload_get),
             payload_put: RefCell::new(payload_put),
@@ -318,6 +317,7 @@ where
             waiting: RwLock::new(VecDeque::new()),
             pushback_completed: 0,
             cycle_counter: CycleCounter::new(),
+            native_state: RefCell::new(HashMap::with_capacity(32)),
         }
     }
 
@@ -342,8 +342,8 @@ where
         self.manager.borrow_mut().remove(&id);
     }
 
-    fn mul(&self, limit: u64) -> u64 {
-        let mut mul: u64 = 1;
+    fn mul(&self, init: u8, limit: u64) -> u64 {
+        let mut mul: u64 = init as u64;
         for i in 1..limit {
             mul *= i;
         }
@@ -361,13 +361,15 @@ where
 
         // If it is either time to send out a request, or if a request has never been sent out,
         // then, do so.
-        if (curr >= self.next || self.next == 0) && (self.outstanding < 32) {
+        if self.outstanding < 32 {
             if self.native == true {
                 // Configured to issue native RPCs, issue a regular get()/put() operation.
                 self.workload.borrow_mut().abc(
                     |tenant, key| self.sender.send_get(tenant, 1, key, curr),
                     |tenant, key, val| self.sender.send_put(tenant, 1, key, val, curr),
                 );
+                self.native_state.borrow_mut().entry(curr).or_insert(1);
+                self.outstanding += 1;
             } else {
                 // Configured to issue invoke() RPCs.
                 let mut p_get = self.payload_get.borrow_mut();
@@ -400,7 +402,7 @@ where
             // Update the time stamp at which the next request should be generated, assuming that
             // the first request was sent out at self.start.
             self.sent += 1;
-            self.next = self.start + self.sent * self.rate_inv;
+            //self.next = self.start + self.sent * self.rate_inv;
         }
     }
 
@@ -497,23 +499,29 @@ where
                     }
                 } else {
                     //The extension is executed locally on the client side.
-                    self.recvd += 1;
-                    let curr = cycles::rdtsc();
                     match parse_rpc_opcode(&packet) {
                         OpCode::SandstormGetRpc => {
                             let p = packet.parse_header::<GetResponse>();
-                            let _mul = self.mul(2000);
-                            self.latencies
-                                .push(cycles::rdtsc() - p.get_header().common_header.stamp);
-                            self.outstanding -= 1;
-                            p.free_packet();
-                        }
-
-                        OpCode::SandstormPutRpc => {
-                            let p = packet.parse_header::<PutResponse>();
-                            self.latencies
-                                .push(curr - p.get_header().common_header.stamp);
-                            self.outstanding -= 1;
+                            let timestamp = p.get_header().common_header.stamp;
+                            let count = *self.native_state.borrow().get(&timestamp).unwrap();
+                            if count == NUM_OPS {
+                                self.recvd += 1;
+                                let init = p.get_payload()[0];
+                                let mul = self.mul(init, 2000);
+                                self.latencies.push(cycles::rdtsc() - timestamp - mul);
+                                self.native_state.borrow_mut().remove(&timestamp);
+                                self.outstanding -= 1;
+                            } else {
+                                // Send the packet with same tenantid, curr etc.
+                                let tenant = p.get_header().common_header.tenant;
+                                let val = p.get_payload();
+                                self.sender.send_get(tenant, 1, &val[0..30], timestamp);
+                                if let Some(count) =
+                                    self.native_state.borrow_mut().get_mut(&timestamp)
+                                {
+                                    *count += 1;
+                                }
+                            }
                             p.free_packet();
                         }
 

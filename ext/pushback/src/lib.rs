@@ -26,6 +26,7 @@ use std::ops::Generator;
 use std::rc::Rc;
 
 use sandstorm::db::DB;
+use sandstorm::pack::pack;
 
 macro_rules! GET {
     ($db:ident, $table:ident, $key:ident, $obj:ident) => {
@@ -61,7 +62,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
         let mut obj = None;
         let start = rdtsc();
         let mut t_table: u64 = 0;
-        let mut keys: Vec<u8> = Vec::new();
+        let mut keys: Vec<u8> = Vec::with_capacity(30);
 
         {
             // First off, retrieve the arguments to the extension.
@@ -73,7 +74,6 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             if args.len() <= 8 {
                 let error = "Invalid args";
                 db.resp(error.as_bytes());
-                println!("Invalid Args");
                 return 1;
             }
 
@@ -93,29 +93,53 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
                 | (table[6] as u64) << 48
                 | (table[7] as u64) << 56;
         }
-        GET!(db, t_table, keys, obj);
 
-        // Populate a response to the tenant.
-        match obj {
-            // If the object was found, write it to the response.
-            Some(val) => {
-                db.resp(val.read());
-            }
+        let range: usize = 1;
+        let mut mul: u64 = 1;
 
-            // If the object was not found, write an error message to the
-            // response.
-            None => {
-                let error = "Object does not exist";
-                db.resp(error.as_bytes());
+        for i in 0..range {
+            GET!(db, t_table, keys, obj);
+
+            if i == range - 1 {
+                match obj {
+                    // If the object was found, use the response.
+                    Some(val) => {
+                        mul = val.read()[0] as u64;
+                    }
+
+                    // If the object was not found, write an error message to the
+                    // response.
+                    None => {
+                        let error = "Object does not exist";
+                        db.resp(error.as_bytes());
+                        return 1;
+                    }
+                }
+            } else {
+                // find the key for the second request.
+                match obj {
+                    // If the object was found, find the key from the response.
+                    Some(val) => {
+                        keys[0..4].copy_from_slice(&val.read()[0..4]);
+                    }
+
+                    // If the object was not found, write an error message to the
+                    // response.
+                    None => {
+                        let error = "Object does not exist";
+                        db.resp(error.as_bytes());
+                        return 1;
+                    }
+                }
             }
         }
         yield rdtsc() - start;
 
         // Second half of the extension, which does .5 us of CPU works and returns.
-        let mut mul: u64 = 1;
         for i in 1..2000 {
             mul *= i;
         }
-        return mul;
+        db.resp(pack(&mul));
+        return 0;
     })
 }
