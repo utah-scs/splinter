@@ -16,7 +16,7 @@ following
    It saves the PCI and MAC addresses of the bound NIC to a file called `nic_info`.
    Run - `source $HOME/.cargo/env` once the script is done.
 4. Create a toml file (`db/server.toml`) for the server on one machine, and a
-   toml file (`db/client.toml`) for the client on the other machine. There are
+   toml file (`splinter/client.toml`) for the client on the other machine. There are
    example files under `db`.
 5. Update the toml files with the correct MAC and PCI addresses (generated
    during Step 3).
