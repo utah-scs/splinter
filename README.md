@@ -20,7 +20,7 @@ following
    example files under `db`.
 5. Update the toml files with the correct MAC and PCI addresses (generated
    during Step 3).
-6. To run the server, run `make`, followed by `sudo scripts/run-server' from the
+6. To run the server, run `make`, followed by `sudo scripts/run-server` from the
    root directory.
 7. To run the ycsb client, run `make`, followed by `sudo scripts/run-ycsb` from
    the root directory.
