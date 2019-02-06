@@ -27,5 +27,8 @@ pub const PACKET_IP_IHL: u8 = 5;
 pub const PACKET_IP_LEN: u16 = 20 + PACKET_UDP_LEN;
 pub const PACKET_ETYPE: u16 = 0x0800;
 
+pub const IP_HDR_LEN: usize = 20;
+pub const MAC_HDR_LEN: usize = 14;
+
 // The following are constants required to identify packets sent by the client.
 pub const CLIENT_UDP_PORT: u16 = 0;

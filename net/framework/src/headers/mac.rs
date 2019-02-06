@@ -144,4 +144,24 @@ impl MacHeader {
         self.src.copy_address(&self.dst);
         self.dst.copy_address(&src);
     }
+
+    #[inline]
+    pub fn src(&self) -> &MacAddress {
+        &self.src
+    }
+
+    #[inline]
+    pub fn set_src(&mut self, src: &MacAddress) {
+        self.src.copy_address(src);
+    }
+
+    #[inline]
+    pub fn dst(&self) -> &MacAddress {
+        &self.dst
+    }
+
+    #[inline]
+    pub fn set_dst(&mut self, dst: &MacAddress) {
+        self.dst.copy_address(dst);
+    }
 }

@@ -621,7 +621,7 @@ where
     /// * `requests`: A vector of packets parsed upto and including their UDP
     ///               headers that will be dispatched to the appropriate
     ///               service.
-    fn dispatch_requests(&self, mut requests: Vec<Packet<UdpHeader, EmptyMetadata>>) {
+    fn dispatch_requests(&mut self, mut requests: Vec<Packet<UdpHeader, EmptyMetadata>>) {
         // This vector will hold the set of packets that were for either an invalid service or
         // operation.
         let mut ignore_packets = Vec::with_capacity(self.max_rx_packets as usize);
@@ -632,6 +632,16 @@ where
         let mut native_responses = Vec::new();
 
         while let Some(request) = requests.pop() {
+            // Set the destination ip address on the response IP header.
+            let ip = request.deparse_header(common::IP_HDR_LEN);
+            self.resp_ip_header.set_dst(ip.get_header().src());
+
+            // Set the destination mac address on the response MAC header.
+            let mac = ip.deparse_header(common::MAC_HDR_LEN);
+            self.resp_mac_header.set_dst(mac.get_header().src());
+
+            let request = mac.parse_header::<IpHeader>().parse_header::<UdpHeader>();
+
             // Allocate a packet for the response upfront, and add in MAC, IP, and UDP headers.
             let mut response = new_packet()
                 .expect("ERROR: Failed to allocate packet for response!")
