@@ -123,13 +123,17 @@ impl Task for Container {
             unsafe {
                 // Catch any panics thrown from within the extension.
                 let res = catch_unwind(AssertUnwindSafe(|| match self.gen.resume() {
-                    GeneratorState::Yielded(time) => {
-                        self.db_time += time;
+                    GeneratorState::Yielded(_) => {
+                        if let Some(db) = self.db.get_mut() {
+                            self.db_time = db.db_credit();
+                        }
                         self.state = YIELDED;
                     }
 
-                    GeneratorState::Complete(time) => {
-                        self.db_time += time;
+                    GeneratorState::Complete(_) => {
+                        if let Some(db) = self.db.get_mut() {
+                            self.db_time = db.db_credit();
+                        }
                         self.state = COMPLETED;
                     }
                 }));

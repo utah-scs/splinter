@@ -32,3 +32,9 @@ pub const MAC_HDR_LEN: usize = 14;
 
 // The following are constants required to identify packets sent by the client.
 pub const CLIENT_UDP_PORT: u16 = 0;
+
+// The following are constants required to populate the credit system for each extension.
+// XXX: Modify later.
+pub const GET_CREDIT: u64 = 0;
+pub const PUT_CREDIT: u64 = 0;
+pub const MULTIGET_CREDIT: u64 = 0;

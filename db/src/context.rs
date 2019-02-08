@@ -18,10 +18,12 @@ use std::sync::Arc;
 use std::{mem, slice, str};
 
 use super::alloc::Allocator;
+use super::cycles::*;
 use super::tenant::Tenant;
 use super::wireformat::{InvokeRequest, InvokeResponse, RpcStatus};
 
 use sandstorm::buf::{MultiReadBuf, OpType, ReadBuf, ReadWriteSetBuf, Record, WriteBuf};
+use sandstorm::common::*;
 use sandstorm::db::DB;
 
 use e2d2::common::EmptyMetadata;
@@ -70,6 +72,9 @@ pub struct Context {
 
     // The buffer which maintains the read/write set per extension.
     readwriteset: RefCell<ReadWriteSetBuf>,
+
+    // The credit which the extension has earned by making the db calls.
+    db_credit: RefCell<u64>,
 }
 
 // Methods on Context.
@@ -109,6 +114,7 @@ impl Context {
             heap: alloc,
             allocs: Cell::new(0),
             readwriteset: RefCell::new(ReadWriteSetBuf::new()),
+            db_credit: RefCell::new(0),
         }
     }
 
@@ -166,6 +172,18 @@ impl Context {
             self.resp(record.get_object().as_ref());
         }
     }
+
+    /// This method returns the value of the credit which an extension has accumulated over time.
+    /// The extension credit is increased whenever it makes a DB function call; like get(),
+    /// multiget(), put(), etc. For each DB call the credit is time spent in the called function
+    /// plus some extra credit which the datastore need to waste in RPC handling.
+    ///
+    /// # Return
+    ///
+    /// The current value of the credit for the extension.
+    pub fn db_credit(&self) -> u64 {
+        self.db_credit.borrow().clone()
+    }
 }
 
 // The DB trait for Context.
@@ -174,6 +192,7 @@ impl DB for Context {
     fn get(&self, table_id: u64, key: &[u8]) -> Option<ReadBuf> {
         // Lookup the database for the key value pair. If it exists, then update
         // the read set and return the value.
+        let start = rdtsc();
         self.tenant.get_table(table_id)
                     .and_then(| table | { table.get(key) })
                     // The object exists in the database. Get a handle to it's
@@ -182,6 +201,7 @@ impl DB for Context {
                     // Return the value wrapped up inside a safe type.
                     .and_then(| (k, v) | {
                         self.populate_read_write_set(Record::new(OpType::SandstormRead, &k, &v));
+                        *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
                         unsafe { Some(ReadBuf::new(v)) }
                         })
     }
@@ -190,6 +210,7 @@ impl DB for Context {
     fn multiget(&self, table_id: u64, key_len: u16, keys: &[u8]) -> Option<MultiReadBuf> {
         // Lookup the database for each key in the supplied list of keys. If all exist,
         // return a MultiReadBuf to the extension.
+        let start = rdtsc();
         if let Some(table) = self.tenant.get_table(table_id) {
             let mut objs = Vec::new();
 
@@ -209,15 +230,17 @@ impl DB for Context {
                     });
 
                 if r.is_none() {
+                    *self.db_credit.borrow_mut() += rdtsc() - start + MULTIGET_CREDIT;
                     return None;
                 }
             }
 
             unsafe {
+                *self.db_credit.borrow_mut() += rdtsc() - start + MULTIGET_CREDIT;
                 return Some(MultiReadBuf::new(objs));
             }
         }
-
+        *self.db_credit.borrow_mut() += rdtsc() - start + MULTIGET_CREDIT;
         return None;
     }
 
@@ -241,6 +264,7 @@ impl DB for Context {
 
     /// Lookup the `DB` trait for documentation on this method.
     fn put(&self, buf: WriteBuf) -> bool {
+        let start = rdtsc();
         // Convert the passed in Writebuf to read only.
         let (table_id, buf) = unsafe { buf.freeze() };
 
@@ -249,10 +273,12 @@ impl DB for Context {
             return self.heap.resolve(buf.clone()).map_or(false, |(k, _v)| {
                 self.populate_read_write_set(Record::new(OpType::SandstormWrite, &k, &buf));
                 table.put(k, buf);
+                *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
                 true
             });
         }
 
+        *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
         return false;
     }
 

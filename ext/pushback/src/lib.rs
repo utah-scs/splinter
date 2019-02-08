@@ -60,7 +60,6 @@ macro_rules! GET {
 pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
     Box::new(move || {
         let mut obj = None;
-        let start = rdtsc();
         let mut t_table: u64 = 0;
         let mut keys: Vec<u8> = Vec::with_capacity(30);
 
@@ -133,7 +132,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
                 }
             }
         }
-        yield rdtsc() - start;
+        yield 0;
 
         // Second half of the extension, which does .5 us of CPU works and returns.
         for i in 1..2000 {
