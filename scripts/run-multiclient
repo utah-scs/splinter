@@ -1,0 +1,60 @@
+#!/bin/bash
+#
+# Copyright (c) 2018 University of Utah
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+
+run() {
+    # Check for a clients.txt file with client related configuration.
+    if [[ ! -f clients.txt ]]; then
+        echo "Missing clients.txt file in the current directory."
+        exit -1
+    fi
+    # The client is using the rate just to wait for Total/rate time.
+    pssh -h clients.txt -t 0 -i "cd splinter; sudo ./scripts/run-$extname 250000" | \
+    grep --color=always -e SUCCESS -e FAILURE -e Median
+}
+
+clean() {
+    if [ -z !"$2" ]; then
+        echo "Specify the extension name to kill the client"
+        exit 1
+    fi
+    echo "sudo kill -9 `pidof $extname`"
+    pssh -h clients.txt -t 0 -i "sudo kill -9 `pidof $extname`"
+}
+
+display_help() {
+    echo "Usage: $0 {run extname|clean extname}" >&2
+    exit 1
+}
+
+if [ $# -ne 2 ]; then
+    display_help
+    exit -1
+fi
+
+extname=$2
+
+case "$1" in
+    run)
+        run # calling function run()
+        ;;
+    clean)
+        clean # calling function clean()
+        ;;
+    *)
+        display_help
+esac
+
