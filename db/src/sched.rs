@@ -172,10 +172,14 @@ impl RoundRobin {
         let mut total_time: u64 = 0;
         let mut db_time: u64 = 0;
         let credit = (CREDIT_LIMIT_US / 1000000f64) * (cycles::cycles_per_second() as f64);
+
+        // XXX: Trigger Pushback if the two dispatcher invocation is 20 us apart.
+        let time_trigger: u64 = 20 * credit as u64;
+        let mut previous: u64 = 0;
         loop {
             // Set the time-stamp of the latest scheduling decision.
-            self.latest
-                .store(cycles::rdtsc() as usize, Ordering::Relaxed);
+            let current = cycles::rdtsc();
+            self.latest.store(current as usize, Ordering::Relaxed);
 
             // If the compromised flag was set, then return.
             if self.compromised.load(Ordering::Relaxed) {
@@ -189,10 +193,16 @@ impl RoundRobin {
             if let Some(mut task) = task {
                 let mut is_scheduler: bool = false;
                 let mut queue_length: usize = 0;
+                let mut difference: u64 = 0;
                 match task.priority() {
                     TaskPriority::DISPATCH => {
                         is_scheduler = true;
                         queue_length = self.waiting.read().len();
+
+                        // The time difference include the dispatcher time to account the native
+                        // operations.
+                        difference = current - previous;
+                        previous = current;
                     }
 
                     _ => {}
@@ -222,35 +232,35 @@ impl RoundRobin {
                     }
                 } else {
                     // The task did not complete execution. EITHER add it back to the waiting list so that it
-                    // gets to run again OR run the pushback mechanism.
-                    if cfg!(feature = "pushback") {
-                        if is_scheduler == true {
-                            let new_packets = self.waiting.read().len() - queue_length;
-                            if (queue_length >= MAX_RX_PACKETS / 2)
-                                && (new_packets >= MAX_RX_PACKETS)
-                            {
-                                for _i in 0..queue_length {
-                                    let mut yeilded_task =
-                                        self.waiting.write().pop_front().unwrap();
+                    // gets to run again OR run the pushback mechanism. The pushback starts only after that
+                    // dispatcher task execution. Trigger pushback:-
+                    //
+                    // if there are MAX_RX_PACKETS /2 yeilded tasks in the queue, OR
+                    // if two dispatcher invocations are 20 us apart, AND
+                    // if the current dispatcher invocation received MAX_RX_PACKETS /2 new tasks.
+                    if cfg!(feature = "pushback")
+                        && is_scheduler == true
+                        && (queue_length >= MAX_RX_PACKETS / 2 || difference > time_trigger)
+                        && ((self.waiting.read().len() - queue_length) >= MAX_RX_PACKETS / 2)
+                    {
+                        for _i in 0..queue_length {
+                            let mut yeilded_task = self.waiting.write().pop_front().unwrap();
 
-                                    // Compute Ranking/Credit on the go for each task to pushback
-                                    // some of the tasks whose rank/credit is more than the threshold.
-                                    if (yeilded_task.state() == YIELDED)
-                                        && ((yeilded_task.time() - yeilded_task.db_time())
-                                            > credit as u64)
-                                    {
-                                        yeilded_task.set_state(STOPPED);
-                                        if let Some((req, res)) = unsafe { yeilded_task.tear() } {
-                                            req.free_packet();
-                                            self.responses
-                                                .write()
-                                                .push(rpc::fixup_header_length_fields(res));
-                                        }
-                                    } else {
-                                        // Not fair with the already yielded tasks, as being pushed at the end.
-                                        self.waiting.write().push_back(yeilded_task);
-                                    }
+                            // Compute Ranking/Credit on the go for each task to pushback
+                            // some of the tasks whose rank/credit is more than the threshold.
+                            if (yeilded_task.state() == YIELDED)
+                                && ((yeilded_task.time() - yeilded_task.db_time()) > credit as u64)
+                            {
+                                yeilded_task.set_state(STOPPED);
+                                if let Some((req, res)) = unsafe { yeilded_task.tear() } {
+                                    req.free_packet();
+                                    self.responses
+                                        .write()
+                                        .push(rpc::fixup_header_length_fields(res));
                                 }
+                            } else {
+                                // Not fair with the already yielded tasks, as being pushed at the end.
+                                self.waiting.write().push_back(yeilded_task);
                             }
                         }
                     }
