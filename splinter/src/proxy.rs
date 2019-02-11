@@ -16,6 +16,8 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use db::cycles::*;
+
 use sandstorm::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
 use sandstorm::db::DB;
 
@@ -82,6 +84,9 @@ pub struct ProxyDB {
 
     // A list of records in the write-set for the extension.
     writeset: RefCell<Vec<KV>>,
+
+    // The credit which the extension has earned by making the db calls.
+    db_credit: RefCell<u64>,
 }
 
 impl ProxyDB {
@@ -116,6 +121,7 @@ impl ProxyDB {
             sender: sender_service,
             readset: RefCell::new(Vec::with_capacity(4)),
             writeset: RefCell::new(Vec::with_capacity(4)),
+            db_credit: RefCell::new(0),
         }
     }
 
@@ -180,12 +186,25 @@ impl ProxyDB {
         //Return some number way bigger than the cache size.
         return 1024;
     }
+
+    /// This method returns the value of the credit which an extension has accumulated over time.
+    /// The extension credit is increased whenever it makes a DB function call; like get(),
+    /// multiget(), put(), etc.
+    ///
+    /// # Return
+    ///
+    /// The current value of the credit for the extension.
+    pub fn db_credit(&self) -> u64 {
+        self.db_credit.borrow().clone()
+    }
 }
 
 impl DB for ProxyDB {
     /// Lookup the `DB` trait for documentation on this method.
     fn get(&self, _table: u64, _key: &[u8]) -> Option<ReadBuf> {
+        let start = rdtsc();
         self.set_waiting(false);
+        *self.db_credit.borrow_mut() += rdtsc() - start;
         unsafe { Some(ReadBuf::new(Bytes::with_capacity(0))) }
     }
 
@@ -223,14 +242,17 @@ impl DB for ProxyDB {
 
     /// Lookup the `DB` trait for documentation on this method.
     fn search_get_in_cache(&self, table: u64, key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
+        let start = rdtsc();
         let index = self.search_cache(self.readset.borrow().to_vec(), key);
         if index != 1024 {
             let value = self.readset.borrow()[index].value.clone();
+            *self.db_credit.borrow_mut() += rdtsc() - start;
             return (false, true, unsafe { Some(ReadBuf::new(value)) });
         }
         self.set_waiting(true);
         self.sender
             .send_get(self.tenant, table, key, self.parent_id);
+        *self.db_credit.borrow_mut() += rdtsc() - start;
         (false, false, None)
     }
 }

@@ -125,18 +125,20 @@ impl Task for Container {
             unsafe {
                 // Catch any panics thrown from within the extension.
                 let res = catch_unwind(AssertUnwindSafe(|| match self.gen.resume() {
-                    GeneratorState::Yielded(time) => {
-                        self.db_time += time;
+                    GeneratorState::Yielded(_) => {
                         self.state = YIELDED;
                         if let Some(proxydb) = self.db.get_mut() {
+                            self.db_time = proxydb.db_credit();
                             if proxydb.get_waiting() == true {
                                 self.state = WAITING;
                             }
                         }
                     }
 
-                    GeneratorState::Complete(time) => {
-                        self.db_time += time;
+                    GeneratorState::Complete(_) => {
+                        if let Some(proxydb) = self.db.get_mut() {
+                            self.db_time = proxydb.db_credit();
+                        }
                         self.state = COMPLETED;
                     }
                 }));

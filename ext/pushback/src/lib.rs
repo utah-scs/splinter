@@ -20,8 +20,6 @@
 extern crate db;
 extern crate sandstorm;
 
-use db::cycles::*;
-
 use std::ops::Generator;
 use std::rc::Rc;
 

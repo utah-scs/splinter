@@ -55,6 +55,12 @@ use zipf::ZipfDistribution;
 // Number of operation performed by the extension in the native case.
 const NUM_OPS: u8 = 1;
 
+// Number of multiplications performed by the extension in the native case.
+const NUM_MUL: u64 = 1000;
+
+// Flag to indicate that the client has finished sending and receiving the packets.
+static mut FINISHED: bool = false;
+
 // PUSHBACK benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
 // share the same benchmark instance. Each thread can call `abc()` which
@@ -356,12 +362,10 @@ where
             return;
         }
 
-        // Get the current time stamp so that we can determine if it is time to issue the next RPC.
-        let curr = cycles::rdtsc();
+        while self.outstanding < 32 {
+            // Get the current time stamp so that we can determine if it is time to issue the next RPC.
+            let curr = cycles::rdtsc();
 
-        // If it is either time to send out a request, or if a request has never been sent out,
-        // then, do so.
-        if self.outstanding < 32 {
             if self.native == true {
                 // Configured to issue native RPCs, issue a regular get()/put() operation.
                 self.workload.borrow_mut().abc(
@@ -507,7 +511,7 @@ where
                             if count == NUM_OPS {
                                 self.recvd += 1;
                                 let init = p.get_payload()[0];
-                                let mul = self.mul(init, 2000);
+                                let mul = self.mul(init, NUM_MUL);
                                 self.latencies.push(cycles::rdtsc() - timestamp - mul);
                                 self.native_state.borrow_mut().remove(&timestamp);
                                 self.outstanding -= 1;
@@ -608,6 +612,7 @@ where
         self.recv();
         self.execute_task();
         if self.finished == true {
+            unsafe { FINISHED = true }
             return;
         }
     }
@@ -671,10 +676,6 @@ fn main() {
         masterservice.load_test(tenant);
     }
 
-    // Based on the supplied client configuration, compute the amount of time it will take to send
-    // out `num_reqs` requests at a rate of `req_rate` requests per second.
-    let exec = config.num_reqs / config.req_rate;
-
     // Setup Netbricks.
     let mut net_context = setup::config_and_init_netbricks(&config);
 
@@ -729,7 +730,11 @@ fn main() {
 
     // Sleep for an amount of time approximately equal to the estimated execution time, and then
     // shutdown the client.
-    std::thread::sleep(std::time::Duration::from_secs(exec as u64 + 11));
+    unsafe {
+        while !FINISHED {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+    }
 
     // Stop the client.
     net_context.stop();
