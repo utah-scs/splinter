@@ -368,7 +368,7 @@ where
                 valid = (ip_header.version() == 4)
                     && (ip_header.ttl() > 0)
                     && (ip_header.length() >= MIN_LENGTH_IP)
-                    && (ip_header.dst() == self.network_ip_addr);
+                    || (ip_header.dst() == self.network_ip_addr);
             }
 
             match valid {
@@ -519,7 +519,7 @@ fn setup_server<S>(
     ports: Vec<CacheAligned<PortQueue>>,
     _sibling: CacheAligned<PortQueue>,
     scheduler: &mut S,
-    _core: i32,
+    core: i32,
 ) where
     S: Scheduler + Sized,
 {
@@ -532,9 +532,10 @@ fn setup_server<S>(
     match scheduler.add_task(RpcHandler::new(ports[0].clone(), config)) {
         Ok(_) => {
             info!(
-                "Successfully added scheduler for rx {}, tx {}.",
+                "Successfully added scheduler for rxq {}, txq {} on core {}.",
                 ports[0].rxq(),
-                ports[0].txq()
+                ports[0].txq(),
+                core
             );
         }
 
