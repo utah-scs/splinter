@@ -636,7 +636,7 @@ fn main() {
     // Setup Netbricks.
     let mut net_context: NetbricksContext = config_and_init_netbricks(&config);
 
-    // Setup the server pipeline.
+    // Setup the net_bench pipeline.
     net_context.start_schedulers();
     net_context.add_pipeline_to_run(Arc::new(
         move |ports, scheduler: &mut StandaloneScheduler, core: i32, sibling| {
@@ -648,7 +648,9 @@ fn main() {
     net_context.execute();
     sleep(Duration::from_millis(1000));
 
-    // Stop the server.
-    // net_context.stop();
-    // _install.join();
+    //wait for the net_bench threads.
+    net_context.wait();
+
+    // Stop the net_bench.
+    net_context.stop();
 }
