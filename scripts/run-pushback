@@ -69,36 +69,49 @@ tenant_skew=$(cat client.toml | grep "tenant_skew" | awk '{ print $NF }')
 # output file is marked with this number.
 cores=$(cat client.toml | grep "server_udp_ports" | awk '{ print $NF }')
 
+# The request rate configured in the client.toml file.
+rate=$(cat client.toml | grep "req_rate" | awk '{ print $NF }')
+
 # The different request rates that the PUSHBACK client will be configured and run
 # with.
-rates=(250000 375000 500000 625000 750000 875000 1000000 1125000 1250000 1375000 1500000)
+sizes=(2)
+
+# The order of the aggregate.
+order=(0 1000 2000 3000 4000 5000 6000 7000 8000)
 
 # Header for the output file. Required inorder to plot the results.
-echo "Offered 50 99 Tenants TSkew Cores Thrpt" > ../pushback_invoke_"$invoke".data
+echo "Offered ASize Order 50 99 Tenants TSkew Cores Thrpt" > ../pushback_invoke_"$invoke".data
 
 # Run PUSHBACK for each of the above request rates.
-for rate in ${rates[@]}
+for size in ${sizes[@]}
 do
-    echo "rate=$rate, invoke=$invoke, tenants=$tenants, tenant_skew=$tenant_skew, cores=$cores"
+    # Configure the client TOML file with the aggregate size.
+    sed -i "s/num_aggr = [1-9][0-9]*/num_aggr = $size/g" client.toml
 
-    # Configure the client TOML file with the request rate.
-    sed -i "s/req_rate = [1-9][0-9]*/req_rate = $rate/g" client.toml
+    for ord in ${order[@]}
+    do
+        # Configure the client TOML file with the order.
+        sed -i "s/order = [0-9][0-9]*/order = $ord/g" client.toml
 
-    # Run PUSHBACK, and write out the output to a file.
-    rm -f ../samples.temp
-    RUST_LOG=debug ./target/release/pushback >> ../samples.temp 2>&1
+        echo "rate=$rate, invoke=$invoke, tenants=$tenants, tenant_skew=$tenant_skew, cores=$cores, size=$size, order=$ord"
 
-    # Calculate the total measured server throughput.
-    thrpt=$(cat ../samples.temp | grep "PUSHBACK Throughput" | \
+        # Run PUSHBACK, and write out the output to a file.
+        rm -f ../samples.temp
+        RUST_LOG=debug ./target/release/pushback >> ../samples.temp 2>&1
+
+        # Calculate the total measured server throughput.
+        thrpt=$(cat ../samples.temp | grep "PUSHBACK Throughput" | \
             awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
 
-    # Print final numbers to a file.
-    cat ../samples.temp | grep ">>>" | \
-            awk "{ print $rate, \$2, \$3, $tenants, $tenant_skew, $cores, $thrpt }" >> \
+        # Print final numbers to a file.
+        cat ../samples.temp | grep ">>>" | \
+            awk "{ print $rate, $size, $ord, \$2, \$3, $tenants, $tenant_skew, $cores, $thrpt }" >> \
             ../pushback_invoke_"$invoke".data
 
-    # Cleanup temp file.
-    rm ../samples.temp
+        # Cleanup temp file.
+        rm ../samples.temp
+
+    done
 done
 
 exit 0

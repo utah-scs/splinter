@@ -23,6 +23,8 @@ extern crate sandstorm;
 use std::ops::Generator;
 use std::rc::Rc;
 
+use db::cycles;
+
 use sandstorm::db::DB;
 use sandstorm::pack::pack;
 
@@ -91,7 +93,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
                 | (table[7] as u64) << 56;
         }
 
-        let range: usize = 1;
+        let range: usize = 2;
         let mut mul: u64 = 1;
 
         for i in 0..range {
@@ -133,9 +135,8 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
         yield 0;
 
         // Second half of the extension, which does .5 us of CPU works and returns.
-        for i in 1..2000 {
-            mul *= i;
-        }
+        let start = cycles::rdtsc();
+        while cycles::rdtsc() - start < 5000 {}
         db.resp(pack(&mul));
         return 0;
     })

@@ -32,8 +32,6 @@ use std::mem;
 use std::mem::transmute;
 use std::sync::Arc;
 
-use spin::RwLock;
-
 use db::config;
 use db::cyclecounter::CycleCounter;
 use db::cycles;
@@ -51,12 +49,6 @@ use rand::{Rng, SeedableRng, XorShiftRng};
 use splinter::manager::TaskManager;
 use splinter::*;
 use zipf::ZipfDistribution;
-
-// Number of operation performed by the extension in the native case.
-const NUM_OPS: u8 = 1;
-
-// Number of multiplications performed by the extension in the native case.
-const NUM_MUL: u64 = 1000;
 
 // Flag to indicate that the client has finished sending and receiving the packets.
 static mut FINISHED: bool = false;
@@ -226,7 +218,7 @@ where
 
     // Run-queue of tasks waiting to execute. Tasks on this queue have either yielded, or have been
     // recently enqueued and never run before.
-    waiting: RwLock<VecDeque<TaskManager>>,
+    waiting: VecDeque<TaskManager>,
 
     // Number of tasks completed on the client, after server pushback. Wraps around
     // after each 1L such tasks.
@@ -240,6 +232,12 @@ where
     // four get operations before performing aggregation and all these get operations are dependent
     // on the previous value.
     native_state: RefCell<HashMap<u64, u8>>,
+
+    /// Number of keys to aggregate across. Required for the native case.
+    num: u8,
+
+    /// Order of the final polynomial to be computed.
+    ord: u64,
 }
 
 // Implementation of methods on PushbackRecv.
@@ -269,6 +267,8 @@ where
         reqs: u64,
         dst_ports: u16,
         masterservice: Arc<Master>,
+        number: u8,
+        order: u64,
     ) -> PushbackRecvSend<T> {
         // The payload on an invoke() based get request consists of the extensions name ("get"),
         // the table id to perform the lookup on, and the key to lookup.
@@ -320,10 +320,12 @@ where
             outstanding: 0,
             master_service: Arc::clone(&masterservice),
             manager: RefCell::new(HashMap::new()),
-            waiting: RwLock::new(VecDeque::new()),
+            waiting: VecDeque::new(),
             pushback_completed: 0,
             cycle_counter: CycleCounter::new(),
             native_state: RefCell::new(HashMap::with_capacity(32)),
+            num: number,
+            ord: order,
         }
     }
 
@@ -346,14 +348,6 @@ where
 
     fn remove_request(&self, id: u64) {
         self.manager.borrow_mut().remove(&id);
-    }
-
-    fn mul(&self, init: u8, limit: u64) -> u64 {
-        let mut mul: u64 = init as u64;
-        for i in 1..limit {
-            mul *= i;
-        }
-        return mul;
     }
 
     fn send(&mut self) {
@@ -406,7 +400,13 @@ where
             // Update the time stamp at which the next request should be generated, assuming that
             // the first request was sent out at self.start.
             self.sent += 1;
-            //self.next = self.start + self.sent * self.rate_inv;
+
+            // When packets are sent in batches, server pushes back quickly. Restrict the number
+            // of pushed-back task to .1M and after that send 1 packet each iteration, which will
+            // execute on the server side as it stop triggering the pushback mechanism.
+            if self.waiting.len() >= 100000 {
+                break;
+            }
         }
     }
 
@@ -451,7 +451,7 @@ where
                                         Some(mut manager) => {
                                             manager.create_generator(Arc::clone(&self.sender));
                                             manager.update_rwset(records);
-                                            self.waiting.write().push_back(manager);
+                                            self.waiting.push_back(manager);
                                         }
 
                                         None => {
@@ -460,7 +460,6 @@ where
                                     }
                                     self.latencies.push(cycles::rdtsc() - timestamp);
                                     self.outstanding -= 1;
-                                    self.recvd += 1;
                                 }
 
                                 _ => {}
@@ -485,7 +484,7 @@ where
                                         .borrow_mut()
                                         .remove(&p.get_header().common_header.stamp);
                                     if let Some(mut manager) = manager {
-                                        self.waiting.write().push_back(manager);
+                                        self.waiting.push_back(manager);
                                     }
                                 }
                             }
@@ -508,11 +507,11 @@ where
                             let p = packet.parse_header::<GetResponse>();
                             let timestamp = p.get_header().common_header.stamp;
                             let count = *self.native_state.borrow().get(&timestamp).unwrap();
-                            if count == NUM_OPS {
+                            if count == self.num {
                                 self.recvd += 1;
-                                let init = p.get_payload()[0];
-                                let mul = self.mul(init, NUM_MUL);
-                                self.latencies.push(cycles::rdtsc() - timestamp - mul);
+                                let start = cycles::rdtsc();
+                                while cycles::rdtsc() - start < self.ord {}
+                                self.latencies.push(cycles::rdtsc() - timestamp);
                                 self.native_state.borrow_mut().remove(&timestamp);
                                 self.outstanding -= 1;
                             } else {
@@ -543,22 +542,25 @@ where
     }
 
     fn execute_task(&mut self) {
-        let manager = self.waiting.write().pop_front();
+        let manager = self.waiting.pop_front();
         if let Some(mut manager) = manager {
             let (taskstate, _time) = manager.execute_task();
             if taskstate == YIELDED {
-                self.waiting.write().push_back(manager);
+                self.waiting.push_back(manager);
             } else if taskstate == WAITING {
                 self.manager.borrow_mut().insert(manager.get_id(), manager);
-            } else if taskstate == COMPLETED && cfg!(feature = "execution") {
-                self.cycle_counter.total_cycles(_time, 1);
-                self.pushback_completed += 1;
-                if self.pushback_completed == 100000 {
-                    info!(
-                        "Completion time per extension {}",
-                        self.cycle_counter.get_average()
-                    );
-                    self.pushback_completed = 0;
+            } else if taskstate == COMPLETED {
+                self.recvd += 1;
+                if cfg!(feature = "execution") {
+                    self.cycle_counter.total_cycles(_time, 1);
+                    self.pushback_completed += 1;
+                    if self.pushback_completed == 1000000 {
+                        info!(
+                            "Completion time per extension {}",
+                            self.cycle_counter.get_average()
+                        );
+                        self.pushback_completed = 0;
+                    }
                 }
             }
         }
@@ -576,6 +578,10 @@ where
             "PUSHBACK Throughput {}",
             self.recvd as f64 / cycles::to_seconds(self.stop - self.start)
         );
+
+        if self.stop == 0 {
+            panic!("The client thread is forced to stop at wrong time");
+        }
 
         // Calculate & print median & tail latency only on the master thread.
         if self.master {
@@ -637,6 +643,10 @@ fn setup_send_recv<S>(
         std::process::exit(1);
     }
 
+    // Pushback compute size.
+    let num = config.num_aggr as u8;
+    let ord = config.order as u64;
+
     // Add the receiver to a netbricks pipeline.
     match scheduler.add_task(PushbackRecvSend::new(
         ports[0].clone(),
@@ -647,6 +657,8 @@ fn setup_send_recv<S>(
         config.num_reqs as u64,
         config.server_udp_ports as u16,
         masterservice,
+        num,
+        ord,
     )) {
         Ok(_) => {
             info!(
@@ -735,6 +747,7 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
     }
+    std::thread::sleep(std::time::Duration::from_secs(10));
 
     // Stop the client.
     net_context.stop();
