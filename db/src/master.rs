@@ -21,7 +21,7 @@ use std::rc::Rc;
 use std::str::from_utf8;
 use std::sync::Arc;
 
-use super::alloc::Allocator; 
+use super::alloc::Allocator;
 use super::container::Container;
 use super::context::Context;
 use super::native::Native;
@@ -447,6 +447,7 @@ impl Master {
         let mut table_id: TableId = 0;
         let mut key_length = 0;
         let mut rpc_stamp = 0;
+        let mut req_generator = GetGenerator::InvalidGenerator;
 
         {
             let hdr = req.get_header();
@@ -454,6 +455,7 @@ impl Master {
             table_id = hdr.table_id as TableId;
             key_length = hdr.key_length;
             rpc_stamp = hdr.common_header.stamp;
+            req_generator = hdr.generator.clone();
         }
 
         // Next, add a header to the response packet.
@@ -504,9 +506,21 @@ impl Master {
                             })
                 // If the value was obtained, then write to the response packet
                 // and update the status of the rpc.
-                .and_then(| (_k, value) | {
+                .and_then(| (k, value) | {
+                                let mut result = Ok(());
                                 status = RpcStatus::StatusInternalError;
-                                res.add_to_payload_tail(value.len(), &value[..]).ok()
+                                if req_generator == GetGenerator::SandstormExtension {
+                                    result = res.add_to_payload_tail(k.len(), &k[..]);
+                                }
+                                match result {
+                                    Ok(()) => {
+                                        res.add_to_payload_tail(value.len(), &value[..]).ok()
+                                    }
+
+                                    Err(_) => {
+                                        Some(())
+                                    }
+                                }
                             })
                 // If the value was written to the response payload,
                 // update the status of the rpc.
@@ -572,6 +586,7 @@ impl Master {
         let mut table_id: TableId = 0;
         let mut key_length = 0;
         let mut rpc_stamp = 0;
+        let mut req_generator = GetGenerator::InvalidGenerator;
 
         {
             let hdr = req.get_header();
@@ -579,6 +594,7 @@ impl Master {
             table_id = hdr.table_id as TableId;
             key_length = hdr.key_length;
             rpc_stamp = hdr.common_header.stamp;
+            req_generator = hdr.generator.clone();
         }
 
         // Next, add a header to the response packet.
@@ -628,9 +644,21 @@ impl Master {
                             })
                 // If the value was obtained, then write to the response packet
                 // and update the status of the rpc.
-                .and_then(| (_k, value) | {
+                .and_then(| (k, value) | {
+                                let mut result = Ok(());
                                 status = RpcStatus::StatusInternalError;
-                                res.add_to_payload_tail(value.len(), &value[..]).ok()
+                                if req_generator == GetGenerator::SandstormExtension {
+                                    result = res.add_to_payload_tail(k.len(), &k[..]);
+                                }
+                                match result {
+                                    Ok(()) => {
+                                        res.add_to_payload_tail(value.len(), &value[..]).ok()
+                                    }
+
+                                    Err(_) => {
+                                        Some(())
+                                    }
+                                }
                             })
                 // If the value was written to the response payload,
                 // update the status of the rpc.

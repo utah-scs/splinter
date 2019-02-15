@@ -25,6 +25,7 @@ use db::e2d2::headers::*;
 use db::e2d2::interface::*;
 use db::log::*;
 use db::rpc;
+use db::wireformat::*;
 
 /// A simple RPC request generator for Sandstorm.
 pub struct Sender {
@@ -130,8 +131,34 @@ impl Sender {
             key,
             id,
             self.get_dst_port(tenant),
+            GetGenerator::SandstormClient,
         );
 
+        self.send_req(request);
+    }
+
+    /// Creates and sends out a get() RPC request. Network headers are populated based on arguments
+    /// passed into new() above.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant`: Id of the tenant requesting the item.
+    /// * `table`:  Id of the table from which the key is looked up.
+    /// * `key`:    Byte string of key whose value is to be fetched. Limit 64 KB.
+    /// * `id`:     RPC identifier.
+    #[allow(dead_code)]
+    pub fn send_get_from_extension(&self, tenant: u32, table: u64, key: &[u8], id: u64) {
+        let request = rpc::create_get_rpc(
+            &self.req_mac_header,
+            &self.req_ip_header,
+            &self.req_udp_header,
+            tenant,
+            table,
+            key,
+            id,
+            self.get_dst_port(tenant),
+            GetGenerator::SandstormExtension,
+        );
         self.send_req(request);
     }
 
@@ -242,7 +269,8 @@ impl Sender {
         unsafe {
             let mut pkts = [request.get_mbuf()];
 
-            let sent = self.net_port
+            let sent = self
+                .net_port
                 .send(&mut pkts)
                 .expect("Failed to send packet!");
 
@@ -310,7 +338,8 @@ where
             mbuf_vector.set_len(self.max_rx_packets as usize);
 
             // Try to receive packets from the network port.
-            let recvd = self.net_port
+            let recvd = self
+                .net_port
                 .recv(&mut mbuf_vector[..])
                 .expect("Error on packet receive") as usize;
 

@@ -112,6 +112,25 @@ pub enum RpcStatus {
     StatusPushback = 0x09,
 }
 
+/// This enum represents the Generator value in the GetRequest header type.
+/// Either the Sandstorm client can request for a get() operation, or after
+/// pushback an extension can issue a get request. When an extension issues
+/// the request, the server also need to add the key to the response payload.
+#[repr(u8)]
+#[derive(PartialEq, Clone)]
+pub enum GetGenerator {
+    /// The GetRequest was issued by a Sandstorm client.
+    SandstormClient = 0x1,
+
+    /// The GetRequest was issued by an extension on the client; which was pushed
+    /// back to the client from the server.
+    SandstormExtension = 0x2,
+
+    /// This option means that the generator is unknown and decision based on this
+    /// value can't be made.
+    InvalidGenerator = 0x3,
+}
+
 /// This type represents the request header on a typical remote procedure call
 /// (RPC) received at a Sandstorm server. In addition to identifying a service
 /// and operation, the header also identifies the tenant that sent the request
@@ -227,6 +246,10 @@ pub struct GetRequest {
     /// The length of the key being looked up. This field allows the key
     /// to be unpacked from the request at the server.
     pub key_length: u16,
+
+    /// This enum determines the issuer for the GetRequest, which can either be a
+    /// Sandstorm client or an extension running on the client side.
+    pub generator: GetGenerator,
 }
 
 impl GetRequest {
@@ -249,6 +272,7 @@ impl GetRequest {
         req_table_id: u64,
         req_key_length: u16,
         req_stamp: u64,
+        req_generator: GetGenerator,
     ) -> GetRequest {
         GetRequest {
             common_header: RpcRequestHeader::new(
@@ -259,6 +283,7 @@ impl GetRequest {
             ),
             table_id: req_table_id,
             key_length: req_key_length,
+            generator: req_generator,
         }
     }
 }

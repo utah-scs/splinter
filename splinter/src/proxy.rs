@@ -251,7 +251,7 @@ impl DB for ProxyDB {
         }
         self.set_waiting(true);
         self.sender
-            .send_get(self.tenant, table, key, self.parent_id);
+            .send_get_from_extension(self.tenant, table, key, self.parent_id);
         *self.db_credit.borrow_mut() += rdtsc() - start;
         (false, false, None)
     }

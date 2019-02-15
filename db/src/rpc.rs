@@ -184,6 +184,7 @@ pub fn fixup_header_length_fields(
 /// * `key`:      Byte string of key whose value is to be fetched. Limit 64 KB.
 /// * `id`:       RPC identifier.
 /// * `dst`:      The UDP port on the server the RPC is destined for.
+/// * `generator`: The issuer of the get() request(Client or Extension).
 ///
 /// # Return
 ///
@@ -198,6 +199,7 @@ pub fn create_get_rpc(
     key: &[u8],
     id: u64,
     dst: u16,
+    generator: GetGenerator,
 ) -> Packet<IpHeader, EmptyMetadata> {
     // Key length cannot be more than 16 bits. Required to construct the RPC header.
     if key.len() > u16::max_value() as usize {
@@ -207,7 +209,7 @@ pub fn create_get_rpc(
     // Allocate a packet, write the header and payload into it, and set fields on it's UDP and IP
     // header.
     let mut request = create_request(mac, ip, udp, dst)
-        .push_header(&GetRequest::new(tenant, table_id, key.len() as u16, id))
+        .push_header(&GetRequest::new(tenant, table_id, key.len() as u16, id, generator))
         .expect("Failed to push RPC header into request!");
 
     request
