@@ -137,11 +137,20 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
                 }
             }
         }
-        yield 0;
+         if ord <= 1000 {
+            let start = cycles::rdtsc();
+            while cycles::rdtsc() - start < ord as u64 {}
+        } else {
+            let start = cycles::rdtsc();
+            while cycles::rdtsc() - start < 1000 {}
 
-        // Second half of the extension, which does .5 us of CPU works and returns.
-        let start = cycles::rdtsc();
-        while cycles::rdtsc() - start < ord as u64 {}
+            // Yield after 1000 CPU cycles of compute and continue after that.
+            yield 0;
+
+            // Complete the remaining compute and subtract the already done part.
+            let start = cycles::rdtsc();
+            while cycles::rdtsc() - start < ord as u64 - 1000 {}
+        }
         db.resp(pack(&mul));
         return 0;
     })

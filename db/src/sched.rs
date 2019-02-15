@@ -34,7 +34,7 @@ const MAX_RX_PACKETS: usize = 32;
 
 /// Interval in microsecond which each task can use as credit to perform CPU work.
 /// Under load shedding, the task which used more than this credit will be pushed-back.
-const CREDIT_LIMIT_US: f64 = 1f64;
+const CREDIT_LIMIT_US: f64 = 0.5f64;
 
 /// A simple round robin scheduler for Tasks in Sandstorm.
 pub struct RoundRobin {
@@ -174,7 +174,7 @@ impl RoundRobin {
         let credit = (CREDIT_LIMIT_US / 1000000f64) * (cycles::cycles_per_second() as f64);
 
         // XXX: Trigger Pushback if the two dispatcher invocation is 20 us apart.
-        let time_trigger: u64 = 20 * credit as u64;
+        let time_trigger: u64 = 2000 * credit as u64;
         let mut previous: u64 = 0;
         loop {
             // Set the time-stamp of the latest scheduling decision.
@@ -235,13 +235,13 @@ impl RoundRobin {
                     // gets to run again OR run the pushback mechanism. The pushback starts only after that
                     // dispatcher task execution. Trigger pushback:-
                     //
-                    // if there are MAX_RX_PACKETS /2 yeilded tasks in the queue, OR
-                    // if two dispatcher invocations are 20 us apart, AND
-                    // if the current dispatcher invocation received MAX_RX_PACKETS /2 new tasks.
+                    // if there are MAX_RX_PACKETS /4 yeilded tasks in the queue, OR
+                    // if two dispatcher invocations are 2000 us apart, AND
+                    // if the current dispatcher invocation received MAX_RX_PACKETS /4 new tasks.
                     if cfg!(feature = "pushback")
                         && is_scheduler == true
-                        && (queue_length >= MAX_RX_PACKETS / 2 || difference > time_trigger)
-                        && ((self.waiting.read().len() - queue_length) >= MAX_RX_PACKETS / 2)
+                        && (queue_length >= MAX_RX_PACKETS / 4 || difference > time_trigger)
+                        && ((self.waiting.read().len() - queue_length) >= MAX_RX_PACKETS / 4)
                     {
                         for _i in 0..queue_length {
                             let mut yeilded_task = self.waiting.write().pop_front().unwrap();

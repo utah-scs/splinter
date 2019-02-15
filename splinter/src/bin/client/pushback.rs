@@ -419,8 +419,7 @@ where
 
     fn recv(&mut self) {
         // Don't do anything after all responses have been received.
-        if self.responses <= self.recvd {
-            self.finished = true;
+        if self.finished == true {
             return;
         }
 
@@ -545,13 +544,13 @@ where
         // stop timestamp so that throughput can be estimated later.
         if self.responses <= self.recvd {
             self.stop = cycles::rdtsc();
+            self.finished = true;
         }
     }
 
     fn execute_task(&mut self) {
         // Don't do anything after all responses have been received.
-        if self.responses <= self.recvd && self.waiting.len() == 0 {
-            self.finished = true;
+        if self.finished == true && self.waiting.len() == 0 {
             return;
         }
 
@@ -576,12 +575,14 @@ where
                         self.pushback_completed = 0;
                     }
                 }
-                // The moment all response packets have been received, set the value of the
-                // stop timestamp so that throughput can be estimated later.
-                if self.responses <= self.recvd && self.waiting.len() == 0 {
-                    self.stop = cycles::rdtsc();
-                }
             }
+        }
+
+        // The moment all response packets have been received, set the value of the
+        // stop timestamp so that throughput can be estimated later.
+        if self.responses <= self.recvd && self.waiting.len() == 0 {
+            self.stop = cycles::rdtsc();
+            self.finished = true;
         }
     }
 }
