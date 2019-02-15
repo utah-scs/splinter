@@ -1,0 +1,18 @@
+#!/bin/bash
+server_mac=$(awk '/^server_mac/ { print $2; }' < nic_info)
+client_pci=$(awk '/^pci/ { print $2; }' < nic_info)
+client_mac=$(awk '/^mac/ { print $2; }' < nic_info)
+
+awk \
+	-v client_pci="$client_pci" \
+	-v client_mac="$client_mac" \
+	-v server_mac="$server_mac" \
+'
+	/^nic_pci/ { print "nic_pci = \"" client_pci "\""; next }
+	/^mac_address/ { print "mac_address = \"" client_mac "\""; next }
+	/^server_mac_address/ { print "server_mac_address = \"" server_mac "\""; next }
+	{ print }
+' < splinter/client.toml-example > splinter/client.toml
+
+echo "Created client.toml"
+
