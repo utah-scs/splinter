@@ -61,6 +61,8 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
     Box::new(move || {
         let mut obj = None;
         let mut t_table: u64 = 0;
+        let mut num: u32 = 0;
+        let mut ord: u32 = 0;
         let mut keys: Vec<u8> = Vec::with_capacity(30);
 
         {
@@ -79,27 +81,30 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             // Next, split the arguments into a view over the table identifier
             // (first eight bytes), and a view over the key to be looked up.
             // De-serialize the table identifier into a u64.
-            let (table, key) = args.split_at(8);
+            let (table, value) = args.split_at(8);
+            let (number, value) = value.split_at(4);
+            let (order, key) = value.split_at(4);
             keys.extend_from_slice(key);
 
-            t_table = 0
-                | table[0] as u64
-                | (table[1] as u64) << 8
-                | (table[2] as u64) << 16
-                | (table[3] as u64) << 24
-                | (table[4] as u64) << 32
-                | (table[5] as u64) << 40
-                | (table[6] as u64) << 48
-                | (table[7] as u64) << 56;
+            for (idx, e) in table.iter().enumerate() {
+                t_table |= (*e as u64) << (idx << 3);
+            }
+
+            for (idx, e) in number.iter().enumerate() {
+                num |= (*e as u32) << (idx << 3);
+            }
+
+            for (idx, e) in order.iter().enumerate() {
+                ord |= (*e as u32) << (idx << 3);
+            }
         }
 
-        let range: usize = 2;
-        let mut mul: u64 = 1;
+        let mut mul: u64 = 0;
 
-        for i in 0..range {
+        for i in 0..num {
             GET!(db, t_table, keys, obj);
 
-            if i == range - 1 {
+            if i == num - 1 {
                 match obj {
                     // If the object was found, use the response.
                     Some(val) => {
@@ -136,7 +141,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
 
         // Second half of the extension, which does .5 us of CPU works and returns.
         let start = cycles::rdtsc();
-        while cycles::rdtsc() - start < 5000 {}
+        while cycles::rdtsc() - start < ord as u64 {}
         db.resp(pack(&mul));
         return 0;
     })

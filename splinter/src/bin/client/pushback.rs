@@ -195,7 +195,7 @@ where
 
     // Payload for an invoke() based get operation. Required in order to avoid making intermediate
     // copies of the extension name, table id, and key.
-    payload_get: RefCell<Vec<u8>>,
+    payload_pushback: RefCell<Vec<u8>>,
 
     // Payload for an invoke() based put operation. Required in order to avoid making intermediate
     // copies of the extension name, table id, key length, key, and value.
@@ -234,10 +234,10 @@ where
     native_state: RefCell<HashMap<u64, u8>>,
 
     /// Number of keys to aggregate across. Required for the native case.
-    num: u8,
+    num: u32,
 
     /// Order of the final polynomial to be computed.
-    ord: u64,
+    ord: u32,
 }
 
 // Implementation of methods on PushbackRecv.
@@ -267,16 +267,22 @@ where
         reqs: u64,
         dst_ports: u16,
         masterservice: Arc<Master>,
-        number: u8,
-        order: u64,
+        number: u32,
+        order: u32,
     ) -> PushbackRecvSend<T> {
-        // The payload on an invoke() based get request consists of the extensions name ("get"),
-        // the table id to perform the lookup on, and the key to lookup.
-        let payload_len = "pushback".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
-        let mut payload_get = Vec::with_capacity(payload_len);
-        payload_get.extend_from_slice("pushback".as_bytes());
-        payload_get.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
-        payload_get.resize(payload_len, 0);
+        // The payload on an invoke() based get request consists of the extensions name ("pushback"),
+        // the table id to perform the lookup on, number of get(), number of CPU cycles and the key to lookup.
+        let payload_len = "pushback".as_bytes().len()
+            + mem::size_of::<u64>()
+            + mem::size_of::<u32>()
+            + mem::size_of::<u32>()
+            + config.key_len;
+        let mut payload_pushback = Vec::with_capacity(payload_len);
+        payload_pushback.extend_from_slice("pushback".as_bytes());
+        payload_pushback.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
+        payload_pushback.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(number.to_le()) });
+        payload_pushback.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(order.to_le()) });
+        payload_pushback.resize(payload_len, 0);
 
         // The payload on an invoke() based put request consists of the extensions name ("put"),
         // the table id to perform the lookup on, the length of the key to lookup, the key, and the
@@ -314,7 +320,7 @@ where
             requests: reqs,
             sent: 0,
             native: !config.use_invoke,
-            payload_get: RefCell::new(payload_get),
+            payload_pushback: RefCell::new(payload_pushback),
             payload_put: RefCell::new(payload_put),
             finished: false,
             outstanding: 0,
@@ -370,17 +376,18 @@ where
                 self.outstanding += 1;
             } else {
                 // Configured to issue invoke() RPCs.
-                let mut p_get = self.payload_get.borrow_mut();
+                let mut p_get = self.payload_pushback.borrow_mut();
                 let mut p_put = self.payload_put.borrow_mut();
 
                 // XXX Heavily dependent on how `Pushback` creates a key. Only the first four
                 // bytes of the key matter, the rest are zero. The value is always zero.
                 self.workload.borrow_mut().abc(
                     |tenant, key| {
-                        // First 16 bytes on the payload were already pre-populated with the
-                        // extension name (8 bytes), and the table id (8 bytes). Just write in the
-                        // first 4 bytes of the key.
-                        p_get[16..20].copy_from_slice(&key[0..4]);
+                        // First 24 bytes on the payload were already pre-populated with the
+                        // extension name (8 bytes), the table id (8 bytes), number of get()
+                        // (4 bytes), and number of CPU cycles compute(4 bytes). Just write
+                        // in the first 4 bytes of the key.
+                        p_get[24..28].copy_from_slice(&key[0..4]);
                         self.add_request(&p_get, tenant, 8, curr);
                         self.sender.send_invoke(tenant, 8, &p_get, curr)
                     },
@@ -507,10 +514,10 @@ where
                             let p = packet.parse_header::<GetResponse>();
                             let timestamp = p.get_header().common_header.stamp;
                             let count = *self.native_state.borrow().get(&timestamp).unwrap();
-                            if count == self.num {
+                            if count == self.num as u8 {
                                 self.recvd += 1;
                                 let start = cycles::rdtsc();
-                                while cycles::rdtsc() - start < self.ord {}
+                                while cycles::rdtsc() - start < self.ord as u64 {}
                                 self.latencies.push(cycles::rdtsc() - timestamp);
                                 self.native_state.borrow_mut().remove(&timestamp);
                                 self.outstanding -= 1;
@@ -542,6 +549,13 @@ where
     }
 
     fn execute_task(&mut self) {
+        // Don't do anything after all responses have been received.
+        if self.responses <= self.recvd && self.waiting.len() == 0 {
+            self.finished = true;
+            return;
+        }
+
+        //Execute the pushed-back task.
         let manager = self.waiting.pop_front();
         if let Some(mut manager) = manager {
             let (taskstate, _time) = manager.execute_task();
@@ -561,6 +575,11 @@ where
                         );
                         self.pushback_completed = 0;
                     }
+                }
+                // The moment all response packets have been received, set the value of the
+                // stop timestamp so that throughput can be estimated later.
+                if self.responses <= self.recvd && self.waiting.len() == 0 {
+                    self.stop = cycles::rdtsc();
                 }
             }
         }
@@ -644,8 +663,8 @@ fn setup_send_recv<S>(
     }
 
     // Pushback compute size.
-    let num = config.num_aggr as u8;
-    let ord = config.order as u64;
+    let num = config.num_aggr as u32;
+    let ord = config.order as u32;
 
     // Add the receiver to a netbricks pipeline.
     match scheduler.add_task(PushbackRecvSend::new(

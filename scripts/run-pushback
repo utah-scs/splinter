@@ -38,6 +38,7 @@ then
     RUST_LOG=debug ./target/release/pushback >> ../samples.temp
 
     # Calculate the total throughput.
+    cat ../samples.temp | grep "PUSHBACK"
     thrpt=$(cat ../samples.temp | grep "PUSHBACK Throughput" | \
             awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
 
@@ -74,10 +75,10 @@ rate=$(cat client.toml | grep "req_rate" | awk '{ print $NF }')
 
 # The different request rates that the PUSHBACK client will be configured and run
 # with.
-sizes=(2)
+sizes=(4)
 
 # The order of the aggregate.
-order=(0 1000 2000 3000 4000 5000 6000 7000 8000)
+order=(0 1000 2000 3000 4000 5000 6000 7000 8000 9000 10000)
 
 # Header for the output file. Required inorder to plot the results.
 echo "Offered ASize Order 50 99 Tenants TSkew Cores Thrpt" > ../pushback_invoke_"$invoke".data
