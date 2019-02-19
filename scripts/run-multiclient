@@ -17,44 +17,77 @@
 
 run() {
     # Check for a clients.txt file with client related configuration.
-    if [[ ! -f clients.txt ]]; then
-        echo "Missing clients.txt file in the current directory."
-        exit -1
+    if [ -z !"$1" ]; then
+        echo "Specify the extension name to run on the clients"
+        exit 1
     fi
+    
+    extname=$1
     # The client is using the rate just to wait for Total/rate time.
     pssh -h clients.txt -t 0 -i "cd splinter; sudo ./scripts/run-$extname 250000" | \
     grep --color=always -e SUCCESS -e FAILURE -e Median
 }
 
 clean() {
-    if [ -z !"$2" ]; then
-        echo "Specify the extension name to kill the client"
+    if [ -z !"$1" ]; then
+        echo "Specify the extension name to kill on the clients"
         exit 1
     fi
+    
+    extname=$1
     echo "sudo kill -9 `pidof $extname`"
     pssh -h clients.txt -t 0 -i "sudo kill -9 `pidof $extname`"
 }
 
+wipe() {
+    echo "rm -rf ./splinter"
+    pssh -h clients.txt -t 0 -i "rm -rf ./splinter"
+    pssh -h server.txt -t 0 -i "rm -rf ./splinter"
+}
+
 display_help() {
-    echo "Usage: $0 {run extname|clean extname |setup flag}" >&2
+    echo "Usage: $0 {run extname |clean extname |wipe |setup flag [branch verbose]}" >&2
     exit 1
 }
 
 setup() {
-    # Check for a clients.txt file with client related configuration.
-    if [[ ! -f clients.txt ]]; then
-        echo "Missing clients.txt file in the current directory."
-        exit -1
+    if [ -z !"$1" ]; then
+        echo "Specify the flag for setup.py"
+        exit 1
+    fi
+    flag=$1
+
+    if [ -z !"$2" ]; then
+        branch="master"
+    else
+        case "$2" in
+            "current")
+                branch=${branch git branch | grep \* | cut -d ' ' -f2}
+                ;;
+            *)
+                branch=$2
+                ;;
+        esac
+        git push origin $branch:$branch
     fi
 
-    if [[ ! -f server.txt ]]; then
-        echo "Missing server.txt file in the current directory."
-        exit -1
-    fi
+    verbose=$3
+    case "$verbose" in
+        "verbose")
+            output_routing=""
+            ;;
+        "error")
+            output_routing="1> /dev/null"
+            ;;
+        *)
+            output_routing="&> /dev/null"
+            ;;
+    esac
 
     # Clone the git repository and setup the environment.
-    pssh -h server.txt -t 0 -i "git clone https://github.com/utah-scs/splinter.git" &> /dev/null
-    pssh -h server.txt -t 0 -i "cd splinter; ./scripts/setup.py --$extname;" &> /dev/null
+    pssh -h server.txt -t 0 -i "git clone https://github.com/utah-scs/splinter.git" $output_routing
+    pssh -h server.txt -t 0 -i "git checkout $branch" $output_routing
+    pssh -h server.txt -t 0 -i "cd splinter; ./scripts/setup.py --$flag;" $output_routing
     pssh -h server.txt -t 0 -i "cd splinter; cat nic_info" > nic_info
     server_pci=$(awk '/^pci/ { print $2; }' < nic_info)
     server_mac=$(awk '/^mac/ { print $2; }' < nic_info)
@@ -64,38 +97,49 @@ setup() {
     # Create server.toml file.
     pssh -h server.txt -t 0 -i "cd splinter; cp db/server.toml-example db/server.toml; \
                                  sed -E -i 's/[0-9a-fA-F:]{17}/$server_mac/' db/server.toml; \
-                                 sed -E -i 's/0000:04:00.1/$server_pci/' db/server.toml" &> /dev/null
+                                 sed -E -i 's/0000:04:00.1/$server_pci/' db/server.toml" $output_routing
     echo "server.toml created"
 
     # Clone the git repository and setup the environment.
-    pssh -h clients.txt -t 0 -i "git clone https://github.com/utah-scs/splinter.git" &> /dev/null
-    pssh -h clients.txt -t 0 -i "cd splinter; ./scripts/setup.py --$extname;" &> /dev/null
+    pssh -h clients.txt -t 0 -i "git clone https://github.com/utah-scs/splinter.git" $output_routing
+    pssh -h server.txt -t 0 -i "git checkout $branch" $output_routing
+    pssh -h clients.txt -t 0 -i "cd splinter; ./scripts/setup.py --$flag;" $output_routing
     echo "Client setup completed"
 
     # Create client.toml file.
     pssh -h clients.txt -t 0 -i "cd splinter; \
-                                 echo "server_mac: "$server_mac >> nic_info; \
-                                 ./scripts/create-client-toml" &> /dev/null
+                                 echo \"server_mac: \"$server_mac >> nic_info; \
+                                 ./scripts/create-client-toml" $output_routing
+    echo "client.toml created"
 }
 
-if [ $# -ne 2 ]; then
-    display_help
+
+# Check for a clients.txt file with client related configuration.
+if [[ ! -f clients.txt ]]; then
+    echo "Missing clients.txt file in the current directory."
     exit -1
 fi
 
-extname=$2
+if [[ ! -f server.txt ]]; then
+    echo "Missing server.txt file in the current directory."
+    exit -1
+fi
 
 case "$1" in
-    run)
-        run # calling function run()
+    "run")
+        run $2
         ;;
-    clean)
-        clean # calling function clean()
+    "clean")
+        clean $2
         ;;
-    setup)
-        setup # setup --full
+    "wipe")
+        wipe
+        ;;
+    "setup")
+        setup $2 $3 
         ;;
     *)
         display_help
+        ;;
 esac
 
