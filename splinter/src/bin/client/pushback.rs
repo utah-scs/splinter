@@ -53,6 +53,11 @@ use zipf::ZipfDistribution;
 // Flag to indicate that the client has finished sending and receiving the packets.
 static mut FINISHED: bool = false;
 
+// Flag to indicate that the client can generate Compute Request based on some distribution.
+static mut ORD_DIST: bool = false;
+static ORDER: usize = 10000;
+static SKEW: f64 = 0.5;
+
 // PUSHBACK benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
 // share the same benchmark instance. Each thread can call `abc()` which
@@ -67,6 +72,7 @@ pub struct Pushback {
     rng: Box<Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
+    order_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,
     value_buf: Vec<u8>,
 }
@@ -111,6 +117,9 @@ impl Pushback {
                 ZipfDistribution::new(n_tenants as usize, tenant_skew)
                     .expect("Couldn't create tenant RNG."),
             ),
+            order_rng: Box::new(
+                ZipfDistribution::new(ORDER, SKEW).expect("Couldn't create tenant RNG."),
+            ),
             key_buf: key_buf,
             value_buf: value_buf,
         }
@@ -128,8 +137,8 @@ impl Pushback {
     //  number of gets it performed, and the number of puts it performed.
     pub fn abc<G, P, R>(&mut self, mut get: G, mut put: P) -> R
     where
-        G: FnMut(u32, &[u8]) -> R,
-        P: FnMut(u32, &[u8], &[u8]) -> R,
+        G: FnMut(u32, &[u8], u32) -> R,
+        P: FnMut(u32, &[u8], &[u8], u32) -> R,
     {
         let is_get = (self.rng.gen::<u32>() % 100) >= self.put_pct as u32;
 
@@ -141,10 +150,12 @@ impl Pushback {
         let k: [u8; 4] = unsafe { transmute(k.to_le()) };
         self.key_buf[0..mem::size_of::<u32>()].copy_from_slice(&k);
 
+        let o = self.order_rng.sample(&mut self.rng) as u32;
+
         if is_get {
-            get(t, self.key_buf.as_slice())
+            get(t, self.key_buf.as_slice(), o)
         } else {
-            put(t, self.key_buf.as_slice(), self.value_buf.as_slice())
+            put(t, self.key_buf.as_slice(), self.value_buf.as_slice(), o)
         }
     }
 }
@@ -369,8 +380,8 @@ where
             if self.native == true {
                 // Configured to issue native RPCs, issue a regular get()/put() operation.
                 self.workload.borrow_mut().abc(
-                    |tenant, key| self.sender.send_get(tenant, 1, key, curr),
-                    |tenant, key, val| self.sender.send_put(tenant, 1, key, val, curr),
+                    |tenant, key, _ord| self.sender.send_get(tenant, 1, key, curr),
+                    |tenant, key, val, _ord| self.sender.send_put(tenant, 1, key, val, curr),
                 );
                 self.native_state.borrow_mut().entry(curr).or_insert(1);
                 self.outstanding += 1;
@@ -382,7 +393,13 @@ where
                 // XXX Heavily dependent on how `Pushback` creates a key. Only the first four
                 // bytes of the key matter, the rest are zero. The value is always zero.
                 self.workload.borrow_mut().abc(
-                    |tenant, key| {
+                    |tenant, key, ord| {
+                        unsafe {
+                            if ORD_DIST {
+                                p_get[20..24]
+                                    .copy_from_slice(&{ transmute::<u32, [u8; 4]>(ord.to_le()) });
+                            }
+                        }
                         // First 24 bytes on the payload were already pre-populated with the
                         // extension name (8 bytes), the table id (8 bytes), number of get()
                         // (4 bytes), and number of CPU cycles compute(4 bytes). Just write
@@ -391,7 +408,7 @@ where
                         self.add_request(&p_get, tenant, 8, curr);
                         self.sender.send_invoke(tenant, 8, &p_get, curr)
                     },
-                    |tenant, key, _val| {
+                    |tenant, key, _val, _ord| {
                         // First 18 bytes on the payload were already pre-populated with the
                         // extension name (8 bytes), the table id (8 bytes), and the key length (2
                         // bytes). Just write in the first 4 bytes of the key. The value is anyway
