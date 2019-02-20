@@ -104,6 +104,9 @@ do
         thrpt=$(cat ../samples.temp | grep "PUSHBACK Throughput" | \
             awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
 
+        # Print the panic!() message on the console to avoid any error.
+        cat ../samples.temp | grep "panicked"
+
         # Print final numbers to a file.
         cat ../samples.temp | grep ">>>" | \
             awk "{ print $rate, $size, $ord, \$2, \$3, $tenants, $tenant_skew, $cores, $thrpt }" >> \

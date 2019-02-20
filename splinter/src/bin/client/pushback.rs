@@ -600,7 +600,7 @@ where
         );
 
         if self.stop == 0 {
-            panic!("The client thread is forced to stop at wrong time");
+            panic!("The client thread received only {} packets", self.recvd);
         }
 
         // Calculate & print median & tail latency only on the master thread.
@@ -767,7 +767,7 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
     }
-    std::thread::sleep(std::time::Duration::from_secs(10));
+    std::thread::sleep(std::time::Duration::from_secs(100));
 
     // Stop the client.
     net_context.stop();
