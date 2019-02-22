@@ -20,10 +20,11 @@ db/server.toml
 splinter/client.toml
 nic_info
 client_nic_info
-clients.txt
-server.txt
 
 # Ignore NetBricks objects
 net/native/*
 net/3rdparty/dpdk/*
 net/3rdparty/dpdk.tar.gz
+
+# Ignore vscode files
+.vscode/*
