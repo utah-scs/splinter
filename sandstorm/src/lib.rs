@@ -37,6 +37,7 @@ pub use std::time;
 pub use std::vec;
 
 extern crate byteorder;
+extern crate hashbrown;
 extern crate libloading;
 extern crate spin;
 pub use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};

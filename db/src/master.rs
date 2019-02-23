@@ -13,7 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::mem::{size_of, transmute};

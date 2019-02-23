@@ -14,7 +14,7 @@
  */
 
 use std::sync::Arc;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use super::table::Table;
 
