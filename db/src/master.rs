@@ -617,7 +617,6 @@ impl Master {
         // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
         // reference to Master in the generator below.
         let tenant = self.get_tenant(tenant_id);
-        let alloc = self.heap.clone();
 
         //let gen = Box::new(move || {
         let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
@@ -640,7 +639,7 @@ impl Master {
                 // status of the rpc.
                 .and_then(| object | {
                                 status = RpcStatus::StatusInternalError;
-                                alloc.resolve(object)
+                                self.heap.resolve(object)
                             })
                 // If the value was obtained, then write to the response packet
                 // and update the status of the rpc.
@@ -861,7 +860,6 @@ impl Master {
         // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
         // reference to Master in the generator below.
         let tenant = self.get_tenant(tenant_id);
-        let alloc = self.heap.clone();
 
         //let gen = Box::new(move || {
         let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
@@ -883,7 +881,7 @@ impl Master {
             // If there is a value, then write it in.
             if val.len() > 0 {
                 status = RpcStatus::StatusInternalError;
-                let _result = alloc.object(tenant_id, table_id, key, val)
+                let _result = self.heap.object(tenant_id, table_id, key, val)
                                     // If the allocation succeeds, update the
                                     // status of the rpc, and insert the object
                                     // into the table.
@@ -1104,7 +1102,6 @@ impl Master {
         // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
         // reference to Master in the generator below.
         let tenant = self.get_tenant(tenant_id);
-        let alloc = self.heap.clone();
 
         let mut n_recs: u32 = 0;
         let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
@@ -1135,7 +1132,7 @@ impl Master {
                 // Lookup the key, and add it to the response payload.
                 let res = table
                     .get(key)
-                    .and_then(|object| alloc.resolve(object))
+                    .and_then(|object| self.heap.resolve(object))
                     .and_then(|(_k, value)| res.add_to_payload_tail(value.len(), &value[..]).ok());
 
                 // If the current lookup failed, then stop all lookups.
@@ -1388,6 +1385,7 @@ impl Service for Master {
         return self.invoke(req, res);
     }
 
+    #[inline]
     fn service_native(
         &self,
         op: OpCode,

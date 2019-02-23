@@ -41,7 +41,7 @@ use sandstorm::common;
 
 /// This flag enables or disables fast path for native requests.
 /// Later, it will be set from the server.toml file probably.
-const FAST_PATH: bool = false;
+pub const FAST_PATH: bool = false;
 
 /// This is a thread local variable to count the number of occurrences
 /// of cycle counting to average for 1 M events.

@@ -36,7 +36,7 @@ use db::e2d2::scheduler::*;
 
 use db::config;
 use db::cycles::*;
-use db::dispatch::Dispatch;
+use db::dispatch::{Dispatch, FAST_PATH};
 use db::install::Installer;
 use db::master::Master;
 use db::sched::RoundRobin;
@@ -259,6 +259,11 @@ fn main() {
     // Basic setup and initialization.
     db::env_logger::init().expect("ERROR: failed to initialize logger!");
 
+    if FAST_PATH {
+        info!("Fast path for native operations is ENABLED");
+    } else {
+        info!("Fast path for native operations is DISABLED");
+    }
     let config = config::ServerConfig::load();
     info!("Starting up Sandstorm server with config {:?}", config);
 
