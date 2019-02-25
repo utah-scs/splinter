@@ -56,7 +56,7 @@ pub struct Master {
     pub extensions: ExtensionManager,
 
     // Manager of the table heap. Required to allow writes to the database.
-    heap: Arc<Allocator>,
+    heap: Allocator,
 }
 
 // Implementation of methods on Master.
@@ -104,7 +104,7 @@ impl Master {
                 RwLock::new(HashMap::new()),
             ],
             extensions: ExtensionManager::new(),
-            heap: Arc::new(Allocator::new()),
+            heap: Allocator::new(),
         }
     }
 
@@ -478,7 +478,7 @@ impl Master {
         // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
         // reference to Master in the generator below.
         let tenant = self.get_tenant(tenant_id);
-        let alloc = self.heap.clone();
+        let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
         let gen = Box::new(move || {
@@ -502,6 +502,7 @@ impl Master {
                 // status of the rpc.
                 .and_then(| object | {
                                 status = RpcStatus::StatusInternalError;
+                                let alloc = unsafe { Box::from_raw(alloc as *mut Allocator) };
                                 alloc.resolve(object)
                             })
                 // If the value was obtained, then write to the response packet
@@ -753,7 +754,7 @@ impl Master {
         // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
         // reference to Master in the generator below.
         let tenant = self.get_tenant(tenant_id);
-        let alloc = self.heap.clone();
+        let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
         let gen = Box::new(move || {
@@ -776,6 +777,7 @@ impl Master {
                 // If there is a value, then write it in.
                 if val.len() > 0 {
                     status = RpcStatus::StatusInternalError;
+                    let alloc = unsafe { Box::from_raw(alloc as *mut Allocator) };
                     let _result = alloc.object(tenant_id, table_id, key, val)
                                     // If the allocation succeeds, update the
                                     // status of the rpc, and insert the object
@@ -969,7 +971,7 @@ impl Master {
         // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
         // reference to Master in the generator below.
         let tenant = self.get_tenant(tenant_id);
-        let alloc = self.heap.clone();
+        let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
         let gen = Box::new(move || {
@@ -1000,6 +1002,7 @@ impl Master {
                     }
 
                     // Lookup the key, and add it to the response payload.
+                    let alloc = unsafe { Box::from_raw(alloc as *mut Allocator) };
                     let res = table
                         .get(key)
                         .and_then(|object| alloc.resolve(object))
@@ -1233,6 +1236,8 @@ impl Master {
 
         // Check if the request was issued by a valid tenant.
         if let Some(tenant) = self.get_tenant(tenant_id) {
+            let alloc = &self.heap as *const Allocator;
+            let alloc = unsafe { Box::from_raw(alloc as *mut Allocator) };
             // If the tenant is valid, check if the extension exists inside the database after
             // setting the RPC status appropriately.
             status = RpcStatus::StatusInvalidExtension;
@@ -1243,7 +1248,7 @@ impl Master {
                     args_length,
                     res,
                     tenant,
-                    Arc::clone(&self.heap),
+                    alloc,
                 ));
 
                 return Ok(Box::new(Container::new(TaskPriority::REQUEST, db, ext)));

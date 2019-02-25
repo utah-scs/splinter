@@ -64,7 +64,7 @@ pub struct Context {
 
     // The allocator that will be used to allow the extension to write data to
     // one of it's tables.
-    heap: Arc<Allocator>,
+    heap: Box<Allocator>,
 
     // The total number of bytes allocated by the extension so far
     // (on the table heap).
@@ -103,7 +103,7 @@ impl Context {
         args_len: usize,
         res: Packet<InvokeResponse, EmptyMetadata>,
         tenant: Arc<Tenant>,
-        alloc: Arc<Allocator>,
+        alloc: Box<Allocator>,
     ) -> Context {
         Context {
             request: req,
