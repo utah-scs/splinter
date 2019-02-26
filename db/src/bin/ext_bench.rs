@@ -42,7 +42,7 @@ fn main() {
     let start = PreciseTime::now();
     for i in 0..n {
         let ret = ext_manager.load(
-                            &format!("../ext/test/target/release/deps/libtest{}.so", i),
+                            &format!("../ext/test/target/release/libtest{}.so", i),
                             0, &format!("test{}", i),
                             );
         if ret == false {
@@ -96,7 +96,7 @@ fn main() {
     }
 
     let ret = ext_manager.load(
-                            "../ext/test/target/release/deps/libtest.so",
+                            "../ext/test/target/release/libtest.so",
                             0, "test",
                             );
     if ret == false {
