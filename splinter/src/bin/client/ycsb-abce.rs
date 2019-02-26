@@ -145,7 +145,7 @@ impl Ycsb {
 }
 
 /// Receives responses to Ycsb requests sent out by YcsbSend.
-struct YcsbABC<T>
+struct YcsbABCE<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
@@ -196,6 +196,14 @@ where
     // copies of the extension name, table id, key length, key, and value.
     payload_put: RefCell<Vec<u8>>,
 
+    // Payload for an invoke() based range scan operation. Required in order to avoid making
+    // intermediate copies of the extension name, table id, range value and key.
+    payload_scan: RefCell<Vec<u8>>,
+
+    // If true, the client generates the range scan requests. The client will generate (100-put_pct)
+    // percentage of scan queries and remaining put() operations.
+    enable_scan: bool,
+
     // Flag to indicate if the procedure is finished or not.
     finished: bool,
 
@@ -205,7 +213,7 @@ where
 }
 
 // Implementation of methods on YcsbRecv.
-impl<T> YcsbABC<T>
+impl<T> YcsbABCE<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
@@ -230,7 +238,7 @@ where
         tx_port: CacheAligned<PortQueue>,
         reqs: u64,
         dst_ports: u16,
-    ) -> YcsbABC<T> {
+    ) -> YcsbABCE<T> {
         // The payload on an invoke() based get request consists of the extensions name ("get"),
         // the table id to perform the lookup on, and the key to lookup.
         let payload_len = "get".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
@@ -255,7 +263,20 @@ where
         });
         payload_put.resize(payload_len, 0);
 
-        YcsbABC {
+        // Payload for an invoke() based range scan operation. Required in order to avoid making
+        // intermediate copies of the extension name, table id, range value and key.
+        let range = config.scan_range;
+        let payload_len = "scan".as_bytes().len()
+            + mem::size_of::<u64>()
+            + mem::size_of::<u32>()
+            + config.key_len;
+        let mut payload_scan = Vec::with_capacity(payload_len);
+        payload_scan.extend_from_slice("scan".as_bytes());
+        payload_scan.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
+        payload_scan.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(range.to_le()) });
+        payload_scan.resize(payload_len, 0);
+
+        YcsbABCE {
             receiver: dispatch::Receiver::new(rx_port),
             responses: resps,
             start: cycles::rdtsc(),
@@ -278,6 +299,8 @@ where
             native: !config.use_invoke,
             payload_get: RefCell::new(payload_get),
             payload_put: RefCell::new(payload_put),
+            payload_scan: RefCell::new(payload_scan),
+            enable_scan: config.enable_scan,
             finished: false,
             outstanding: 0,
         }
@@ -306,16 +329,27 @@ where
                 // Configured to issue invoke() RPCs.
                 let mut p_get = self.payload_get.borrow_mut();
                 let mut p_put = self.payload_put.borrow_mut();
+                let mut p_scan = self.payload_scan.borrow_mut();
 
                 // XXX Heavily dependent on how `Ycsb` creates a key. Only the first four
                 // bytes of the key matter, the rest are zero. The value is always zero.
                 self.workload.borrow_mut().abc(
                     |tenant, key| {
-                        // First 11 bytes on the payload were already pre-populated with the
-                        // extension name (3 bytes), and the table id (8 bytes). Just write in the
-                        // first 4 bytes of the key.
-                        p_get[11..15].copy_from_slice(&key[0..4]);
-                        self.sender.send_invoke(tenant, 3, &p_get, curr)
+                        // If enable_scan is true then generate request for scan() operation else
+                        // generate request for get() operation.
+                        if !self.enable_scan {
+                            // First 11 bytes on the payload were already pre-populated with the
+                            // extension name (3 bytes), and the table id (8 bytes). Just write in the
+                            // first 4 bytes of the key.
+                            p_get[11..15].copy_from_slice(&key[0..4]);
+                            self.sender.send_invoke(tenant, 3, &p_get, curr)
+                        } else {
+                            // First 16 bytes on the payload were already pre-populated with the
+                            // extension name (4 bytes), the table id (8 bytes) and range order
+                            // (4 bytes). Just write in the first 4 bytes of the key.
+                            p_scan[16..20].copy_from_slice(&key[0..4]);
+                            self.sender.send_invoke(tenant, 4, &p_scan, curr)
+                        }
                     },
                     |tenant, key, _val| {
                         // First 13 bytes on the payload were already pre-populated with the
@@ -335,6 +369,7 @@ where
     fn recv(&mut self) {
         // Don't do anything after all responses have been received.
         if self.responses <= self.recvd {
+            self.finished = true;
             return;
         }
 
@@ -343,46 +378,45 @@ where
         if let Some(mut packets) = self.receiver.recv_res() {
             while let Some(packet) = packets.pop() {
                 self.recvd += 1;
+                let curr = cycles::rdtsc();
+                match self.native {
+                    // The response corresponds to an invoke() RPC.
+                    false => {
+                        let p = packet.parse_header::<InvokeResponse>();
+                        self.latencies
+                            .push(curr - p.get_header().common_header.stamp);
+                        p.free_packet();
+                        self.outstanding -= 1;
+                    }
 
-                // Measure latency on the master client after the first 2 million requests.
-                // The start timestamp is present on the RPC response header.
-                if self.recvd > 2 * 1000 * 1000 && self.master {
-                    let curr = cycles::rdtsc();
+                    // The response corresponds to a get() or put() RPC.
+                    // The opcode on the response identifies the RPC type.
+                    true => match parse_rpc_opcode(&packet) {
+                        OpCode::SandstormGetRpc => {
+                            if !self.enable_scan {
+                                let p = packet.parse_header::<GetResponse>();
+                                self.latencies
+                                    .push(curr - p.get_header().common_header.stamp);
+                                p.free_packet();
+                            } else {
+                                //TODO: Implement range-scan for native case as part of ycsb-e benchmark.
 
-                    match self.native {
-                        // The response corresponds to an invoke() RPC.
-                        false => {
-                            let p = packet.parse_header::<InvokeResponse>();
+                                // If scan is completed then Measure latency else generate a get() request
+                                // for next key with timestamp of the first request in the scan() operation.
+                            }
+                            self.outstanding -= 1;
+                        }
+
+                        OpCode::SandstormPutRpc => {
+                            let p = packet.parse_header::<PutResponse>();
                             self.latencies
                                 .push(curr - p.get_header().common_header.stamp);
                             p.free_packet();
                             self.outstanding -= 1;
                         }
 
-                        // The response corresponds to a get() or put() RPC.
-                        // The opcode on the response identifies the RPC type.
-                        true => match parse_rpc_opcode(&packet) {
-                            OpCode::SandstormGetRpc => {
-                                let p = packet.parse_header::<GetResponse>();
-                                self.latencies
-                                    .push(curr - p.get_header().common_header.stamp);
-                                p.free_packet();
-                                self.outstanding -= 1;
-                            }
-
-                            OpCode::SandstormPutRpc => {
-                                let p = packet.parse_header::<PutResponse>();
-                                self.latencies
-                                    .push(curr - p.get_header().common_header.stamp);
-                                p.free_packet();
-                                self.outstanding -= 1;
-                            }
-
-                            _ => packet.free_packet(),
-                        },
-                    }
-                } else {
-                    packet.free_packet();
+                        _ => packet.free_packet(),
+                    },
                 }
             }
         }
@@ -396,14 +430,14 @@ where
 }
 
 // Implementation of the `Drop` trait on YcsbRecv.
-impl<T> Drop for YcsbABC<T>
+impl<T> Drop for YcsbABCE<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
     fn drop(&mut self) {
         // Calculate & print the throughput for all client threads.
         println!(
-            "Ycsb Throughput {}",
+            "YCSB Throughput {}",
             self.recvd as f64 / cycles::to_seconds(self.stop - self.start)
         );
 
@@ -436,7 +470,7 @@ where
 }
 
 // Executable trait allowing YcsbRecv to be scheduled by Netbricks.
-impl<T> Executable for YcsbABC<T>
+impl<T> Executable for YcsbABCE<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
@@ -470,7 +504,7 @@ fn setup_send_recv<S>(
     }
 
     // Add the receiver to a netbricks pipeline.
-    match scheduler.add_task(YcsbABC::new(
+    match scheduler.add_task(YcsbABCE::new(
         ports[0].clone(),
         34 * 1000 * 1000 as u64,
         master,
@@ -481,7 +515,7 @@ fn setup_send_recv<S>(
     )) {
         Ok(_) => {
             info!(
-                "Successfully added YcsbABC with rx-tx queue {}.",
+                "Successfully added YcsbABCE with rx-tx queue {}.",
                 ports[0].rxq()
             );
         }
@@ -556,7 +590,7 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
     }
-    std::thread::sleep(std::time::Duration::from_secs(100));
+    std::thread::sleep(std::time::Duration::from_secs(11));
 
     // Stop the client.
     net_context.stop();

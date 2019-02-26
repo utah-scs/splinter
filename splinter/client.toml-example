@@ -64,6 +64,14 @@ skew = 0.99
 # The percentage of operations that are puts/writes.
 put_pct = 5
 
+# If true, the client will generate 100-put_pct percentage range scans requests and
+# put_pct of put() operations.
+enable_scan = false
+
+# The number of records the range scan operation will scan, starting from the key
+# generated for get() operation using zipf distribution; only when enable_scan=true.
+scan_range = 10
+
 ############################### AGGREGATE CLIENT CONFIG ########################
 
 # The number of records to aggregate across.

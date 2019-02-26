@@ -143,6 +143,8 @@ pub struct ClientConfig {
     pub value_len: usize,
     pub n_keys: usize,
     pub put_pct: usize,
+    pub enable_scan: bool,
+    pub scan_range: u32,
     pub skew: f64,
     pub tenant_skew: f64,
 

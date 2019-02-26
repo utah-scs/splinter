@@ -345,6 +345,12 @@ impl Master {
         if self.extensions.load(name, tenant, "pushback") == false {
             panic!("Failed to load pushback() extension.");
         }
+
+        // Load the pushback() extension.
+        let name = "../ext/scan/target/release/libscan.so";
+        if self.extensions.load(name, tenant, "scan") == false {
+            panic!("Failed to load scan() extension.");
+        }
     }
 
     /// Loads the get(), put(), and tao() extensions once, and shares them across multiple tenants.

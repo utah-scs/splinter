@@ -37,7 +37,7 @@ name = "pushback"
 path = "src/bin/client/pushback.rs"
 
 [[bin]]
-name = "ycsb-abc"
+name = "ycsb-abce"
 path = "src/bin/client/ycsb-abce.rs"
 
 [dependencies]
