@@ -9,6 +9,7 @@ all: netbricks
 	(cd ext/long; cargo build --release)
 	(cd ext/aggregate; cargo build --release)
 	(cd ext/pushback; cargo build --release)
+	(cd ext/scan; cargo build --release)
 
 .PHONY: so-test
 
@@ -42,5 +43,6 @@ clean:
 	(cd ext/long; cargo clean)
 	(cd ext/aggregate; cargo clean)
 	(cd ext/pushback; cargo clean)
+	(cd ext/scan; cargo clean)
 	(cd sandstorm; cargo clean)
 	(cd net; ./build.sh clean)
