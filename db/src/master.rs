@@ -502,7 +502,7 @@ impl Master {
                 // status of the rpc.
                 .and_then(| object | {
                                 status = RpcStatus::StatusInternalError;
-                                let alloc = unsafe { Box::from_raw(alloc as *mut Allocator) };
+                                let alloc: &Allocator = unsafe { transmute(alloc) };
                                 alloc.resolve(object)
                             })
                 // If the value was obtained, then write to the response packet
@@ -777,7 +777,7 @@ impl Master {
                 // If there is a value, then write it in.
                 if val.len() > 0 {
                     status = RpcStatus::StatusInternalError;
-                    let alloc = unsafe { Box::from_raw(alloc as *mut Allocator) };
+                    let alloc: &Allocator = unsafe { transmute(alloc) };
                     let _result = alloc.object(tenant_id, table_id, key, val)
                                     // If the allocation succeeds, update the
                                     // status of the rpc, and insert the object
@@ -1002,7 +1002,7 @@ impl Master {
                     }
 
                     // Lookup the key, and add it to the response payload.
-                    let alloc = unsafe { Box::from_raw(alloc as *mut Allocator) };
+                    let alloc: &Allocator = unsafe { transmute(alloc) };
                     let res = table
                         .get(key)
                         .and_then(|object| alloc.resolve(object))
