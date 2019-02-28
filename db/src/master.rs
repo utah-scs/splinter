@@ -37,6 +37,7 @@ use e2d2::interface::Packet;
 use spin::RwLock;
 
 use sandstorm::common::{TableId, TenantId, PACKET_UDP_LEN};
+use sandstorm::db::DB;
 use sandstorm::ext::*;
 
 // The number of buckets in the `tenants` hashtable inside of Master.
@@ -1237,7 +1238,7 @@ impl Master {
         // Check if the request was issued by a valid tenant.
         if let Some(tenant) = self.get_tenant(tenant_id) {
             let alloc = &self.heap as *const Allocator;
-            let alloc = unsafe { Box::from_raw(alloc as *mut Allocator) };
+            let alloc = unsafe { &*alloc };
             // If the tenant is valid, check if the extension exists inside the database after
             // setting the RPC status appropriately.
             status = RpcStatus::StatusInvalidExtension;
@@ -1250,8 +1251,9 @@ impl Master {
                     tenant,
                     alloc,
                 ));
+                let gen = ext.get(Rc::clone(&db) as Rc<DB>);
 
-                return Ok(Box::new(Container::new(TaskPriority::REQUEST, db, ext)));
+                return Ok(Box::new(Container::new(TaskPriority::REQUEST, db, gen)));
             }
         }
 
