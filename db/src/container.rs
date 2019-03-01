@@ -75,7 +75,7 @@ impl<'a> Container<'a> {
     /// A container that when scheduled, runs the extension.
     pub fn new(
         prio: TaskPriority,
-        context: Rc<Context<'static>>,
+        context: Rc<Context<'a>>,
         gen: Box<Generator<Yield = u64, Return = u64>>,
     ) -> Container {
         // The generator is initialized to a dummy. The first call to run() will
