@@ -13,7 +13,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+//! This crate is useful in writing a new client and handling pushback
+//! extension on the client side.
 #![feature(generators, generator_trait, asm)]
+#![warn(missing_docs)]
 
 extern crate db;
 extern crate sandstorm;
@@ -25,6 +28,10 @@ mod container;
 
 // Public modules for binaries.
 #[allow(unused_imports)]
+/// Needed to send and receive the packets on the client side.
 pub mod dispatch;
+/// Needed to handle and resume the pushback extension on the client side.
 pub mod manager;
+/// Proxy to the database on the client side, searches the local cache for
+/// data and if not present on the cache then issues a request to the server.
 pub mod proxy;

@@ -53,6 +53,11 @@ fn init() -> u64 {
     }
 }
 
+/// Return the CPU cycles per second for the executing processor.
+///
+/// # Return
+///
+/// Number of CPU cycles per second.
 pub fn cycles_per_second() -> u64 {
     unsafe {
         INIT.call_once(|| {
@@ -73,6 +78,13 @@ pub fn rdtsc() -> u64 {
     }
 }
 
+/// Converts the number of CPU cycles to seconds.
+///
+/// # Arguments
+/// *`cycles`: Number of CPU cycles.
+///
+/// # Return
+/// Number of seconds corresponding to the given CPU cycles.
 pub fn to_seconds(cycles: u64) -> f64 {
     cycles as f64 / cycles_per_second() as f64
 }

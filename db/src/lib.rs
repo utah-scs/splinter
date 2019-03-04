@@ -13,7 +13,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+//! This crate contains the functionality needed to implement the server.
 #![feature(generators, generator_trait, asm)]
+#![warn(missing_docs)]
 
 extern crate libloading;
 extern crate sandstorm;
@@ -39,16 +41,27 @@ mod service;
 mod tenant;
 
 // Public modules for binaries.
+/// This module is needed to parse the server and config file.
 pub mod config;
+/// This module is needed to add cycles counters at various place in the code.
 #[allow(dead_code)]
 #[allow(unused_imports)]
 pub mod cyclecounter;
+/// This module provides functionality to manipulate CPU cycle ticks.
 pub mod cycles;
+/// This module provides functionality to send and receive packets over the network.
 pub mod dispatch;
+/// This module provides functionality to install a new extension on the server.
 pub mod install;
+/// This module helps in initializing the tables and task creation for each extension.
 pub mod master;
+/// This module helps in parsing the rpc arguments from the packets.
 pub mod rpc;
+/// This module helps in task scheduling on the server threads.
 pub mod sched;
+/// This module provides functionality related to the tables.
 pub mod table;
+/// This modules has a trait which should be implemented by each task instance.
 pub mod task;
+/// This module contains the wireformat realted to the various functionalities.
 pub mod wireformat;

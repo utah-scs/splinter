@@ -25,6 +25,7 @@ use db::task::{Task, TaskPriority, TaskState, TaskState::*};
 
 use sandstorm::common::TenantId;
 
+/// TaskManager handles the information for a pushed-back extension on the client side.
 pub struct TaskManager {
     // This is used for RPC requests and extensions lookup in tables.
     tenant: u32,

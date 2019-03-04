@@ -19,19 +19,23 @@ use super::db::DB;
 
 use super::buf::{ReadBuf, Record, WriteBuf, MultiReadBuf};
 
+/// A null database of testing and benchmarking purposes.
 pub struct NullDB {}
 
 impl NullDB {
+    /// This method creates a new instance of MockDB.
     pub fn new() -> NullDB {
         NullDB {}
     }
 
+    /// Empty function.
     pub fn assert_messages<S>(&self, _messages: &[S])
     where
         S: Debug + PartialEq<String>,
     {
     }
 
+    /// Empty function.
     pub fn clear_messages(&self) {}
 }
 

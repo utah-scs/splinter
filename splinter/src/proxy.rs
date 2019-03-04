@@ -55,6 +55,8 @@ impl KV {
     }
 }
 
+/// A proxy to the database on the client side; which searches the
+/// local cache before issuing the operations to the server.
 pub struct ProxyDB {
     // The tenant-id for which the invoke() function was called for the parent request.
     tenant: u32,

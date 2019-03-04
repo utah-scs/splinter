@@ -249,6 +249,9 @@ impl WriteBuf {
     }
 }
 
+/// This type represents a read-only buffer of bytes that can be received from
+/// the database. This type is primarily used to read objects from the database
+/// in response to a multiget() operation.
 pub struct MultiReadBuf {
     inner: Vec<Bytes>,
 
@@ -258,6 +261,21 @@ pub struct MultiReadBuf {
 }
 
 impl MultiReadBuf {
+    /// This method returns a MultiReadBuf. The returned type is basically a wrapper
+    /// over a vector of `Bytes` type.
+    ///
+    /// This function is marked `unsafe` to prevent extensions from constructing
+    /// a `MultiReadBuf` on their own. The only way an extension should be able to
+    /// see a `MultiReadBuf` is by making a multiget() call on some type that implements
+    /// the `DB` trait.
+    ///
+    /// # Arguments
+    ///
+    /// * `list`: The underlying vector of bytes that will be wrapped up inside a
+    ///             `MultiReadBuf`.
+    ///
+    /// # Return
+    /// The `MultiReadBuf` wrapping the passed in vector.
     pub unsafe fn new(list: Vec<Bytes>) -> MultiReadBuf {
         MultiReadBuf {
             inner: list,
@@ -266,10 +284,20 @@ impl MultiReadBuf {
         }
     }
 
+    /// This method return the number of elements wrapped up inside a
+    /// `MultiReadBuf` by the extension so far.
+    ///
+    /// # Return
+    /// The number of elements in the `MultiReadBuf`.
     pub fn num(&self) -> usize {
         self.inner.len()
     }
 
+    /// This method returns the number of bytes on the current `index` in
+    /// `MultiReadBuf`.
+    ///
+    /// # Return
+    /// The number of bytes on the current index in `MultiReadBuf`.
     pub fn len(&self) -> usize {
         if self.panic.get() {
             panic!("Out of bounds on MultiReadBuf.");
@@ -278,6 +306,10 @@ impl MultiReadBuf {
         self.inner[self.index.get()].len()
     }
 
+    /// This method returns true if the next element is present in the list, false otherwise.
+    ///
+    /// # Return
+    /// True if the next value is in the list, false otherwise.
     pub fn next(&self) -> bool {
         let curr = self.index.get();
 
@@ -294,6 +326,10 @@ impl MultiReadBuf {
         }
     }
 
+    /// This method returns true if the previous element is present in the list, false otherwise.
+    ///
+    /// # Return
+    /// True if the previous value is in the list, false otherwise.
     pub fn prev(&self) -> bool {
         let curr = self.index.get();
 
@@ -310,6 +346,11 @@ impl MultiReadBuf {
         }
     }
 
+    /// This method returns the reference to an element which is present on the current index in
+    /// `MultiReadBuf`.
+    ///
+    /// # Return
+    /// A reference to an element on the current index in the list.
     pub fn read(&self) -> &[u8] {
         if self.panic.get() {
             panic!("Out of bounds on MultiReadBuf.");
@@ -353,6 +394,16 @@ pub struct Record {
 }
 
 impl Record {
+    /// This method returns a new record which can be transferred to the client as a read/write set
+    /// which server decides to pushback the extension to the client.
+    ///
+    /// # Arguments
+    /// * `r_optype`: The type of the record, either a Read or a Write.
+    /// * `r_key`: The key for the record.
+    /// * `r_object`: The value for the record.
+    ///
+    /// # Return
+    /// A read-write set record with the operation type, a key and a value.
     pub fn new(r_optype: OpType, r_key: &[u8], r_object: &[u8]) -> Record {
         Record {
             optype: r_optype,
@@ -361,17 +412,17 @@ impl Record {
         }
     }
 
-    // Return the optype(Read/Write) for the operation.
+    /// Return the optype(Read/Write) for the operation.
     pub fn get_optype(&self) -> OpType {
         self.optype.clone()
     }
 
-    // Return the key for the performed operation.
+    /// Return the key for the performed operation.
     pub fn get_key(&self) -> Bytes {
         self.key.clone()
     }
 
-    // Return the object for the performed operation.
+    /// Return the object for the performed operation.
     pub fn get_object(&self) -> Bytes {
         self.object.clone()
     }
@@ -381,6 +432,7 @@ impl Record {
 /// without completing it on the server. This READ/WRITE set is also trasferred to the client.
 #[derive(Clone)]
 pub struct ReadWriteSetBuf {
+    /// The read-write set, a vector of type `Record`.
     pub readwriteset: Vec<Record>,
 }
 

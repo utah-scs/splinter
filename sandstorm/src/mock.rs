@@ -23,12 +23,14 @@ use self::bytes::{Bytes, BytesMut};
 
 use std::cell::RefCell;
 
+/// A mock database of testing purposes.
 pub struct MockDB {
     messages: RefCell<Vec<String>>,
     args: [u8; 30],
 }
 
 impl MockDB {
+    /// This method creates a new instance of MockDB.
     pub fn new() -> MockDB {
         MockDB {
             messages: RefCell::new(Vec::new()),
@@ -36,6 +38,7 @@ impl MockDB {
         }
     }
 
+    /// This method compares the given message with the already stored message.
     pub fn assert_messages<S>(&self, messages: &[S])
     where
         S: Debug + PartialEq<String>,
@@ -44,6 +47,7 @@ impl MockDB {
         assert_eq!(messages, found.as_slice());
     }
 
+    /// This method clears already stored message.
     pub fn clear_messages(&self) {
         let mut messages = self.messages.borrow_mut();
         messages.clear();
