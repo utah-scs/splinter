@@ -44,7 +44,7 @@ use db::rpc::*;
 use db::task::TaskState::*;
 use db::wireformat::*;
 
-use rand::distributions::Sample;
+use rand::distributions::{Normal, Sample};
 use rand::{Rng, SeedableRng, XorShiftRng};
 use splinter::manager::TaskManager;
 use splinter::*;
@@ -55,8 +55,8 @@ static mut FINISHED: bool = false;
 
 // Flag to indicate that the client can generate Compute Request based on some distribution.
 static mut ORD_DIST: bool = false;
-static ORDER: usize = 10000;
-static SKEW: f64 = 0.5;
+static ORDER: f64 = 2500.0;
+static STD_DEV: f64 = 500.0;
 
 // PUSHBACK benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
@@ -72,7 +72,7 @@ pub struct Pushback {
     rng: Box<Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
-    order_rng: Box<ZipfDistribution>,
+    order_rng: Box<Normal>,
     key_buf: Vec<u8>,
     value_buf: Vec<u8>,
 }
@@ -117,9 +117,7 @@ impl Pushback {
                 ZipfDistribution::new(n_tenants as usize, tenant_skew)
                     .expect("Couldn't create tenant RNG."),
             ),
-            order_rng: Box::new(
-                ZipfDistribution::new(ORDER, SKEW).expect("Couldn't create tenant RNG."),
-            ),
+            order_rng: Box::new(Normal::new(ORDER, STD_DEV)),
             key_buf: key_buf,
             value_buf: value_buf,
         }
@@ -150,7 +148,7 @@ impl Pushback {
         let k: [u8; 4] = unsafe { transmute(k.to_le()) };
         self.key_buf[0..mem::size_of::<u32>()].copy_from_slice(&k);
 
-        let o = self.order_rng.sample(&mut self.rng) as u32;
+        let o = self.order_rng.sample(&mut self.rng).abs() as u32;
 
         if is_get {
             get(t, self.key_buf.as_slice(), o)
