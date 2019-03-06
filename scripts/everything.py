@@ -19,15 +19,36 @@ import subprocess
 import pprint
 import logging
 import sys
+import time
+import os
 import xml.etree.ElementTree as ET
 import multiprocessing.pool as pool
 
 
 class SubprocessException(Exception):
-    def __init__(self, host, cmd, returnCode):
-        self.host = host
+    def __init__(self, cmd, returnCode):
         self.cmd = cmd
         self.returnCode = returnCode
+
+
+class RemoteSubprocessException(SubprocessException):
+    def __init__(self, host, cmd, returnCode):
+        self.host = host
+        super(RemoteSubprocessException, self).__init__(cmd, returnCode)
+
+
+def run(cmd, logger):
+    process = subprocess.Popen(cmd,
+                               shell=True,
+                               stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE,
+                               close_fds=True)
+    pout, perr = process.communicate()
+    logProcess(logger, cmd, pout, perr)
+
+    if process.returncode:
+        raise SubprocessException(cmd, process.returncode)
 
 
 def logProcess(logger, cmd, pout, perr):
@@ -68,7 +89,7 @@ class Host(object):
         logProcess(logger, cmd, pout, perr)
 
         if process.returncode:
-            raise SubprocessException(self, cmd, process.returncode)
+            raise RemoteSubprocessException(self, cmd, process.returncode)
 
 
 class Cluster(object):
@@ -87,7 +108,7 @@ class Cluster(object):
                                    stderr=subprocess.PIPE,
                                    close_fds=True)
         pout, perr = process.communicate()
-        logProcess(self.__logger, cmd, pout, perr)
+        logProcess(self.__logger, cmd, bytes(), perr)
 
         root = ET.fromstring(pout.decode("UTF-8"))
         for xmlNode in list(root):
@@ -118,19 +139,25 @@ class Cluster(object):
             self.__logger.log(level, '\t{}:'.format(i))
             client.dump(level)
 
+    def checkAuth(self):
+        self.__server.ssh(self.__logger, '-o StrictHostKeyChecking=no {}'.format(self.__user), '')
+
+        for i, client in enumerate(self.__clients):
+            client.ssh(self.__logger, '-o StrictHostKeyChecking=no {}'.format(self.__user), '')
+
     def __executeOnClients(self, cmd):
         tpool = pool.ThreadPool(processes=len(self.__clients))
         async_results = []
         for client in self.__clients:
-
-            def wrapSSHFunc(logger, user, cmd):
+            c = client
+            def wrapSSHFunc(client, user, cmd, logger):
                 try:
                     client.ssh(logger, user, cmd)
                 except SubprocessException as e:
                     return e
 
             async_result = tpool.apply_async(
-                wrapSSHFunc, (self.__logger, self.__user, cmd))
+                wrapSSHFunc, (client, self.__user, cmd, self.__logger))
             async_results.append(async_result)
 
         for async_result in async_results:
@@ -153,20 +180,20 @@ class Cluster(object):
             logger.info("Server setup started...")
             self.__executeOnServer('"git clone https://github.com/utah-scs/splinter.git"')
             self.__executeOnServer('"cd splinter; git checkout {0}"'.format(branch))
-            self.__executeOnServer('"cd splinter; ./scripts/setup.py --full"')  # beware, dirty trick. nic_info is local
+            self.__executeOnServer('"cd splinter; ./scripts/setup.py --full > /dev/null 2>&1"')  # beware, dirty trick. nic_info is local
             self.__executeOnServer('"cd splinter; cat nic_info" > nic_info')
 
-            pci = subprocess.check_output("awk '/^pci/ { print $2; }' < nic_info", shell=True)
+            pci = subprocess.check_output("awk '/^pci/ { print $2; }' < nic_info", shell=True).decode("UTF-8").rstrip()
             if not pci:
                 raise Exception("Failed to gather pci!")
 
-            mac = subprocess.check_output("awk '/^mac/ { print $2; }' < nic_info", shell=True)
-            if not pci or not mac:
+            mac = subprocess.check_output("awk '/^mac/ { print $2; }' < nic_info", shell=True).decode("UTF-8").rstrip()
+            if not mac:
                 raise Exception("Failed to gather mac!")
 
-            self.__executeOnServer("cd splinter; .cp db/server.toml-example db/server.toml; \
-                                 sed -E -i 's/[0-9a-fA-F:]{17}/" + mac + "/' db/server.toml; \
-                                 sed -E -i 's/0000:04:00.1/" + pci + "/' db/server.toml")
+            self.__executeOnServer('"cd splinter; cp db/server.toml-example db/server.toml; \
+                                 sed -E -i \'s/01:02:03:04:05:06/' + mac + '/;\' db/server.toml; \
+                                 sed -E -i \'s/0000:04:00.1/' + pci + '/;\' db/server.toml"')
             self.__logger.info('Server setup concluded.')
 
         except Exception as e:
@@ -178,11 +205,11 @@ class Cluster(object):
             self.__logger.info("Clients setup started...")
             self.__executeOnClients('"git clone https://github.com/utah-scs/splinter.git"')
             self.__executeOnClients('"cd splinter; git checkout {0}"'.format(branch))
-            self.__executeOnClients('"cd splinter; ./scripts/setup.py --full"')
+            self.__executeOnClients('"cd splinter; ./scripts/setup.py --full > /dev/null 2>&1"')
 
-            self.__executeOnClients('cd splinter; \
+            self.__executeOnClients('"cd splinter; \
                                  echo "server_mac: ' + mac + '" >> nic_info; \
-                                 ./scripts/create-client-toml')
+                                 ./scripts/create-client-toml"')
 
             self.__logger.info('Clients setup concluded.')
 
@@ -217,7 +244,7 @@ class Cluster(object):
             self.__logger.info("Server build started...")
             self.__executeOnServer('"cd splinter; git checkout {0}"'.format(branch))
             self.__executeOnServer('"cd splinter; git pull"')
-            self.__executeOnServer('"cd splinter; source ~/.cargo/env; make;"')
+            self.__executeOnServer('"cd splinter; source ~/.cargo/env; make > /dev/null 2>&1;"')
             self.__logger.info("Server build concluded...")
 
         except Exception as e:
@@ -229,7 +256,7 @@ class Cluster(object):
             self.__logger.info("Clients build started...")
             self.__executeOnClients('"cd splinter; git checkout {0}"'.format(branch))
             self.__executeOnClients('"cd splinter; git pull"')
-            self.__executeOnClients('"cd splinter; source ~/.cargo/env; make;"')
+            self.__executeOnClients('"cd splinter; source ~/.cargo/env; make > /dev/null 2>&1;"')
             self.__logger.info("Clients build concluded...")
 
         except Exception as e:
@@ -263,7 +290,7 @@ class Cluster(object):
             self.__logger.error('Clients kill failed!')
             self.__logger.error(str(e))
             exit(1)
-        
+
     def killClients(self, ext):
         try:
             self.__logger.info("Clients kill started...")
@@ -286,7 +313,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Setup a machine for Sandstorm')
 
-    parser.add_argument('-v',
+    parser.add_argument('-v', '--verbose',
                         help='Logging level. 10 for debug',
                         nargs='?',
                         type=int,
@@ -295,33 +322,38 @@ if __name__ == '__main__':
                         choices=range(0, 51),
                         metavar='lvl')
 
-    parser.add_argument('-b',
+    parser.add_argument('-b', '--branch',
                         help='Specifies branch to be used.',
                         nargs='?',
                         default='master',
                         const='current',
                         metavar='brch')
 
-    parser.add_argument('-e',
+    parser.add_argument('-e', '--extension',
                         help='Specifies extension to be used.',
                         nargs='?',
                         default='ycsb',
                         metavar='ext')
 
-    parser.add_argument('--setup',
-                        help='setup the cluster (clone, setup.py, etc.)',
-                        action='store_false',
-                        default=False)
-
     parser.add_argument('--wipe',
                         help='wipe the repository before building (rm splinter)',
-                        action='store_false',
+                        action='store_true',
                         default=False)
 
-    parser.add_argument('--build',
-                        help='build splinter on the cluster (push local, pull, make)',
-                        action='store_false',
+    parser.add_argument('--setup',
+                        help='setup the cluster (clone, setup.py, etc.)',
+                        action='store_true',
                         default=False)
+
+    parser.add_argument('--push',
+                        help='push local changes which are commited',
+                        action='store_false',
+                        default=True)
+
+    parser.add_argument('--build',
+                        help='build splinter on the cluster (pull, make)',
+                        action='store_false',
+                        default=True)
 
     parser.add_argument('user',
                         help='the user for ssh',
@@ -336,42 +368,65 @@ if __name__ == '__main__':
                         choices=['run', 'kill', 'bench'],
                         metavar='command')
 
-    args = parser.parse_args()
+    args, remainingArgs = parser.parse_known_args()
 
-
-    # TODO @jmbarzee change logging location.
-    logging.basicConfig(filename='test.log', level=logging.DEBUG)
+    # Setup Logging
+    logDir = time.strftime("%Y-%m-%d_%H:%M:%S")
+    logCurrent = "./logs/"+logDir
+    try:
+        os.makedirs(logCurrent)
+    except FileExistsError:
+        pass  # directory already exists
+    logging.basicConfig(filename=logCurrent+'/everything.log', level=logging.DEBUG)
     logger = logging.getLogger('')
-    logger.setLevel(args.v)
+    logger.setLevel(args.verbose)
 
+    # Setup symlink
+    logLatest = "./logs/latest"
+    try:
+        os.makedirs(logLatest)
+    except FileExistsError:
+        pass  # directory already exists
+    run("cd {0}; ln -sf ../{1}/* ./".format(logLatest, logDir), logger)
+
+    # Setup Cluster
     try:
         cluster = Cluster(logger, args.user, args.server)
     except Exception as e:
         logger.error("Could not establish cluster information!")
         cluster.dump(logging.ERROR)
         exit(1)
-
     cluster.dump(logging.INFO)
+    cluster.checkAuth()
 
-    if args.setup:
-        cluster.setup(args.branch)
+    if args.push:
+        logger.info("Pushing local changes..")
+        # TODO @jmbarzee check that there are no unstaged changes
+        run("git push", logger)
 
     if args.wipe:
         cluster.wipe()
+
+    if args.setup:
+        cluster.setup(args.branch)
 
     if args.build:
         cluster.build(args.branch)
 
     cmd = args.command
-    if cmd == "run":
-        # TODO @jmbarzee check for -e
+    if cmd == 'run':
+        # TODO @jmbarzee check for --extension
         cluster.startServer()
-        cluster.startClients(args.e)
+        cluster.startClients(args.extension)
         cluster.killServer()
 
-    elif cmd == "kill":
-        # TODO @jmbarzee check for -e
+    elif cmd == 'kill':
+        # TODO @jmbarzee check for --extension
         cluster.killClients(args.e)
         cluster.killServer()
 
+    elif cmd == 'bench':
+        raise NotImplementedError()
 
+    else:
+        raise NotImplementedError()
