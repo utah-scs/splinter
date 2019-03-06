@@ -52,7 +52,7 @@ def run(cmd, logger):
 
 
 def logProcess(logger, cmd, pout, perr):
-    logger.debug(cmd)
+    logger.debug("'{0}'".format(cmd))
 
     poutString = pout.decode("UTF-8")
     if poutString != '':
@@ -324,11 +324,16 @@ if __name__ == '__main__':
                         metavar='lvl')
 
     parser.add_argument('-b', '--branch',
-                        help='Specifies branch to be used.',
+                        help='Specifies branch to be used. Defaults to master. Flag without variable for current branch',
                         nargs='?',
                         default='master',
                         const='current',
                         metavar='brch')
+
+    parser.add_argument('--push',
+                        help='push local changes which are commited',
+                        action='store_false',
+                        default=True)
 
     parser.add_argument('--wipe',
                         help='wipe the repository before building (rm splinter)',
@@ -340,15 +345,10 @@ if __name__ == '__main__':
                         action='store_true',
                         default=False)
 
-    parser.add_argument('--push',
-                        help='push local changes which are commited',
-                        action='store_false',
-                        default=True)
-
     parser.add_argument('--build',
                         help='build splinter on the cluster (pull, make)',
-                        action='store_false',
-                        default=True)
+                        action='store_true',
+                        default=False)
 
     parser.add_argument('user',
                         help='the user for ssh',
@@ -358,12 +358,37 @@ if __name__ == '__main__':
                         help='the server of the cluster. e.g. "hp174.utah.cloudlab.us"',
                         metavar='server')
 
-    parser.add_argument('command',
-                        help='instructions for the script [run|kill|bench]',
-                        choices=['run', 'kill', 'bench'],
-                        metavar='command')
+    subparsers = parser.add_subparsers(
+                        title="Command",
+                        description='run a command',
+                        dest='command')
 
-    args, remainingArgs = parser.parse_known_args()
+    parserBench = subparsers.add_parser('bench',
+                        help='benchmark Sandstorm')
+
+    parserYCSB = subparsers.add_parser('ycsb',
+                        help='run YCSB on Sandstorm')
+    parserYCSB.add_argument('min',
+                        help='Minimum request rate of the YCSB clients (in thousands)',
+                        nargs='?',
+                        type=int,
+                        default='250')
+    parserYCSB.add_argument('max',
+                        help='Maximum request rate of the YCSB clients (in thousands)',
+                        nargs='?',
+                        type=int,
+                        default='1500')
+    parserYCSB.add_argument('delta',
+                        help='delta between tested request rates of the YCSB clients (in thousands)',
+                        nargs='?',
+                        type=int,
+                        default='125',
+                        metavar='dlt')
+
+    parserKill = subparsers.add_parser('kill',
+                        help='kill clients and server running Sandstorm')
+
+    args = parser.parse_args()
 
     # Setup Logging
     logDir = time.strftime("%Y-%m-%d_%H:%M:%S")
@@ -394,6 +419,11 @@ if __name__ == '__main__':
     cluster.dump(logging.INFO)
     cluster.checkAuth()
 
+    branch = args.branch
+    if branch == 'current':
+        branch = subprocess.check_output('git rev-parse --abbrev-ref HEAD', shell=True).decode("UTF-8").strip()
+        
+
     if args.push:
         logger.info("Pushing local changes..")
         # TODO @jmbarzee check that there are no unstaged changes
@@ -403,41 +433,15 @@ if __name__ == '__main__':
         cluster.wipe()
 
     if args.setup:
-        cluster.setup(args.branch)
+        cluster.setup(branch)
 
     if args.build:
-        cluster.build(args.branch)
+        cluster.build(branch)
 
     cmd = args.command
-    if cmd == 'run':
-        subParser = argparse.ArgumentParser(
-            description='run an extension on Sandstorm')
-        subParser.add_argument('extension',
-                            help='Specifies extension to be run',
-                            choices=['ycsb'],
-                            default='ycsb',
-                            metavar='ext')
-        subArgs, remainingSubArgs = subParser.parse_known_args(remainingArgs)
+    if cmd == 'ycsb':
 
-        if args.extension == 'ycsb':
-            extParser = argparse.ArgumentParser(
-                description='run an ycsb on Sandstorm')
-            extParser.add_argument('min',
-                                help='Minimum request rate of the YCSB clients (in thousands)',
-                                type=int,
-                                default='250')
-            extParser.add_argument('max',
-                                help='Maximum request rate of the YCSB clients (in thousands)',
-                                type=int,
-                                default='1500')
-            extParser.add_argument('epsilon',
-                                help='epsilon between tested request rates of the YCSB clients (in thousands)',
-                                type=int,
-                                default='125',
-                                metavar='esp')
-            extArgs = extParser.parse_args(remainingSubArgs)
-
-            rates = range(extArgs.min*1000, extArgs.max*1000+1, extArgs.epsilon*1000)
+            rates = range(args.min*1000, args.max*1000+1, args.delta*1000)
 
             cluster.startServer()
             cluster.runYCSB(rates)
