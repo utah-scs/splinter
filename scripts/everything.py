@@ -279,22 +279,23 @@ class Cluster(object):
         # TODO @jmbarzee implement kill server
         raise NotImplementedError()
 
-    def startClients(self, ext):
+    def runYCSB(self, rates):
         # TODO @jmbarzee add flexibility to extensions
         try:
-            self.__logger.info("Clients kill started...")
-            self.__executeOnServer('"cd splinter; sudo ./scripts/run-' + ext + ' 250000"')
-            self.__logger.info("Clients kill concluded...")
+            for rate in rates:
+                self.__logger.info("run YSCB started...")
+                self.__executeOnClients('"cd splinter; sudo ./scripts/run-ycsb {0}"'.format(rate))
+                self.__logger.info("run YSCB concluded...")
 
         except Exception as e:
-            self.__logger.error('Clients kill failed!')
+            self.__logger.error('run YSCB failed!')
             self.__logger.error(str(e))
             exit(1)
 
     def killClients(self, ext):
         try:
             self.__logger.info("Clients kill started...")
-            self.__executeOnServer('"sudo kill -9 `pidof ' + ext + '`"')
+            self.__executeOnServer('"sudo kill -9 `pidof {0}`"'.format(ext))
             self.__logger.info("Clients kill concluded...")
 
         except Exception as e:
@@ -328,12 +329,6 @@ if __name__ == '__main__':
                         default='master',
                         const='current',
                         metavar='brch')
-
-    parser.add_argument('-e', '--extension',
-                        help='Specifies extension to be used.',
-                        nargs='?',
-                        default='ycsb',
-                        metavar='ext')
 
     parser.add_argument('--wipe',
                         help='wipe the repository before building (rm splinter)',
@@ -415,10 +410,38 @@ if __name__ == '__main__':
 
     cmd = args.command
     if cmd == 'run':
-        # TODO @jmbarzee check for --extension
-        cluster.startServer()
-        cluster.startClients(args.extension)
-        cluster.killServer()
+        subParser = argparse.ArgumentParser(
+            description='run an extension on Sandstorm')
+        subParser.add_argument('extension',
+                            help='Specifies extension to be run',
+                            choices=['ycsb'],
+                            default='ycsb',
+                            metavar='ext')
+        subArgs, remainingSubArgs = subParser.parse_known_args(remainingArgs)
+
+        if args.extension == 'ycsb':
+            extParser = argparse.ArgumentParser(
+                description='run an ycsb on Sandstorm')
+            extParser.add_argument('min',
+                                help='Minimum request rate of the YCSB clients (in thousands)',
+                                type=int,
+                                default='250')
+            extParser.add_argument('max',
+                                help='Maximum request rate of the YCSB clients (in thousands)',
+                                type=int,
+                                default='1500')
+            extParser.add_argument('epsilon',
+                                help='epsilon between tested request rates of the YCSB clients (in thousands)',
+                                type=int,
+                                default='125',
+                                metavar='esp')
+            extArgs = extParser.parse_args(remainingSubArgs)
+
+            rates = range(extArgs.min*1000, extArgs.max*1000+1, extArgs.epsilon*1000)
+
+            cluster.startServer()
+            cluster.runYCSB(rates)
+            cluster.killServer()
 
     elif cmd == 'kill':
         # TODO @jmbarzee check for --extension
