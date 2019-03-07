@@ -18,6 +18,7 @@
 #![feature(generators, generator_trait)]
 
 extern crate db;
+#[macro_use]
 extern crate sandstorm;
 
 use std::ops::Generator;
@@ -27,22 +28,6 @@ use db::cycles;
 
 use sandstorm::db::DB;
 use sandstorm::pack::pack;
-
-macro_rules! GET {
-    ($db:ident, $table:ident, $key:ident, $obj:ident) => {
-        let (server, found, val) = $db.search_get_in_cache($table, &$key);
-        if server == false {
-            if found == false {
-                yield 0;
-                $obj = $db.get($table, &$key);
-            } else {
-                $obj = val;
-            }
-        } else {
-            $obj = $db.get($table, &$key);
-        }
-    };
-}
 
 /// This function implements the get() extension using the sandstorm interface.
 ///

@@ -241,6 +241,20 @@ extern "C" fn handle_sigsegv(
     loop {}
 }
 
+/// Print server startup information.
+fn print_info() {
+      if cfg!(feature = "pushback") {
+        info!("Push-back for invoke operations is ENABLED");
+    } else {
+        info!("Push-back for invoke operations is DISABLED");
+    }
+    if FAST_PATH {
+        info!("Fast path for native operations is ENABLED");
+    } else {
+        info!("Fast path for native operations is DISABLED");
+    }
+}
+
 fn main() {
     // First off, install a signal handler to catch stack overflows. On catching a
     // SIGSEGV, we allocate a new stack to the thread to prevent a segmentation fault
@@ -259,11 +273,8 @@ fn main() {
     // Basic setup and initialization.
     db::env_logger::init().expect("ERROR: failed to initialize logger!");
 
-    if FAST_PATH {
-        info!("Fast path for native operations is ENABLED");
-    } else {
-        info!("Fast path for native operations is DISABLED");
-    }
+    print_info();
+
     let config = config::ServerConfig::load();
     info!("Starting up Sandstorm server with config {:?}", config);
 

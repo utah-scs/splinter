@@ -36,6 +36,8 @@ pub mod mock;
 pub mod null;
 /// Module to serialize bytes which can be transferred over the network.
 pub mod pack;
+/// Module to put all the db related macros like GET(), PUT(), etc.
+pub mod macros;
 
 pub use std::boxed;
 pub use std::convert;
