@@ -28,3 +28,6 @@ net/3rdparty/dpdk.tar.gz
 
 # Ignore vscode files
 .vscode/*
+
+# Ignore python caches
+__pycache__/*

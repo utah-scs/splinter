@@ -34,7 +34,7 @@ class Host(object):
         self.__name = name
         self.__id = id
         self.__hostName = hostName
-        self.__logger = logging.getLogger(self.__id)
+        self.__logger = logging.getLogger("cluster." + self.__id)
 
     def setupLogger(self, logDirName, level):
         logFile = '{}/{}.log'.format(logDirName, self.__id)
