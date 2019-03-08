@@ -24,43 +24,9 @@ import os
 import xml.etree.ElementTree as ET
 import multiprocessing.pool as pool
 
-
-class SubprocessException(Exception):
-    def __init__(self, cmd, returnCode):
-        self.cmd = cmd
-        self.returnCode = returnCode
-
-
-class RemoteSubprocessException(SubprocessException):
-    def __init__(self, host, cmd, returnCode):
-        self.host = host
-        super(RemoteSubprocessException, self).__init__(cmd, returnCode)
-
-
-def run(cmd, logger):
-    process = subprocess.Popen(cmd,
-                               shell=True,
-                               stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE,
-                               close_fds=True)
-    pout, perr = process.communicate()
-    logProcess(logger, cmd, pout, perr)
-
-    if process.returncode:
-        raise SubprocessException(cmd, process.returncode)
-
-
-def logProcess(logger, cmd, pout, perr):
-    logger.debug("'{0}'".format(cmd))
-
-    poutString = pout.decode("UTF-8")
-    if poutString != '':
-        logger.debug(poutString)
-
-    perrString = perr.decode("UTF-8")
-    if perrString != '':
-        logger.error(perrString)
+# local imports
+import execute as ex
+import logpipe as lp
 
 
 class Host(object):
@@ -87,17 +53,8 @@ class Host(object):
 
     def execute(self, user, cmd):
         cmd = 'ssh {0}@{1} {2}'.format(user, self.getPublicName(), cmd)
-        process = subprocess.Popen(cmd,
-                                   shell=True,
-                                   stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE,
-                                   close_fds=True)
-        pout, perr = process.communicate()
-        logProcess(self.__logger, cmd, pout, perr)
+        ex.execute(cmd, self.__logger)
 
-        if process.returncode:
-            raise RemoteSubprocessException(self, cmd, process.returncode)
 
 class HostPool(object):
     def __init__(self):
@@ -121,7 +78,7 @@ class HostPool(object):
             def wrapExecute(host, user, cmd):
                 try:
                     host.execute(user, cmd)
-                except SubprocessException as e:
+                except ex.SubprocessException as e:
                     return e
 
             async_result = tpool.apply_async(
@@ -132,7 +89,7 @@ class HostPool(object):
             return_val = async_result.get()
             if return_val == None:
                 continue
-            elif isinstance(return_val, SubprocessException):
+            elif isinstance(return_val, ex.SubprocessException):
                 raise return_val
             elif isinstance(return_val, Exception):
                 raise return_val
@@ -150,16 +107,16 @@ class Cluster(object):
 
         cmd = 'ssh {0}@{1} /usr/bin/geni-get manifest'.format(
             self.__user, server)
-        process = subprocess.Popen(cmd,
-                                   shell=True,
-                                   stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE,
-                                   close_fds=True)
-        pout, perr = process.communicate()
-        logProcess(self.__logger, cmd, bytes(), perr)
+        errPipe = lp.LogPipe(self.__logger, logging.ERROR)
+        completedProcess = subprocess.run(cmd,
+                                          shell=True,
+                                          stdin=subprocess.PIPE,
+                                          stdout=subprocess.PIPE,
+                                          stderr=errPipe,
+                                          close_fds=True)
+        errPipe.close()
 
-        root = ET.fromstring(pout.decode("UTF-8"))
+        root = ET.fromstring(completedProcess.stdout.decode("UTF-8"))
         for xmlNode in list(root):
             if not xmlNode.tag.endswith('node'):
                 continue
@@ -179,7 +136,6 @@ class Cluster(object):
         if server == None:
             raise Exception("No server found!")
         self
-
 
     def setupLogger(self, logDirName, level):
         self.__clients.setupLogger(logDirName, level)
@@ -231,7 +187,7 @@ class Cluster(object):
             self.__logger.error('Server setup failed!')
             self.__logger.error(str(e))
             exit(1)
-    
+
     def __setupClients(self, branch):
         try:
             self.__logger.info("Clients setup started...")
@@ -248,7 +204,7 @@ class Cluster(object):
 
     def __setupNIC(self):
         try:
-            logger.info("NIC setup started...")
+            self.__logger.info("NIC setup started...")
             self.__executeOnServer('"cd splinter; cat nic_info" > nic_info')  # beware, dirty trick. nic_info is local
 
             pci = subprocess.check_output("awk '/^pci/ { print $2; }' < nic_info", shell=True).decode("UTF-8").rstrip()
@@ -394,153 +350,4 @@ class Cluster(object):
         # TODO @jmbarzee implement bench
         # TODO @jmbarzee configure logging correctly
         # TODO @jmbarzee symlink latest (.log, .extract)
-        raise NotImplementedError()
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(
-        description='Setup a machine for Sandstorm')
-
-    parser.add_argument('-v', '--verbose',
-                        help='Logging level. 10 for debug',
-                        nargs='?',
-                        type=int,
-                        default=30,
-                        const=20,
-                        choices=range(0, 51),
-                        metavar='lvl')
-
-    parser.add_argument('-b', '--branch',
-                        help='Specifies branch to be used. Defaults to master. Flag without variable for current branch',
-                        nargs='?',
-                        default='master',
-                        const='current',
-                        metavar='brch')
-
-    parser.add_argument('--push',
-                        help='push local changes which are commited',
-                        action='store_false',
-                        default=True)
-
-    parser.add_argument('--wipe',
-                        help='wipe the repository before building (rm splinter)',
-                        action='store_true',
-                        default=False)
-
-    parser.add_argument('--setup',
-                        help='setup the cluster (clone, setup.py, etc.)',
-                        action='store_true',
-                        default=False)
-
-    parser.add_argument('--build',
-                        help='build splinter on the cluster (pull, make)',
-                        action='store_true',
-                        default=False)
-
-    parser.add_argument('user',
-                        help='the user for ssh',
-                        metavar='user')
-
-    parser.add_argument('server',
-                        help='the server of the cluster. e.g. "hp174.utah.cloudlab.us"',
-                        metavar='server')
-
-    subparsers = parser.add_subparsers(
-                        title="Command",
-                        description='run a command',
-                        dest='command')
-
-    parserBench = subparsers.add_parser('bench',
-                        help='benchmark Sandstorm')
-
-    parserYCSB = subparsers.add_parser('ycsb',
-                        help='run YCSB on Sandstorm')
-    parserYCSB.add_argument('min',
-                        help='Minimum request rate of the YCSB clients (in thousands)',
-                        nargs='?',
-                        type=int,
-                        default='250')
-    parserYCSB.add_argument('max',
-                        help='Maximum request rate of the YCSB clients (in thousands)',
-                        nargs='?',
-                        type=int,
-                        default='1500')
-    parserYCSB.add_argument('delta',
-                        help='delta between tested request rates of the YCSB clients (in thousands)',
-                        nargs='?',
-                        type=int,
-                        default='125',
-                        metavar='dlt')
-
-    parserKill = subparsers.add_parser('kill',
-                        help='kill clients and server running Sandstorm')
-
-    args = parser.parse_args()
-
-    # Setup Logging
-    logDir = time.strftime("%Y-%m-%d_%H:%M:%S")
-    logCurrent = "./logs/"+logDir
-    try:
-        os.makedirs(logCurrent)
-    except FileExistsError:
-        pass  # directory already exists
-    logging.basicConfig(filename=logCurrent+'/everything.log', level=logging.DEBUG)
-    logger = logging.getLogger('')
-    logger.setLevel(args.verbose)
-
-    # Setup Cluster
-    try:
-        cluster = Cluster(args.user, args.server)
-        cluster.setupLogger(logCurrent, args.verbose)
-    except Exception as e:
-        logger.error("Could not establish cluster information!")
-        if cluster:
-            cluster.dump(logging.ERROR)
-        exit(1)
-    cluster.dump(logging.INFO)
-    cluster.checkAuth()
-
-    # Setup symlink
-    logLatest = "./logs/latest"
-    try:
-        os.makedirs(logLatest)
-    except FileExistsError:
-        pass  # directory already exists
-    run("cd {0}; ln -sf ../{1}/* ./".format(logLatest, logDir), logger)
-
-    branch = args.branch
-    if branch == 'current':
-        branch = subprocess.check_output('git rev-parse --abbrev-ref HEAD', shell=True).decode("UTF-8").strip()
-        
-    if args.push:
-        logger.info("Pushing local changes..")
-        # TODO @jmbarzee check that there are no unstaged changes
-        run("git push", logger)
-
-    if args.wipe:
-        cluster.wipe()
-
-    if args.setup:
-        cluster.setup(branch)
-
-    if args.build:
-        cluster.build(branch)
-
-    cmd = args.command
-    if cmd == 'ycsb':
-
-            rates = range(args.min*1000, args.max*1000+1, args.delta*1000)
-
-            cluster.startServer()
-            cluster.runYCSB(rates)
-            #cluster.killServer()
-
-    elif cmd == 'kill':
-        # TODO @jmbarzee check for --extension
-        cluster.kill(args.extension)
-
-    elif cmd == 'bench':
-        raise NotImplementedError()
-
-    else:
         raise NotImplementedError()
