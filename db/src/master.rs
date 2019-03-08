@@ -40,6 +40,14 @@ use sandstorm::common::{TableId, TenantId, PACKET_UDP_LEN};
 use sandstorm::db::DB;
 use sandstorm::ext::*;
 
+/// Convert a raw pointer for Allocator into a Allocator reference. This can be used to pass
+/// the allocator reference across closures without cloning the allocator object.
+pub fn accessor<'a>(alloc: *const Allocator) -> &'a Allocator {
+    unsafe {
+        &*alloc
+    }
+}
+
 // The number of buckets in the `tenants` hashtable inside of Master.
 const TENANT_BUCKETS: usize = 32;
 
@@ -509,7 +517,7 @@ impl Master {
                 // status of the rpc.
                 .and_then(| object | {
                                 status = RpcStatus::StatusInternalError;
-                                let alloc: &Allocator = unsafe { transmute(alloc) };
+                                let alloc: &Allocator = accessor(alloc);
                                 alloc.resolve(object)
                             })
                 // If the value was obtained, then write to the response packet
@@ -784,7 +792,7 @@ impl Master {
                 // If there is a value, then write it in.
                 if val.len() > 0 {
                     status = RpcStatus::StatusInternalError;
-                    let alloc: &Allocator = unsafe { transmute(alloc) };
+                    let alloc: &Allocator = accessor(alloc);
                     let _result = alloc.object(tenant_id, table_id, key, val)
                                     // If the allocation succeeds, update the
                                     // status of the rpc, and insert the object
@@ -1243,8 +1251,7 @@ impl Master {
 
         // Check if the request was issued by a valid tenant.
         if let Some(tenant) = self.get_tenant(tenant_id) {
-            let alloc = &self.heap as *const Allocator;
-            let alloc = unsafe { &*alloc };
+            let alloc = accessor(&self.heap as *const Allocator);
             // If the tenant is valid, check if the extension exists inside the database after
             // setting the RPC status appropriately.
             status = RpcStatus::StatusInvalidExtension;
