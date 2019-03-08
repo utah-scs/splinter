@@ -34,6 +34,20 @@ pub trait DB {
     /// exists inside the database.
     fn get(&self, table: u64, key: &[u8]) -> Option<ReadBuf>;
 
+    /// This method performs a lookup for a set of keys stored inside the database as
+    /// key-value pairs, and returns a hanle that can be used to read the value for each key
+    /// if the key-value pair exists.
+    ///
+    /// # Arguments
+    /// * `table`: An identifier of the data table the key-value pair
+    ///            belongs to.
+    /// * `key_len`: Length of each key in the key list.
+    /// * `keys`: A slice which contains multiple keys.
+    ///
+    /// # Return
+    ///
+    /// A handle that can be used to read the value for each key in the list, if the key-value
+    /// pair exists inside the database.
     fn multiget(&self, table: u64, key_len: u16, keys: &[u8]) -> Option<MultiReadBuf>;
 
     /// This method will allocate space for a key-value pair inside the

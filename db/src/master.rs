@@ -47,16 +47,16 @@ const TENANT_BUCKETS: usize = 32;
 /// the database. It implements the Service trait, allowing it to generate schedulable tasks
 /// for data and extension related RPC requests.
 pub struct Master {
-    // A Map of all tenants in the system. Since Sandstorm is a multi-tenant system, most RPCs
-    // will require a lookup on this map.
+    /// A Map of all tenants in the system. Since Sandstorm is a multi-tenant system, most RPCs
+    /// will require a lookup on this map.
     tenants: [RwLock<HashMap<TenantId, Arc<Tenant>>>; TENANT_BUCKETS],
 
-    // An extension manager maintaining state concerning extensions loaded into the system.
-    // Required to retrieve and determine if an extension belongs to a particular tenant while
-    // handling an invocation request.
+    /// An extension manager maintaining state concerning extensions loaded into the system.
+    /// Required to retrieve and determine if an extension belongs to a particular tenant while
+    /// handling an invocation request.
     pub extensions: ExtensionManager,
 
-    // Manager of the table heap. Required to allow writes to the database.
+    /// Manager of the table heap. Required to allow writes to the database.
     heap: Allocator,
 }
 
@@ -345,6 +345,12 @@ impl Master {
         let name = "../ext/pushback/target/release/libpushback.so";
         if self.extensions.load(name, tenant, "pushback") == false {
             panic!("Failed to load pushback() extension.");
+        }
+
+        // Load the pushback() extension.
+        let name = "../ext/scan/target/release/libscan.so";
+        if self.extensions.load(name, tenant, "scan") == false {
+            panic!("Failed to load scan() extension.");
         }
     }
 

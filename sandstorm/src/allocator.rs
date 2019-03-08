@@ -18,6 +18,7 @@ use self::libc::c_void;
 use std::alloc::{GlobalAlloc, Layout};
 use std::ptr;
 
+/// Allocator used to allocate memory in heap for the table.
 pub struct SandstormAllocator;
 
 //Upper limit on the amount of heap allocation an extensions can ask for.

@@ -15,6 +15,7 @@
 
 use super::cycles;
 
+/// This type store the total number of CPU cycles spend for each event.
 pub struct CycleCounter {
     average: u64,
     total: u64,
@@ -23,12 +24,12 @@ pub struct CycleCounter {
 }
 
 impl CycleCounter {
-    // Creates and returns the CycleCounter Object. This object can be used to measure the
-    // number of cycles for different number of events.
-    //
-    // # Return
-    //
-    // New instance of CycleCounter.
+    /// Creates and returns the CycleCounter Object. This object can be used to measure the
+    /// number of cycles for different number of events.
+    ///
+    /// # Return
+    ///
+    /// New instance of CycleCounter.
     pub fn new() -> CycleCounter {
         CycleCounter {
             average: 0,
@@ -38,17 +39,17 @@ impl CycleCounter {
         }
     }
 
-    // Starts the CPU cycle counting and store it in self.start_time.
+    /// Starts the CPU cycle counting and store it in self.start_time.
     #[inline]
     pub fn start(&mut self) {
         self.start_time = cycles::rdtsc();
     }
 
-    // Stops the cycle counting and reset the counter in get_average() function.
-    //
-    // #Return
-    //
-    // The number of CPU cycles spent for the current event.
+    /// Stops the cycle counting and reset the counter in get_average() function.
+    ///
+    /// #Return
+    ///
+    /// The number of CPU cycles spent for the current event.
     #[inline]
     pub fn stop(&mut self, events: u64) -> u64 {
         let elapsed = cycles::rdtsc() - self.start_time;

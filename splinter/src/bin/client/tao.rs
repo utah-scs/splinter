@@ -40,8 +40,14 @@ use zipf::ZipfDistribution;
 
 use splinter::*;
 
-/// This type implements the send half of a TAO client.
-struct TaoSend {
+// Flag to indicate that the client has finished sending and receiving the packets.
+static mut FINISHED: bool = false;
+
+// The max number of outstanding packet allowed at any time per thread.
+static MAX_OUTSTANDING: u64 = 32;
+
+/// This type implements the send and receive of a TAO client.
+struct TaoSendRecv {
     /// Random number generator required to seed the Zipfian distribution.
     random: XorShiftRng,
 
@@ -60,14 +66,11 @@ struct TaoSend {
     /// The total number of requests that have been sent so far.
     sent: u64,
 
-    /// The time interval between two requests (in cycles).
-    delay: u64,
-
     /// The time (in cycles) at which the workload started generating requests.
     start: u64,
 
-    /// The time (in cycles) at which the next request should be issued/generated.
-    next: u64,
+    // Time stamp in cycles at which measurement stopped.
+    stop: u64,
 
     /// Network stack that can actually send an RPC over the network.
     sender: dispatch::Sender,
@@ -87,27 +90,62 @@ struct TaoSend {
     /// The percentage of operations that are assoc_gets. The rest are obj_gets.
     assoc_p: usize,
 
+    /// The network stack required to receives RPC response packets from a network port.
+    receiver: dispatch::Receiver<CacheAligned<PortQueue>>,
+
+    /// Second receiver stack to receive multiget RPC response packets when operating in
+    /// native mode.
+    multi_rx: dispatch::Receiver<CacheAligned<PortQueue>>,
+
+    /// The number of response packets to wait for before printing out statistics.
+    responses: u64,
+
+    /// The total number of responses received so far.
+    recvd: u64,
+
+    /// Vector of sampled request latencies. Required to calculate distributions once all responses
+    /// have been received. This vector is for the obj_get RPC.
+    o_latencies: Vec<u64>,
+
+    /// Vector of sampled request latencies. Required to calculate distributions once all responses
+    /// have been received. This vector is for the assoc_get RPC.
+    a_latencies: Vec<u64>,
+
+    /// Pre-allocated vector to hold assoc keys. Required for the native mode.
+    assoc_keys: Vec<u8>,
+
     /// If true and native is false, then obj_gets are sent out as native gets.
     combine: bool,
+
+    // Flag to indicate if the procedure is finished or not.
+    finished: bool,
+
+    // To keep the mapping between sent and received packets. The client doesn't want to send
+    // more than 32(???) outstanding packets.
+    outstanding: u64,
 }
 
-// Implementation of methods on TaoSend.
-impl TaoSend {
-    /// Constructs a `TaoSend` that can be added to a Netbricks pipeline.
+// Implementation of methods on TaoSendRecv.
+impl TaoSendRecv {
+    /// Constructs a `TaoSendRecv` that can be added to a Netbricks pipeline.
     ///
     /// # Arguments
     ///
+    /// * `port`:      Network port over which responses will be received.
+    /// * `resps`:     The number of responses to be received from the server.
+    /// * `native`:    The flag to represent if the client sends/receives native requests/responses.
+    /// * `send`:      Network port over which requests will be sent out.
+    /// * `dst_ports`: The total number of UDP ports the server is listening on.
     /// * `config`:    Client configuration with Workload related (key and value length etc.) as
     ///                well as network related (Server and Client MAC address etc.) parameters.
-    /// * `port`:      Network port over which requests will be sent out.
-    /// * `reqs`:      The number of requests to be issued to the server.
-    /// * `dst_ports`: The total number of UDP ports the server is listening on.
     pub fn new(
-        config: &config::ClientConfig,
         port: CacheAligned<PortQueue>,
-        reqs: u64,
+        resps: u64,
+        native: bool,
+        send: CacheAligned<PortQueue>,
         dst_ports: u16,
-    ) -> TaoSend {
+        config: &config::ClientConfig,
+    ) -> TaoSendRecv {
         // Allocate a vector for the obj_get invoke() RPC's payload. The payload consists of the
         // name of the extension, an opcode, the table id (8 bytes) and the key length.
         let len = "tao".as_bytes().len() + 1 + size_of::<u64>() + 8;
@@ -138,25 +176,37 @@ impl TaoSend {
         let mut na_buff = Vec::with_capacity(10);
         na_buff.resize(10, 0);
 
-        TaoSend {
+        // Pre-populate a vector for assoc keys.
+        let mut a_keys = Vec::with_capacity(72);
+        a_keys.resize(72, 0);
+
+        TaoSendRecv {
             random: XorShiftRng::from_seed(rand::random::<[u32; 4]>()),
             k_dist: ZipfDistribution::new(config.n_keys, config.skew)
                 .expect("Failed to init key generator."),
             t_dist: ZipfDistribution::new(config.num_tenants as usize, config.tenant_skew)
                 .expect("Failed to init tenant generator."),
-            native: !config.use_invoke,
-            requests: reqs,
+            native: native,
+            requests: config.num_reqs as u64,
             sent: 0,
-            delay: cycles::cycles_per_second() / config.req_rate as u64,
             start: cycles::rdtsc(),
-            next: 0,
-            sender: dispatch::Sender::new(config, port, dst_ports),
+            stop: 0,
+            multi_rx: dispatch::Receiver::new(send.clone()),
+            sender: dispatch::Sender::new(config, send, dst_ports),
             no_buff: no_buff,
             na_buff: na_buff,
             io_buff: io_buff,
             ia_buff: ia_buff,
             assoc_p: config.assocs_p,
             combine: config.combined,
+            receiver: dispatch::Receiver::new(port),
+            responses: resps,
+            recvd: 0,
+            o_latencies: Vec::with_capacity(2 * 1000 * 1000),
+            a_latencies: Vec::with_capacity(2 * 1000 * 1000),
+            assoc_keys: a_keys,
+            finished: false,
+            outstanding: 0,
         }
     }
 
@@ -221,114 +271,24 @@ impl TaoSend {
             },
         }
     }
-}
 
-// Implementation of the Executable trait so that we can use Netbrick's DPDK bindings.
-impl Executable for TaoSend {
-    fn execute(&mut self) {
+    /// The function which intiate the sending of the requests.
+    fn send(&mut self) {
         // Return if there are no more requests to generate.
         if self.requests <= self.sent {
+            self.finished = true;
             return;
         }
 
-        // Send out a request at the configured request rate.
-        let curr = cycles::rdtsc();
-        if curr >= self.next || self.next == 0 {
+        // Send when the outstanding packets are less than `MAX_OUTSTANDING`.
+        while self.outstanding < MAX_OUTSTANDING {
+            // Send out a request at the configured request rate.
+            let curr = cycles::rdtsc();
+
             self.generate(curr);
 
             self.sent += 1;
-            self.next = self.start + self.sent * self.delay;
-        }
-    }
-
-    fn dependencies(&mut self) -> Vec<usize> {
-        vec![]
-    }
-}
-
-/// This type implements the receive half of a client that issues back to back TAO reads to a
-/// server.
-struct TaoRecv {
-    /// The network stack required to receives RPC response packets from a network port.
-    receiver: dispatch::Receiver<CacheAligned<PortQueue>>,
-
-    /// Second receiver stack to receive multiget RPC response packets when operating in
-    /// native mode.
-    multi_rx: dispatch::Receiver<CacheAligned<PortQueue>>,
-
-    /// Network stack that can actually send an RPC over the network. Required for the native case.
-    sender: dispatch::Sender,
-
-    /// Flag indicating whether requests sent out were native (true) or invocations (false).
-    native: bool,
-
-    /// The number of response packets to wait for before printing out statistics.
-    responses: u64,
-
-    /// Time stamp in cycles at which measurement started. Required to calculate observed
-    /// throughput of the Sandstorm server.
-    start: u64,
-
-    /// The total number of responses received so far.
-    recvd: u64,
-
-    /// Vector of sampled request latencies. Required to calculate distributions once all responses
-    /// have been received. This vector is for the obj_get RPC.
-    o_latencies: Vec<u64>,
-
-    /// Vector of sampled request latencies. Required to calculate distributions once all responses
-    /// have been received. This vector is for the assoc_get RPC.
-    a_latencies: Vec<u64>,
-
-    /// Pre-allocated vector to hold assoc keys. Required for the native mode.
-    assoc_keys: Vec<u8>,
-
-    /// If true and native is false, then obj_gets are sent out as native gets.
-    combine: bool,
-}
-
-// Implementation of methods on TaoRecv.
-impl TaoRecv {
-    /// Returns an `TaoRecv`.
-    ///
-    /// # Arguments
-    ///
-    /// * `port` :     Network port on which responses will be polled for.
-    /// * `resps`:     The number of responses to wait for before calculating statistics.
-    /// * `native`:    Boolean indicating whether responses are for native (true) RPCs or
-    ///                invoke (false) RPCs
-    /// * `send`:      Network port over which requests will be sent out.
-    /// * `dst_ports`: The total number of UDP ports the server is listening on.
-    /// * `config`:    Client configuration with Workload related (key and value length etc.) as
-    ///                well as network related (Server and Client MAC address etc.) parameters.
-    ///
-    /// # Return
-    ///
-    /// A receiver that measures the median latency and throughput of a Sandstorm server.
-    fn new(
-        port: CacheAligned<PortQueue>,
-        resps: u64,
-        native: bool,
-        send: CacheAligned<PortQueue>,
-        dst_ports: u16,
-        config: &config::ClientConfig,
-    ) -> TaoRecv {
-        // Pre-populate a vector for assoc keys.
-        let mut a_keys = Vec::with_capacity(72);
-        a_keys.resize(72, 0);
-
-        TaoRecv {
-            receiver: dispatch::Receiver::new(port),
-            multi_rx: dispatch::Receiver::new(send.clone()),
-            sender: dispatch::Sender::new(config, send, dst_ports),
-            native: native,
-            responses: resps,
-            start: cycles::rdtsc(),
-            recvd: 0,
-            o_latencies: Vec::with_capacity(2 * 1000 * 1000),
-            a_latencies: Vec::with_capacity(2 * 1000 * 1000),
-            assoc_keys: a_keys,
-            combine: config.combined,
+            self.outstanding += 1;
         }
     }
 
@@ -358,38 +318,39 @@ impl TaoRecv {
         }
     }
 
-    /// Prints out the measured latency distribution and throughput.
-    fn measurements(&mut self) {
-        let stop = cycles::rdtsc();
-
-        self.o_latencies.sort();
-        let o_median = self.o_latencies[self.o_latencies.len() / 2];
-        let o_tail = self.o_latencies[(self.o_latencies.len() * 99) / 100];
-        let o_mean = self.o_latencies.iter().sum::<u64>() as f64 / self.o_latencies.len() as f64;
-
-        self.a_latencies.sort();
-        let a_median = self.a_latencies[self.a_latencies.len() / 2];
-        let a_tail = self.a_latencies[(self.a_latencies.len() * 99) / 100];
-        let a_mean = self.a_latencies.iter().sum::<u64>() as f64 / self.a_latencies.len() as f64;
-
-        info!(
-            "AMean(ns) {} AMedian(ns): {} ATail(ns) {} OMean(ns) {} OMedian(ns): {} OTail(ns): {} Throughput(Kops/s): {}",
-            cycles::to_seconds(a_mean as u64) * 1e9,
-            cycles::to_seconds(a_median) * 1e9,
-            cycles::to_seconds(a_tail) * 1e9,
-            cycles::to_seconds(o_mean as u64) * 1e9,
-            cycles::to_seconds(o_median) * 1e9,
-            cycles::to_seconds(o_tail) * 1e9,
-            self.recvd as f64 / cycles::to_seconds(stop - self.start)
-        );
-    }
-}
-
-// Implementation of the Executable trait so that we can use Netbrick's DPDK bindings.
-impl Executable for TaoRecv {
-    fn execute(&mut self) {
-        // Do nothing if all responses have been received.
+    // Receive packets in response to the requests generated from send() function.
+    fn recv(&mut self) {
+        // Free incoming packets if all responses have been received.
         if self.responses <= self.recvd {
+            // Free single operation responses.
+            if let Some(mut resps) = self.receiver.recv_res() {
+                while let Some(packet) = resps.pop() {
+                    self.outstanding -= 1;
+                    if self.native {
+                        let p = packet.parse_header::<GetResponse>();
+                        p.free_packet();
+                    } else {
+                        if self.combine && packet.get_payload().len() <= 50 {
+                            let p = packet.parse_header::<GetResponse>();
+                            p.free_packet();
+                            continue;
+                        }
+                        let p  = packet.parse_header::<InvokeResponse>();
+                        p.free_packet();
+                    }
+                }
+            }
+
+            // Free multi-operation responses.
+            if self.native {
+                if let Some(mut resps) = self.multi_rx.recv_res() {
+                    while let Some(packet) = resps.pop() {
+                        self.outstanding -= 1;
+                        let p = packet.parse_header::<MultiGetResponse>();
+                        p.free_packet();
+                    }
+                }
+            }
             return;
         }
 
@@ -402,6 +363,7 @@ impl Executable for TaoRecv {
                     // Response to obj_get.
                     if p.get_payload().len() < 50 {
                         self.recvd += 1;
+                        self.outstanding -= 1;
 
                         if self.recvd & 0xf == 0 {
                             self.o_latencies
@@ -425,6 +387,7 @@ impl Executable for TaoRecv {
                     p.free_packet();
                 } else {
                     self.recvd += 1;
+                    self.outstanding -= 1;
 
                     if self.combine && packet.get_payload().len() <= 50 {
                         let p = packet.parse_header::<GetResponse>();
@@ -456,6 +419,7 @@ impl Executable for TaoRecv {
             if let Some(mut resps) = self.multi_rx.recv_res() {
                 while let Some(packet) = resps.pop() {
                     self.recvd += 1;
+                    self.outstanding -= 1;
 
                     let p = packet.parse_header::<MultiGetResponse>();
                     if self.recvd & 0xf == 0 {
@@ -469,8 +433,20 @@ impl Executable for TaoRecv {
 
         // Print out measurements after all responses have been received.
         if self.responses <= self.recvd {
-            self.measurements();
+            self.stop = cycles::rdtsc();
         }
+    }
+}
+
+// Implementation of the Executable trait so that we can use Netbrick's DPDK bindings.
+impl Executable for TaoSendRecv {
+    fn execute(&mut self) {
+        if self.finished == true {
+            unsafe { FINISHED = true }
+            return;
+        }
+        self.send();
+        self.recv();
     }
 
     fn dependencies(&mut self) -> Vec<usize> {
@@ -478,44 +454,29 @@ impl Executable for TaoRecv {
     }
 }
 
-/// Sets up TaoSend by adding it to a Netbricks scheduler.
-///
-/// # Arguments
-///
-/// * `config`:    Network related configuration such as the MAC and IP address.
-/// * `ports`:     Network port on which packets will be sent.
-/// * `scheduler`: Netbricks scheduler to which TaoSend will be added.
-fn setup_send<S>(
-    config: &config::ClientConfig,
-    ports: Vec<CacheAligned<PortQueue>>,
-    scheduler: &mut S,
-    _core: i32,
-) where
-    S: Scheduler + Sized,
-{
-    if ports.len() != 1 {
-        error!("Client should be configured with exactly 1 port!");
-        std::process::exit(1);
-    }
+impl Drop for TaoSendRecv {
+    /// Prints out the measured latency distribution and throughput.
+    fn drop(&mut self) {
+        self.o_latencies.sort();
+        let o_median = self.o_latencies[self.o_latencies.len() / 2];
+        let o_tail = self.o_latencies[(self.o_latencies.len() * 99) / 100];
+        let o_mean = self.o_latencies.iter().sum::<u64>() as f64 / self.o_latencies.len() as f64;
 
-    // Add the sender to a netbricks pipeline.
-    match scheduler.add_task(TaoSend::new(
-        config,
-        ports[0].clone(),
-        config.num_reqs as u64,
-        config.server_udp_ports as u16,
-    )) {
-        Ok(_) => {
-            info!(
-                "Successfully added TaoSend with tx queue {}.",
-                ports[0].txq()
-            );
-        }
+        self.a_latencies.sort();
+        let a_median = self.a_latencies[self.a_latencies.len() / 2];
+        let a_tail = self.a_latencies[(self.a_latencies.len() * 99) / 100];
+        let a_mean = self.a_latencies.iter().sum::<u64>() as f64 / self.a_latencies.len() as f64;
 
-        Err(ref err) => {
-            error!("Error while adding to Netbricks pipeline {}", err);
-            std::process::exit(1);
-        }
+        println!(
+            "AMean(ns) {} AMedian(ns): {} ATail(ns) {} OMean(ns) {} OMedian(ns): {} OTail(ns): {} Throughput(Kops/s): {}",
+            cycles::to_seconds(a_mean as u64) * 1e9,
+            cycles::to_seconds(a_median) * 1e9,
+            cycles::to_seconds(a_tail) * 1e9,
+            cycles::to_seconds(o_mean as u64) * 1e9,
+            cycles::to_seconds(o_median) * 1e9,
+            cycles::to_seconds(o_tail) * 1e9,
+            self.recvd as f64 / cycles::to_seconds(self.stop - self.start)
+        );
     }
 }
 
@@ -529,7 +490,7 @@ fn setup_send<S>(
 ///                RPCs.
 /// * `send`:      Network port on which packets will be sent.
 /// * `config`:    Network related configuration such as the MAC and IP address.
-fn setup_recv<S>(
+fn setup_send_recv<S>(
     ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
     _core: i32,
@@ -545,7 +506,7 @@ fn setup_recv<S>(
     }
 
     // Add the receiver to a netbricks pipeline.
-    match scheduler.add_task(TaoRecv::new(
+    match scheduler.add_task(TaoSendRecv::new(
         ports[0].clone(),
         32 * 1000 * 1000 as u64,
         native,
@@ -573,10 +534,6 @@ fn main() {
     let config = config::ClientConfig::load();
     info!("Starting up Sandstorm client with config {:?}", config);
 
-    // Based on the supplied client configuration, compute the amount of time it will take to send
-    // out `num_reqs` requests at a rate of `req_rate` requests per second.
-    let exec = config.num_reqs / config.req_rate;
-
     // Setup Netbricks.
     let mut net_context = setup::config_and_init_netbricks(&config);
 
@@ -584,31 +541,30 @@ fn main() {
     net_context.start_schedulers();
 
     // The core id's which will run the sender and receiver threads.
-    // XXX The following two arrays heavily depend on the set of cores
+    // XXX The following array heavily depend on the set of cores
     // configured in setup.rs
-    let senders = [0, 2, 4, 6];
-    let receive = [1, 3, 5, 7];
-    assert!((senders.len() == 4) && (receive.len() == 4));
+    let senders_receivers = [0, 1, 2, 3, 4, 5, 6, 7];
+    assert!(senders_receivers.len() == 8);
 
     // Required by AggregateRecv.
     let native = !config.use_invoke;
 
-    // Setup 4 senders and 4 receivers.
-    for i in 0..4 {
+    // Setup 8 senders, and receivers.
+    for i in 0..8 {
         // First, retrieve a tx-rx queue pair from Netbricks
         let port = net_context
             .rx_queues
-            .get(&senders[i])
+            .get(&senders_receivers[i])
             .expect("Failed to retrieve network port!")
             .clone();
 
         // Setup the receive side.
         net_context
             .add_pipeline_to_core(
-                receive[i],
+                senders_receivers[i],
                 Arc::new(
                     move |send, sched: &mut StandaloneScheduler, core: i32, _sibling| {
-                        setup_recv(
+                        setup_send_recv(
                             port.clone(),
                             sched,
                             core,
@@ -618,20 +574,7 @@ fn main() {
                         )
                     },
                 ),
-            )
-            .expect("Failed to initialize receive side.");
-
-        // Setup the send side.
-        net_context
-            .add_pipeline_to_core(
-                senders[i],
-                Arc::new(
-                    move |ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
-                        setup_send(&config::ClientConfig::load(), ports, sched, core)
-                    },
-                ),
-            )
-            .expect("Failed to initialize send side.");
+            ).expect("Failed to initialize receive side.");
     }
 
     // Run the client.
@@ -639,7 +582,11 @@ fn main() {
 
     // Sleep for an amount of time approximately equal to the estimated execution time, and then
     // shutdown the client.
-    std::thread::sleep(std::time::Duration::from_secs(exec as u64 + 10));
+    unsafe {
+        while !FINISHED {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+    }
 
     // Stop the client.
     net_context.stop();

@@ -1,0 +1,110 @@
+#!/bin/bash
+#
+# Copyright (c) 2018 University of Utah
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+# Export DPDK bindings to the current shell.
+export LD_LIBRARY_PATH=$(pwd)/net/target/native
+
+cd splinter
+
+# Check for a TOML file with client related configuration.
+if [[ ! -f client.toml ]]; then
+    echo "Missing client.toml file (in db directory)."
+    exit -1
+fi
+
+# If a command line argument was provided, use it as a request rate for YCSB.
+if [ $# -eq 1 ]
+then
+    # Configure the client TOML file with the request rate.
+    sed -i "s/req_rate = [1-9][0-9]*/req_rate = $1/g" client.toml
+
+    # Remove any preexisting temp files.
+    rm -f ../samples.temp
+
+    # Run YCSB.
+    RUST_LOG=debug ./target/release/ycsb-abce >> ../samples.temp
+
+    # Calculate the total throughput.
+    thrpt=$(cat ../samples.temp | grep "YCSB Throughput" | \
+            awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+
+    # Print out final numbers.
+    m=$(cat ../samples.temp | grep ">>>" | awk '{ print $2 }')
+    t=$(cat ../samples.temp | grep ">>>" | awk '{ print $3 }')
+    echo ""
+    echo "Median(ns): $m, Tail(ns): $t, Throughput(op/s): $thrpt"
+    rm -f ../samples.temp
+
+    exit 0
+fi
+
+# Get the "use_invoke" field from the client configuration. The output file
+# will be markes with the value of this field, allowing to distinguish between
+# experiments run with an invoke based YCSB, and experiments run with a native
+# operation based YCSB.
+invoke=$(cat client.toml | grep "use_invoke" | awk '{ print $NF }')
+
+# The number of tenants requests are being generated for. Each data point in the
+# output file is marked with this number.
+tenants=$(cat client.toml | grep "num_tenants" | awk '{ print $NF }')
+
+# The skew with which tenants are chosen by the client. Each data point in the
+# output file is marked with this number.
+tenant_skew=$(cat client.toml | grep "tenant_skew" | awk '{ print $NF }')
+
+# The number of server cores being stressed by YCSB. Each data point in the
+# output file is marked with this number.
+cores=$(cat client.toml | grep "server_udp_ports" | awk '{ print $NF }')
+
+# The request rate configured in the client.toml file.
+rate=$(cat client.toml | grep "req_rate" | awk '{ print $NF }')
+
+# The order of scan for ycsb-e.
+order=(1 2 4 8 16 32 64 128)
+
+# Header for the output file. Required inorder to plot the results.
+echo "Offered ASize Order 50 99 Tenants TSkew Cores Thrpt" > ../ycsb-abce_invoke_"$invoke".data
+
+# Run YCSB-E for each of the above request rates.
+for ord in ${order[@]}
+do
+    # Configure the client TOML file with the order.
+    sed -i "s/order = [0-9][0-9]*/order = $ord/g" client.toml
+
+    echo "rate=$rate, invoke=$invoke, tenants=$tenants, tenant_skew=$tenant_skew, cores=$cores, size=$size, order=$ord"
+
+    # Run YCSB, and write out the output to a file.
+    rm -f ../samples.temp
+    RUST_LOG=debug ./target/release/ycsb-abce >> ../samples.temp 2>&1
+
+    # Calculate the total measured server throughput.
+    thrpt=$(cat ../samples.temp | grep "YCSB Throughput" | \
+       awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+
+    # Print the panic!() message on the console to avoid any error.
+    cat ../samples.temp | grep "panicked"
+
+    # Print final numbers to a file.
+    cat ../samples.temp | grep ">>>" | \
+        awk "{ print $rate, $size, $ord, \$2, \$3, $tenants, $tenant_skew, $cores, $thrpt }" >> \
+        ../ycsb-abce_invoke_"$invoke".data
+
+    # Cleanup temp file.
+    rm ../samples.temp
+
+done
+
+exit 0

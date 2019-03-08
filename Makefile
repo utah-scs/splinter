@@ -9,6 +9,7 @@ all: netbricks
 	(cd ext/long; cargo build --release)
 	(cd ext/aggregate; cargo build --release)
 	(cd ext/pushback; cargo build --release)
+	(cd ext/scan; cargo build --release)
 
 .PHONY: so-test
 
@@ -16,8 +17,9 @@ so-test: netbricks
 	(cd db; cargo build --release)
 	(cd splinter; cargo build --release)
 	(cd ext/test; cargo build --release)
-	$(foreach i,$(shell seq 0 99),cp ext/test/target/release/deps/libtest.so ext/get/target/release/deps/libtest$(i).so;)
+	$(foreach i,$(shell seq 0 99),cp ext/test/target/release/libtest.so ext/test/target/release/libtest$(i).so;)
 	(cd db; LD_LIBRARY_PATH=../net/target/native RUST_BACKTRACE=1 cargo run --release --bin ext_bench)
+	(cd ext/test; cargo clean)
 
 bench: netbricks
 	(cd db; cargo run --release --bin table_bench)
@@ -42,5 +44,6 @@ clean:
 	(cd ext/long; cargo clean)
 	(cd ext/aggregate; cargo clean)
 	(cd ext/pushback; cargo clean)
+	(cd ext/scan; cargo clean)
 	(cd sandstorm; cargo clean)
 	(cd net; ./build.sh clean)

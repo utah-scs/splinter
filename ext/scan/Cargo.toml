@@ -1,0 +1,10 @@
+[package]
+name = "scan"
+version = "0.1.0"
+authors = ["Ankit Bhardwaj <bhrdwj.ankit@gmail.com>"]
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+sandstorm = { path = "../../sandstorm" }

@@ -26,39 +26,29 @@ extern crate zipf;
 mod setup;
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
 use std::fmt::Display;
 use std::mem;
 use std::mem::transmute;
 use std::sync::Arc;
 
 use db::config;
-use db::cyclecounter::CycleCounter;
 use db::cycles;
 use db::e2d2::allocators::*;
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
 use db::log::*;
-use db::master::Master;
 use db::rpc::*;
-use db::task::TaskState::*;
 use db::wireformat::*;
 
-use rand::distributions::{Normal, Sample};
+use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
-use splinter::manager::TaskManager;
 use splinter::*;
 use zipf::ZipfDistribution;
 
 // Flag to indicate that the client has finished sending and receiving the packets.
 static mut FINISHED: bool = false;
 
-// Flag to indicate that the client can generate Compute Request based on some distribution.
-static mut ORD_DIST: bool = false;
-static ORDER: f64 = 2500.0;
-static STD_DEV: f64 = 500.0;
-
-// PUSHBACK benchmark.
+// YCSB A, B, and C benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
 // share the same benchmark instance. Each thread can call `abc()` which
 // runs the benchmark until another thread calls `stop()`. Each thread
@@ -67,17 +57,16 @@ static STD_DEV: f64 = 500.0;
 // function pointers to get/put on `new()` and just calls those as it runs.
 //
 // The tests below give an example of how to use it and how to aggregate the results.
-pub struct Pushback {
+pub struct Ycsb {
     put_pct: usize,
     rng: Box<Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
-    order_rng: Box<Normal>,
     key_buf: Vec<u8>,
     value_buf: Vec<u8>,
 }
 
-impl Pushback {
+impl Ycsb {
     // Create a new benchmark instance.
     //
     // # Arguments
@@ -86,11 +75,11 @@ impl Pushback {
     //  - value_len: Length of the values to store per put. Always all zero bytes.
     //  - n_keys: Number of keys from which random keys are drawn.
     //  - put_pct: Number between 0 and 100 indicating percent of ops that are sets.
-    //  - skew: Zipfian skew parameter. 0.99 is PUSHBACK default.
+    //  - skew: Zipfian skew parameter. 0.99 is YCSB default.
     //  - n_tenants: The number of tenants from which the tenant id is chosen.
     //  - tenant_skew: The skew in the Zipfian distribution from which tenant id's are drawn.
     // # Return
-    //  A new instance of PUSHBACK that threads can call `abc()` on to run.
+    //  A new instance of YCSB that threads can call `abc()` on to run.
     fn new(
         key_len: usize,
         value_len: usize,
@@ -99,7 +88,7 @@ impl Pushback {
         skew: f64,
         n_tenants: u32,
         tenant_skew: f64,
-    ) -> Pushback {
+    ) -> Ycsb {
         let seed: [u32; 4] = rand::random::<[u32; 4]>();
 
         let mut key_buf: Vec<u8> = Vec::with_capacity(key_len);
@@ -107,7 +96,7 @@ impl Pushback {
         let mut value_buf: Vec<u8> = Vec::with_capacity(value_len);
         value_buf.resize(value_len, 0);
 
-        Pushback {
+        Ycsb {
             put_pct: put_pct,
             rng: Box::new(XorShiftRng::from_seed(seed)),
             key_rng: Box::new(
@@ -117,14 +106,13 @@ impl Pushback {
                 ZipfDistribution::new(n_tenants as usize, tenant_skew)
                     .expect("Couldn't create tenant RNG."),
             ),
-            order_rng: Box::new(Normal::new(ORDER, STD_DEV)),
             key_buf: key_buf,
             value_buf: value_buf,
         }
     }
 
-    // Run PUSHBACK A, B, or C (depending on `new()` parameters).
-    // The calling thread will not return until `done()` is called on this `Pushback` instance.
+    // Run YCSB A, B, or C (depending on `new()` parameters).
+    // The calling thread will not return until `done()` is called on this `Ycsb` instance.
     //
     // # Arguments
     //  - get: A function that fetches the data stored under a bytestring key of `self.key_len` bytes.
@@ -135,8 +123,8 @@ impl Pushback {
     //  number of gets it performed, and the number of puts it performed.
     pub fn abc<G, P, R>(&mut self, mut get: G, mut put: P) -> R
     where
-        G: FnMut(u32, &[u8], u32) -> R,
-        P: FnMut(u32, &[u8], &[u8], u32) -> R,
+        G: FnMut(u32, &[u8]) -> R,
+        P: FnMut(u32, &[u8], &[u8]) -> R,
     {
         let is_get = (self.rng.gen::<u32>() % 100) >= self.put_pct as u32;
 
@@ -148,18 +136,16 @@ impl Pushback {
         let k: [u8; 4] = unsafe { transmute(k.to_le()) };
         self.key_buf[0..mem::size_of::<u32>()].copy_from_slice(&k);
 
-        let o = self.order_rng.sample(&mut self.rng).abs() as u32;
-
         if is_get {
-            get(t, self.key_buf.as_slice(), o)
+            get(t, self.key_buf.as_slice())
         } else {
-            put(t, self.key_buf.as_slice(), self.value_buf.as_slice(), o)
+            put(t, self.key_buf.as_slice(), self.value_buf.as_slice())
         }
     }
 }
 
-/// Receives responses to PUSHBACK requests sent out by PushbackSend.
-struct PushbackRecvSend<T>
+/// Receives responses to Ycsb requests sent out by YcsbSend.
+struct YcsbABCE<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
@@ -186,8 +172,8 @@ where
     // Time stamp in cycles at which measurement stopped.
     stop: u64,
 
-    // The actual PUSHBACK workload. Required to generate keys and values for get() and put() requests.
-    workload: RefCell<Pushback>,
+    // The actual Ycsb workload. Required to generate keys and values for get() and put() requests.
+    workload: RefCell<Ycsb>,
 
     // Network stack required to actually send RPC requests out the network.
     sender: Arc<dispatch::Sender>,
@@ -204,11 +190,19 @@ where
 
     // Payload for an invoke() based get operation. Required in order to avoid making intermediate
     // copies of the extension name, table id, and key.
-    payload_pushback: RefCell<Vec<u8>>,
+    payload_get: RefCell<Vec<u8>>,
 
     // Payload for an invoke() based put operation. Required in order to avoid making intermediate
     // copies of the extension name, table id, key length, key, and value.
     payload_put: RefCell<Vec<u8>>,
+
+    // Payload for an invoke() based range scan operation. Required in order to avoid making
+    // intermediate copies of the extension name, table id, range value and key.
+    payload_scan: RefCell<Vec<u8>>,
+
+    // If true, the client generates the range scan requests. The client will generate (100-put_pct)
+    // percentage of scan queries and remaining put() operations.
+    enable_scan: bool,
 
     // Flag to indicate if the procedure is finished or not.
     finished: bool,
@@ -216,45 +210,14 @@ where
     // To keep the mapping between sent and received packets. The client doesn't want to send
     // more than 32(XXX) outstanding packets.
     outstanding: u64,
-
-    /// A ref counted pointer to a master service. The master service
-    /// implements the primary interface to the database.
-    master_service: Arc<Master>,
-
-    // To keep a mapping between each packet and request parameters. This information will be used
-    // when the server pushes back the extension.
-    manager: RefCell<HashMap<u64, TaskManager>>,
-
-    // Run-queue of tasks waiting to execute. Tasks on this queue have either yielded, or have been
-    // recently enqueued and never run before.
-    waiting: VecDeque<TaskManager>,
-
-    // Number of tasks completed on the client, after server pushback. Wraps around
-    // after each 1L such tasks.
-    pushback_completed: u64,
-
-    // Counts the number of CPU cycle spent on the task execution when client executes the
-    // extensions on its end.
-    cycle_counter: CycleCounter,
-
-    // Keeps track of the state of a multi-operation request. For example, an extension performs
-    // four get operations before performing aggregation and all these get operations are dependent
-    // on the previous value.
-    native_state: RefCell<HashMap<u64, u8>>,
-
-    /// Number of keys to aggregate across. Required for the native case.
-    num: u32,
-
-    /// Order of the final polynomial to be computed.
-    ord: u32,
 }
 
-// Implementation of methods on PushbackRecv.
-impl<T> PushbackRecvSend<T>
+// Implementation of methods on YcsbRecv.
+impl<T> YcsbABCE<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
-    /// Constructs a PushbackRecv.
+    /// Constructs a YcsbRecv.
     ///
     /// # Arguments
     ///
@@ -265,7 +228,7 @@ where
     ///
     /// # Return
     ///
-    /// A PUSHBACK response receiver that measures the median latency and throughput of a Sandstorm
+    /// A Ycsb response receiver that measures the median latency and throughput of a Sandstorm
     /// server.
     fn new(
         rx_port: T,
@@ -275,40 +238,45 @@ where
         tx_port: CacheAligned<PortQueue>,
         reqs: u64,
         dst_ports: u16,
-        masterservice: Arc<Master>,
-        number: u32,
-        order: u32,
-    ) -> PushbackRecvSend<T> {
-        // The payload on an invoke() based get request consists of the extensions name ("pushback"),
-        // the table id to perform the lookup on, number of get(), number of CPU cycles and the key to lookup.
-        let payload_len = "pushback".as_bytes().len()
-            + mem::size_of::<u64>()
-            + mem::size_of::<u32>()
-            + mem::size_of::<u32>()
-            + config.key_len;
-        let mut payload_pushback = Vec::with_capacity(payload_len);
-        payload_pushback.extend_from_slice("pushback".as_bytes());
-        payload_pushback.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
-        payload_pushback.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(number.to_le()) });
-        payload_pushback.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(order.to_le()) });
-        payload_pushback.resize(payload_len, 0);
+    ) -> YcsbABCE<T> {
+        // The payload on an invoke() based get request consists of the extensions name ("get"),
+        // the table id to perform the lookup on, and the key to lookup.
+        let payload_len = "get".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
+        let mut payload_get = Vec::with_capacity(payload_len);
+        payload_get.extend_from_slice("get".as_bytes());
+        payload_get.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
+        payload_get.resize(payload_len, 0);
 
         // The payload on an invoke() based put request consists of the extensions name ("put"),
         // the table id to perform the lookup on, the length of the key to lookup, the key, and the
         // value to be inserted into the database.
-        let payload_len = "pushback".as_bytes().len()
+        let payload_len = "put".as_bytes().len()
             + mem::size_of::<u64>()
             + mem::size_of::<u16>()
             + config.key_len
             + config.value_len;
         let mut payload_put = Vec::with_capacity(payload_len);
-        payload_put.extend_from_slice("pushback".as_bytes());
+        payload_put.extend_from_slice("put".as_bytes());
         payload_put.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
         payload_put.extend_from_slice(&unsafe {
             transmute::<u16, [u8; 2]>((config.key_len as u16).to_le())
         });
         payload_put.resize(payload_len, 0);
-        PushbackRecvSend {
+
+        // Payload for an invoke() based range scan operation. Required in order to avoid making
+        // intermediate copies of the extension name, table id, range value and key.
+        let range = config.scan_range;
+        let payload_len = "scan".as_bytes().len()
+            + mem::size_of::<u64>()
+            + mem::size_of::<u32>()
+            + config.key_len;
+        let mut payload_scan = Vec::with_capacity(payload_len);
+        payload_scan.extend_from_slice("scan".as_bytes());
+        payload_scan.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
+        payload_scan.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(range.to_le()) });
+        payload_scan.resize(payload_len, 0);
+
+        YcsbABCE {
             receiver: dispatch::Receiver::new(rx_port),
             responses: resps,
             start: cycles::rdtsc(),
@@ -316,11 +284,11 @@ where
             latencies: Vec::with_capacity(resps as usize),
             master: master,
             stop: 0,
-            workload: RefCell::new(Pushback::new(
+            workload: RefCell::new(Ycsb::new(
                 config.key_len,
                 config.value_len,
                 config.n_keys,
-                0, //config.put_pct,
+                config.put_pct,
                 config.skew,
                 config.num_tenants,
                 config.tenant_skew,
@@ -329,40 +297,13 @@ where
             requests: reqs,
             sent: 0,
             native: !config.use_invoke,
-            payload_pushback: RefCell::new(payload_pushback),
+            payload_get: RefCell::new(payload_get),
             payload_put: RefCell::new(payload_put),
+            payload_scan: RefCell::new(payload_scan),
+            enable_scan: config.enable_scan,
             finished: false,
             outstanding: 0,
-            master_service: Arc::clone(&masterservice),
-            manager: RefCell::new(HashMap::new()),
-            waiting: VecDeque::new(),
-            pushback_completed: 0,
-            cycle_counter: CycleCounter::new(),
-            native_state: RefCell::new(HashMap::with_capacity(32)),
-            num: number,
-            ord: order,
         }
-    }
-
-    fn add_request(&self, req: &[u8], tenant: u32, name_length: u32, id: u64) {
-        let req = TaskManager::new(
-            Arc::clone(&self.master_service),
-            &req,
-            tenant,
-            name_length,
-            id,
-        );
-        match self.manager.borrow_mut().insert(id, req) {
-            Some(_) => {
-                info!("Already present in the Hashmap");
-            }
-
-            None => {}
-        }
-    }
-
-    fn remove_request(&self, id: u64) {
-        self.manager.borrow_mut().remove(&id);
     }
 
     fn send(&mut self) {
@@ -371,6 +312,8 @@ where
             return;
         }
 
+        // If it is either time to send out a request, or if a request has never been sent out,
+        // then, do so.
         while self.outstanding < 32 {
             // Get the current time stamp so that we can determine if it is time to issue the next RPC.
             let curr = cycles::rdtsc();
@@ -378,63 +321,55 @@ where
             if self.native == true {
                 // Configured to issue native RPCs, issue a regular get()/put() operation.
                 self.workload.borrow_mut().abc(
-                    |tenant, key, _ord| self.sender.send_get(tenant, 1, key, curr),
-                    |tenant, key, val, _ord| self.sender.send_put(tenant, 1, key, val, curr),
+                    |tenant, key| self.sender.send_get(tenant, 1, key, curr),
+                    |tenant, key, val| self.sender.send_put(tenant, 1, key, val, curr),
                 );
-                self.native_state.borrow_mut().entry(curr).or_insert(1);
                 self.outstanding += 1;
             } else {
                 // Configured to issue invoke() RPCs.
-                let mut p_get = self.payload_pushback.borrow_mut();
+                let mut p_get = self.payload_get.borrow_mut();
                 let mut p_put = self.payload_put.borrow_mut();
+                let mut p_scan = self.payload_scan.borrow_mut();
 
-                // XXX Heavily dependent on how `Pushback` creates a key. Only the first four
+                // XXX Heavily dependent on how `Ycsb` creates a key. Only the first four
                 // bytes of the key matter, the rest are zero. The value is always zero.
                 self.workload.borrow_mut().abc(
-                    |tenant, key, ord| {
-                        unsafe {
-                            if ORD_DIST {
-                                p_get[20..24]
-                                    .copy_from_slice(&{ transmute::<u32, [u8; 4]>(ord.to_le()) });
-                            }
+                    |tenant, key| {
+                        // If enable_scan is true then generate request for scan() operation else
+                        // generate request for get() operation.
+                        if !self.enable_scan {
+                            // First 11 bytes on the payload were already pre-populated with the
+                            // extension name (3 bytes), and the table id (8 bytes). Just write in the
+                            // first 4 bytes of the key.
+                            p_get[11..15].copy_from_slice(&key[0..4]);
+                            self.sender.send_invoke(tenant, 3, &p_get, curr)
+                        } else {
+                            // First 16 bytes on the payload were already pre-populated with the
+                            // extension name (4 bytes), the table id (8 bytes) and range order
+                            // (4 bytes). Just write in the first 4 bytes of the key.
+                            p_scan[16..20].copy_from_slice(&key[0..4]);
+                            self.sender.send_invoke(tenant, 4, &p_scan, curr)
                         }
-                        // First 24 bytes on the payload were already pre-populated with the
-                        // extension name (8 bytes), the table id (8 bytes), number of get()
-                        // (4 bytes), and number of CPU cycles compute(4 bytes). Just write
-                        // in the first 4 bytes of the key.
-                        p_get[24..28].copy_from_slice(&key[0..4]);
-                        self.add_request(&p_get, tenant, 8, curr);
-                        self.sender.send_invoke(tenant, 8, &p_get, curr)
                     },
-                    |tenant, key, _val, _ord| {
-                        // First 18 bytes on the payload were already pre-populated with the
-                        // extension name (8 bytes), the table id (8 bytes), and the key length (2
+                    |tenant, key, _val| {
+                        // First 13 bytes on the payload were already pre-populated with the
+                        // extension name (3 bytes), the table id (8 bytes), and the key length (2
                         // bytes). Just write in the first 4 bytes of the key. The value is anyway
                         // always zero.
-                        p_put[18..22].copy_from_slice(&key[0..4]);
-                        self.add_request(&p_put, tenant, 8, curr);
-                        self.sender.send_invoke(tenant, 8, &p_put, curr)
+                        p_put[13..17].copy_from_slice(&key[0..4]);
+                        self.sender.send_invoke(tenant, 3, &p_put, curr)
                     },
                 );
                 self.outstanding += 1;
             }
-
-            // Update the time stamp at which the next request should be generated, assuming that
-            // the first request was sent out at self.start.
             self.sent += 1;
-
-            // When packets are sent in batches, server pushes back quickly. Restrict the number
-            // of pushed-back task to .1M and after that send 1 packet each iteration, which will
-            // execute on the server side as it stop triggering the pushback mechanism.
-            if self.waiting.len() >= 100000 {
-                break;
-            }
         }
     }
 
     fn recv(&mut self) {
         // Don't do anything after all responses have been received.
-        if self.finished == true {
+        if self.responses <= self.recvd {
+            self.finished = true;
             return;
         }
 
@@ -442,74 +377,34 @@ where
         // If there are packets, sample the latency of the server.
         if let Some(mut packets) = self.receiver.recv_res() {
             while let Some(packet) = packets.pop() {
-                if self.native == false {
-                    let curr = cycles::rdtsc();
+                self.recvd += 1;
+                let curr = cycles::rdtsc();
+                match self.native {
+                    // The response corresponds to an invoke() RPC.
+                    false => {
+                        let p = packet.parse_header::<InvokeResponse>();
+                        self.latencies
+                            .push(curr - p.get_header().common_header.stamp);
+                        p.free_packet();
+                        self.outstanding -= 1;
+                    }
 
-                    match parse_rpc_opcode(&packet) {
-                        // The response corresponds to an invoke() RPC.
-                        OpCode::SandstormInvokeRpc => {
-                            let p = packet.parse_header::<InvokeResponse>();
-                            match p.get_header().common_header.status {
-                                // If the status is StatusOk then add the stamp to the latencies and
-                                // free the packet.
-                                RpcStatus::StatusOk => {
-                                    self.recvd += 1;
-                                    self.latencies
-                                        .push(curr - p.get_header().common_header.stamp);
-                                    self.outstanding -= 1;
-                                    self.remove_request(p.get_header().common_header.stamp);
-                                }
-
-                                // If the status is StatusPushback then compelete the task, add the
-                                // stamp to the latencies, and free the packet.
-                                RpcStatus::StatusPushback => {
-                                    let records = p.get_payload();
-                                    let hdr = &p.get_header();
-                                    let timestamp = hdr.common_header.stamp;
-
-                                    // Create task and run the generator.
-                                    match self.manager.borrow_mut().remove(&timestamp) {
-                                        Some(mut manager) => {
-                                            manager.create_generator(Arc::clone(&self.sender));
-                                            manager.update_rwset(records);
-                                            self.waiting.push_back(manager);
-                                        }
-
-                                        None => {
-                                            info!("No manager with {} timestamp", timestamp);
-                                        }
-                                    }
-                                    self.latencies.push(cycles::rdtsc() - timestamp);
-                                    self.outstanding -= 1;
-                                }
-
-                                _ => {}
-                            }
-                            p.free_packet();
-                        }
-
-                        // The response corresponds to a get() or put() RPC.
-                        // The opcode on the response identifies the RPC type.
+                    // The response corresponds to a get() or put() RPC.
+                    // The opcode on the response identifies the RPC type.
+                    true => match parse_rpc_opcode(&packet) {
                         OpCode::SandstormGetRpc => {
-                            let p = packet.parse_header::<GetResponse>();
-                            self.latencies
-                                .push(curr - p.get_header().common_header.stamp);
-                            unsafe {
-                                if self
-                                    .manager
-                                    .borrow()
-                                    .contains_key(&p.get_header().common_header.stamp)
-                                {
-                                    let manager = self
-                                        .manager
-                                        .borrow_mut()
-                                        .remove(&p.get_header().common_header.stamp);
-                                    if let Some(mut manager) = manager {
-                                        self.waiting.push_back(manager);
-                                    }
-                                }
+                            if !self.enable_scan {
+                                let p = packet.parse_header::<GetResponse>();
+                                self.latencies
+                                    .push(curr - p.get_header().common_header.stamp);
+                                p.free_packet();
+                            } else {
+                                //TODO: Implement range-scan for native case as part of ycsb-e benchmark.
+
+                                // If scan is completed then Measure latency else generate a get() request
+                                // for next key with timestamp of the first request in the scan() operation.
                             }
-                            p.free_packet();
+                            self.outstanding -= 1;
                         }
 
                         OpCode::SandstormPutRpc => {
@@ -517,40 +412,11 @@ where
                             self.latencies
                                 .push(curr - p.get_header().common_header.stamp);
                             p.free_packet();
+                            self.outstanding -= 1;
                         }
 
                         _ => packet.free_packet(),
-                    }
-                } else {
-                    //The extension is executed locally on the client side.
-                    match parse_rpc_opcode(&packet) {
-                        OpCode::SandstormGetRpc => {
-                            let p = packet.parse_header::<GetResponse>();
-                            let timestamp = p.get_header().common_header.stamp;
-                            let count = *self.native_state.borrow().get(&timestamp).unwrap();
-                            if count == self.num as u8 {
-                                self.recvd += 1;
-                                let start = cycles::rdtsc();
-                                while cycles::rdtsc() - start < self.ord as u64 {}
-                                self.latencies.push(cycles::rdtsc() - timestamp);
-                                self.native_state.borrow_mut().remove(&timestamp);
-                                self.outstanding -= 1;
-                            } else {
-                                // Send the packet with same tenantid, curr etc.
-                                let tenant = p.get_header().common_header.tenant;
-                                let val = p.get_payload();
-                                self.sender.send_get(tenant, 1, &val[0..30], timestamp);
-                                if let Some(count) =
-                                    self.native_state.borrow_mut().get_mut(&timestamp)
-                                {
-                                    *count += 1;
-                                }
-                            }
-                            p.free_packet();
-                        }
-
-                        _ => packet.free_packet(),
-                    }
+                    },
                 }
             }
         }
@@ -559,58 +425,19 @@ where
         // stop timestamp so that throughput can be estimated later.
         if self.responses <= self.recvd {
             self.stop = cycles::rdtsc();
-            self.finished = true;
-        }
-    }
-
-    fn execute_task(&mut self) {
-        // Don't do anything after all responses have been received.
-        if self.finished == true && self.waiting.len() == 0 {
-            return;
-        }
-
-        //Execute the pushed-back task.
-        let manager = self.waiting.pop_front();
-        if let Some(mut manager) = manager {
-            let (taskstate, _time) = manager.execute_task();
-            if taskstate == YIELDED {
-                self.waiting.push_back(manager);
-            } else if taskstate == WAITING {
-                self.manager.borrow_mut().insert(manager.get_id(), manager);
-            } else if taskstate == COMPLETED {
-                self.recvd += 1;
-                if cfg!(feature = "execution") {
-                    self.cycle_counter.total_cycles(_time, 1);
-                    self.pushback_completed += 1;
-                    if self.pushback_completed == 1000000 {
-                        info!(
-                            "Completion time per extension {}",
-                            self.cycle_counter.get_average()
-                        );
-                        self.pushback_completed = 0;
-                    }
-                }
-            }
-        }
-
-        // The moment all response packets have been received, set the value of the
-        // stop timestamp so that throughput can be estimated later.
-        if self.responses <= self.recvd && self.waiting.len() == 0 {
-            self.stop = cycles::rdtsc();
-            self.finished = true;
         }
     }
 }
 
-// Implementation of the `Drop` trait on PushbackRecv.
-impl<T> Drop for PushbackRecvSend<T>
+// Implementation of the `Drop` trait on YcsbRecv.
+impl<T> Drop for YcsbABCE<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
     fn drop(&mut self) {
         // Calculate & print the throughput for all client threads.
         println!(
-            "PUSHBACK Throughput {}",
+            "YCSB Throughput {}",
             self.recvd as f64 / cycles::to_seconds(self.stop - self.start)
         );
 
@@ -642,8 +469,8 @@ where
     }
 }
 
-// Executable trait allowing PushbackRecv to be scheduled by Netbricks.
-impl<T> Executable for PushbackRecvSend<T>
+// Executable trait allowing YcsbRecv to be scheduled by Netbricks.
+impl<T> Executable for YcsbABCE<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
@@ -651,7 +478,6 @@ where
     fn execute(&mut self) {
         self.send();
         self.recv();
-        self.execute_task();
         if self.finished == true {
             unsafe { FINISHED = true }
             return;
@@ -669,7 +495,6 @@ fn setup_send_recv<S>(
     _core: i32,
     master: bool,
     config: &config::ClientConfig,
-    masterservice: Arc<Master>,
 ) where
     S: Scheduler + Sized,
 {
@@ -678,12 +503,8 @@ fn setup_send_recv<S>(
         std::process::exit(1);
     }
 
-    // Pushback compute size.
-    let num = config.num_aggr as u32;
-    let ord = config.order as u32;
-
     // Add the receiver to a netbricks pipeline.
-    match scheduler.add_task(PushbackRecvSend::new(
+    match scheduler.add_task(YcsbABCE::new(
         ports[0].clone(),
         34 * 1000 * 1000 as u64,
         master,
@@ -691,13 +512,10 @@ fn setup_send_recv<S>(
         ports[0].clone(),
         config.num_reqs as u64,
         config.server_udp_ports as u16,
-        masterservice,
-        num,
-        ord,
     )) {
         Ok(_) => {
             info!(
-                "Successfully added PushbackRecvSend with rx-tx queue {}.",
+                "Successfully added YcsbABCE with rx-tx queue {}.",
                 ports[0].rxq()
             );
         }
@@ -714,14 +532,6 @@ fn main() {
 
     let config = config::ClientConfig::load();
     info!("Starting up Sandstorm client with config {:?}", config);
-
-    let masterservice = Arc::new(Master::new());
-
-    // Create tenants with extensions.
-    info!("Populating extension for {} tenants", config.num_tenants);
-    for tenant in 1..(config.num_tenants + 1) {
-        masterservice.load_test(tenant);
-    }
 
     // Setup Netbricks.
     let mut net_context = setup::config_and_init_netbricks(&config);
@@ -749,7 +559,6 @@ fn main() {
             master = true;
         }
 
-        let master_service = Arc::clone(&masterservice);
         // Setup the receive and transmit side.
         net_context
             .add_pipeline_to_core(
@@ -762,7 +571,6 @@ fn main() {
                             core,
                             master,
                             &config::ClientConfig::load(),
-                            Arc::clone(&master_service),
                         )
                     },
                 ),
@@ -782,7 +590,7 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
     }
-    std::thread::sleep(std::time::Duration::from_secs(100));
+    std::thread::sleep(std::time::Duration::from_secs(11));
 
     // Stop the client.
     net_context.stop();
@@ -799,7 +607,7 @@ mod test {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn pushback_abc_basic() {
+    fn Ycsb_abc_basic() {
         let n_threads = 1;
         let mut threads = Vec::with_capacity(n_threads);
         let done = Arc::new(AtomicBool::new(false));
@@ -807,7 +615,7 @@ mod test {
         for _ in 0..n_threads {
             let done = done.clone();
             threads.push(thread::spawn(move || {
-                let mut b = super::Pushback::new(10, 100, 1000000, 5, 0.99);
+                let mut b = super::Ycsb::new(10, 100, 1000000, 5, 0.99);
                 let mut n_gets = 0u64;
                 let mut n_puts = 0u64;
                 let start = Instant::now();
@@ -857,7 +665,7 @@ mod test {
     }
 
     #[test]
-    fn pushback_abc_histogram() {
+    fn Ycsb_abc_histogram() {
         let hist = Arc::new(Mutex::new(HashMap::new()));
 
         let n_keys = 20;
@@ -869,7 +677,7 @@ mod test {
             let hist = hist.clone();
             let done = done.clone();
             threads.push(thread::spawn(move || {
-                let mut b = super::Pushback::new(4, 100, n_keys, 5, 0.99);
+                let mut b = super::Ycsb::new(4, 100, n_keys, 5, 0.99);
                 let mut n_gets = 0u64;
                 let mut n_puts = 0u64;
                 let start = Instant::now();
