@@ -37,7 +37,7 @@ const MAX_ALLOC: usize = 10240;
 /// on this type form the interface allowing extensions to read and write
 /// data from and to the database. The constructors for this type (new() and
 /// default()) should be exposed only to trusted code, and not to extensions.
-pub struct Context {
+pub struct Context<'a> {
     // The packet/buffer consisting of the RPC request header and payload
     // that invoked the extension. This is required to potentially pass in
     // arguments to an extension. For example, a get() extension might require
@@ -64,7 +64,7 @@ pub struct Context {
 
     // The allocator that will be used to allow the extension to write data to
     // one of it's tables.
-    heap: Arc<Allocator>,
+    heap: &'a Allocator,
 
     // The total number of bytes allocated by the extension so far
     // (on the table heap).
@@ -78,7 +78,7 @@ pub struct Context {
 }
 
 // Methods on Context.
-impl Context {
+impl<'a> Context<'a> {
     /// This function returns a context that can be used to invoke an extension.
     ///
     /// # Arguments
@@ -103,8 +103,8 @@ impl Context {
         args_len: usize,
         res: Packet<InvokeResponse, EmptyMetadata>,
         tenant: Arc<Tenant>,
-        alloc: Arc<Allocator>,
-    ) -> Context {
+        alloc: &'a Allocator,
+    ) -> Context<'a> {
         Context {
             request: req,
             args_offset: args_off,
@@ -187,7 +187,7 @@ impl Context {
 }
 
 // The DB trait for Context.
-impl DB for Context {
+impl<'a> DB for Context<'a> {
     /// Lookup the `DB` trait for documentation on this method.
     fn get(&self, table_id: u64, key: &[u8]) -> Option<ReadBuf> {
         // Lookup the database for the key value pair. If it exists, then update

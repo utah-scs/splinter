@@ -17,7 +17,6 @@ use std::cell::Cell;
 use std::ops::{Generator, GeneratorState};
 use std::panic::*;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use super::context::Context;
 use super::cycles;
@@ -29,11 +28,9 @@ use e2d2::headers::UdpHeader;
 use e2d2::interface::Packet;
 
 use sandstorm::common::PACKET_UDP_LEN;
-use sandstorm::db::DB;
-use sandstorm::ext::Extension;
 
 /// A container for untrusted code that can be scheduled by the database.
-pub struct Container {
+pub struct Container<'a> {
     // The current state of the task. Required to determine if the task
     // has completed execution.
     state: TaskState,
@@ -52,12 +49,7 @@ pub struct Container {
 
     // An execution context for the task that implements the DB trait. Required
     // for the task to interact with the database.
-    db: Cell<Option<Rc<Context>>>,
-
-    // A handle to the dynamically loaded extension. Required to initialize the
-    // task, and ensure that the extension stays loaded for as long as the task
-    // is executing in the system.
-    ext: Arc<Extension>,
+    db: Cell<Option<Rc<Context<'a>>>>,
 
     // The actual generator/coroutine containing the extension's code to be
     // executed inside the database.
@@ -65,7 +57,7 @@ pub struct Container {
 }
 
 // Implementation of methods on Container.
-impl Container {
+impl<'a> Container<'a> {
     /// Creates a new container holding an untrusted extension that can be
     /// scheduled by the database.
     ///
@@ -81,7 +73,11 @@ impl Container {
     /// # Return
     ///
     /// A container that when scheduled, runs the extension.
-    pub fn new(prio: TaskPriority, context: Rc<Context>, ext: Arc<Extension>) -> Container {
+    pub fn new(
+        prio: TaskPriority,
+        context: Rc<Context<'a>>,
+        gen: Box<Generator<Yield = u64, Return = u64>>,
+    ) -> Container {
         // The generator is initialized to a dummy. The first call to run() will
         // retrieve the actual generator from the extension.
         Container {
@@ -90,28 +86,16 @@ impl Container {
             time: 0,
             db_time: 0,
             db: Cell::new(Some(context)),
-            ext: ext,
-            gen: Box::new(|| {
-                yield 0;
-                return 0;
-            }),
+            gen: gen,
         }
     }
 }
 
 // Implementation of the Task trait for Container.
-impl Task for Container {
+impl<'a> Task for Container<'a> {
     /// Refer to the Task trait for Documentation.
     fn run(&mut self) -> (TaskState, u64) {
         let start = cycles::rdtsc();
-
-        // If the task has never run before, retrieve the generator for the
-        // extension first.
-        if self.state == INITIALIZED {
-            let context = self.db.replace(None).unwrap();
-            self.gen = self.ext.get(Rc::clone(&context) as Rc<DB>);
-            self.db.set(Some(context));
-        }
 
         // Resume the task if need be. The task needs to be run/resumed only
         // if it is in the INITIALIZED or YIELDED state. Nothing needs to be
