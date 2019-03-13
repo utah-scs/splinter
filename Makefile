@@ -32,6 +32,21 @@ netbricks:
 	mkdir -p net/target/native
 	cp net/native/libzcsi.so net/target/native/libzcsi.so
 
+test: netbricks
+	(cd ext/test; cargo build --release)
+	(cd db; LD_LIBRARY_PATH=../net/target/native cargo test)
+	(cd splinter; LD_LIBRARY_PATH=../net/target/native cargo test)
+	(cd sandstorm; LD_LIBRARY_PATH=../net/target/native cargo test)
+
+coverage: netbricks
+	(curl -sL https://github.com/xd009642/tarpaulin/releases/download/0.7.0/cargo-tarpaulin-0.7.0-travis.tar.gz |\
+	       tar xvz -C ${HOME}/.cargo/bin)
+	(cd ext/test; cargo build --release)
+	(cd db; LD_LIBRARY_PATH=../net/target/native cargo-tarpaulin)
+	(cd splinter; LD_LIBRARY_PATH=../net/target/native cargo-tarpaulin)
+	(cd sandstorm; LD_LIBRARY_PATH=../net/target/native cargo-tarpaulin)
+	(rm -rf db/target/debug/; rm -rf splinter/target/debug/; rm -rf sandstorm/target/debug/)
+
 clean:
 	(cd db; cargo clean)
 	(cd splinter; cargo clean)

@@ -1017,7 +1017,7 @@ impl Master {
                     }
 
                     // Lookup the key, and add it to the response payload.
-                    let alloc: &Allocator = unsafe { transmute(alloc) };
+                    let alloc: &Allocator = accessor(alloc);
                     let res = table
                         .get(key)
                         .and_then(|object| alloc.resolve(object))

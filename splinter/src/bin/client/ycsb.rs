@@ -639,7 +639,6 @@ fn main() {
 mod test {
     use std;
     use std::collections::HashMap;
-    use std::mem::transmute;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -654,7 +653,7 @@ mod test {
         for _ in 0..n_threads {
             let done = done.clone();
             threads.push(thread::spawn(move || {
-                let mut b = super::Ycsb::new(10, 100, 1000000, 5, 0.99);
+                let mut b = super::Ycsb::new(10, 100, 1000000, 5, 0.99, 1024, 0.1);
                 let mut n_gets = 0u64;
                 let mut n_puts = 0u64;
                 let start = Instant::now();
@@ -716,7 +715,7 @@ mod test {
             let hist = hist.clone();
             let done = done.clone();
             threads.push(thread::spawn(move || {
-                let mut b = super::Ycsb::new(4, 100, n_keys, 5, 0.99);
+                let mut b = super::Ycsb::new(4, 100, n_keys, 5, 0.99, 1024, 0.1);
                 let mut n_gets = 0u64;
                 let mut n_puts = 0u64;
                 let start = Instant::now();

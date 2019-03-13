@@ -792,7 +792,6 @@ fn main() {
 mod test {
     use std;
     use std::collections::HashMap;
-    use std::mem::transmute;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -807,12 +806,12 @@ mod test {
         for _ in 0..n_threads {
             let done = done.clone();
             threads.push(thread::spawn(move || {
-                let mut b = super::Pushback::new(10, 100, 1000000, 5, 0.99);
+                let mut b = super::Pushback::new(10, 100, 1000000, 5, 0.99, 1024, 0.1);
                 let mut n_gets = 0u64;
                 let mut n_puts = 0u64;
                 let start = Instant::now();
                 while !done.load(Ordering::Relaxed) {
-                    b.abc(|_t, _key| n_gets += 1, |_t, _key, _value| n_puts += 1);
+                    b.abc(|_t, _key, _ord| n_gets += 1, |_t, _key, _value, _ord| n_puts += 1);
                 }
                 (start.elapsed(), n_gets, n_puts)
             }));
@@ -869,20 +868,20 @@ mod test {
             let hist = hist.clone();
             let done = done.clone();
             threads.push(thread::spawn(move || {
-                let mut b = super::Pushback::new(4, 100, n_keys, 5, 0.99);
+                let mut b = super::Pushback::new(4, 100, n_keys, 5, 0.99, 1024, 0.1);
                 let mut n_gets = 0u64;
                 let mut n_puts = 0u64;
                 let start = Instant::now();
                 while !done.load(Ordering::Relaxed) {
                     b.abc(
-                        |_t, key| {
+                        |_t, key, _ord| {
                             // get
                             let k = convert_key(key);
                             let mut ht = hist.lock().unwrap();
                             ht.entry(k).or_insert((0, 0)).0 += 1;
                             n_gets += 1
                         },
-                        |_t, key, _value| {
+                        |_t, key, _value, _ord| {
                             // put
                             let k = convert_key(key);
                             let mut ht = hist.lock().unwrap();

@@ -82,3 +82,49 @@ impl CycleCounter {
         return 0;
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_init() {
+        let counter = CycleCounter::new();
+        assert_eq!(counter.average, 0);
+        assert_eq!(counter.event_count, 0);
+        assert_eq!(counter.total, 0);
+        assert_eq!(counter.start_time, 0)
+    }
+
+    #[test]
+    fn test_start_stop() {
+        let mut counter = CycleCounter::new();
+        counter.start();
+        let elapsed = counter.stop(1);
+        assert!(counter.get_average() >= 24);
+        assert!(elapsed >= 24);
+    }
+
+    #[test]
+    fn test_total_cycles() {
+        let mut counter = CycleCounter::new();
+        counter.total_cycles(100, 1);
+        assert_eq!(counter.get_average(), 100);
+    }
+
+    #[test]
+    fn test_reset() {
+        let mut counter = CycleCounter::new();
+        counter.total_cycles(100, 1);
+        assert_eq!(counter.get_average(), 100);
+        assert_eq!(counter.event_count, 0);
+        assert_eq!(counter.total, 0);
+    }
+
+    #[test]
+    fn test_average_zero_event() {
+        let mut counter = CycleCounter::new();
+        counter.total_cycles(100, 0);
+        assert_eq!(counter.get_average(), 0);
+    }
+}

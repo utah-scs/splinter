@@ -365,7 +365,7 @@ impl MultiReadBuf {
 /// operation was a put() operation. The value is used in the response to represent if the record
 /// belongs to read set or the write set.
 #[repr(u8)]
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum OpType {
     /// When the value if SandstormRead, the record encapsulated in the response will be added to
     /// the read set corresponding to that extension.
@@ -450,11 +450,11 @@ impl ReadWriteSetBuf {
     }
 }
 
-// This module implements simple unit tests for ReadBuf and WriteBuf.
+// This module implements simple unit tests for MultiReadBuf, ReadBuf, ReadWriteSetBuf and WriteBuf.
 #[cfg(test)]
 mod tests {
-    use super::{ReadBuf, WriteBuf};
-    use bytes::{BufMut, Bytes, BytesMut};
+    use super::{MultiReadBuf, OpType, ReadBuf, ReadWriteSetBuf, Record, WriteBuf};
+    use buf::bytes::{BufMut, Bytes, BytesMut};
 
     // This method tests the "len()" method on ReadBuf.
     #[test]
@@ -523,7 +523,7 @@ mod tests {
         // Verify that the length reported by len() does not include the data
         // written above.
         unsafe {
-            let mut buf = WriteBuf::new(buf);
+            let mut buf = WriteBuf::new(1, buf);
             let data = &[1, 2, 3, 4];
             buf.inner.put_slice(data);
             assert_eq!(data.len(), buf.len());
@@ -542,7 +542,7 @@ mod tests {
         // Wrap up the above BytesMut inside a WriteBuf, and verify that the
         // WriteBuf's capacity does not include the data written above.
         unsafe {
-            let buf = WriteBuf::new(buf);
+            let buf = WriteBuf::new(1, buf);
             assert_eq!(100 - meta.len(), buf.capacity());
         }
     }
@@ -554,7 +554,7 @@ mod tests {
         // Create a WriteBuf, write into it with write_slice(), and the verify
         // that it's contents match what's expected.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(10));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(10));
             let data = &[1, 2, 3, 4, 5];
             buf.write_slice(data);
             assert_eq!(data, &buf.inner[..]);
@@ -568,7 +568,7 @@ mod tests {
     fn test_writebuf_writeslice_overflow() {
         // Create a WriteBuf, and write one byte more than it's capacity.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(100));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(100));
             let data = &[1; 101];
             buf.write_slice(data);
         }
@@ -581,7 +581,7 @@ mod tests {
         // Create a WriteBuf, write into it with write_u8(), and the verify
         // that it's contents match what's expected.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(10));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(10));
             buf.write_u8(200);
 
             let expected = &[200];
@@ -596,7 +596,7 @@ mod tests {
     fn test_writebuf_writeu8_overflow() {
         // Create a WriteBuf, and write one byte more than it's capacity.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(100));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(100));
             let data = &[1; 100];
             buf.write_slice(data);
 
@@ -611,7 +611,7 @@ mod tests {
         // Create a WriteBuf, write into it with write_u16(), and the verify
         // that it's contents match what's expected.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(10));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(10));
             buf.write_u16(258, true);
 
             let expected = &[2, 1];
@@ -626,7 +626,7 @@ mod tests {
         // Create a WriteBuf, write into it with write_u16(), and the verify
         // that it's contents match what's expected.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(10));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(10));
             buf.write_u16(258, false);
 
             let expected = &[1, 2];
@@ -641,7 +641,7 @@ mod tests {
     fn test_writebuf_writeu16_overflow() {
         // Create a WriteBuf, and write two bytes more than it's capacity.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(100));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(100));
             let data = &[1; 100];
             buf.write_slice(data);
 
@@ -656,7 +656,7 @@ mod tests {
         // Create a WriteBuf, write into it with write_u32(), and the verify
         // that it's contents match what's expected.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(10));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(10));
             buf.write_u32(84148994, true);
 
             let expected = &[2, 3, 4, 5];
@@ -671,7 +671,7 @@ mod tests {
         // Create a WriteBuf, write into it with write_u32(), and the verify
         // that it's contents match what's expected.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(10));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(10));
             buf.write_u32(84148994, false);
 
             let expected = &[5, 4, 3, 2];
@@ -686,7 +686,7 @@ mod tests {
     fn test_writebuf_writeu32_overflow() {
         // Create a WriteBuf, and write four bytes more than it's capacity.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(100));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(100));
             let data = &[1; 100];
             buf.write_slice(data);
 
@@ -701,7 +701,7 @@ mod tests {
         // Create a WriteBuf, write into it with write_u64(), and the verify
         // that it's contents match what's expected.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(10));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(10));
             buf.write_u64(8674083586, true);
 
             let expected = &[2, 3, 4, 5, 2, 0, 0, 0];
@@ -716,7 +716,7 @@ mod tests {
         // Create a WriteBuf, write into it with write_u64(), and then verify
         // that it's contents match what's expected.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(10));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(10));
             buf.write_u64(8674083586, false);
 
             let expected = &[0, 0, 0, 2, 5, 4, 3, 2];
@@ -731,11 +731,198 @@ mod tests {
     fn test_writebuf_writeu64_overflow() {
         // Create a WriteBuf, and write eight bytes more than it's capacity.
         unsafe {
-            let mut buf = WriteBuf::new(BytesMut::with_capacity(100));
+            let mut buf = WriteBuf::new(1, BytesMut::with_capacity(100));
             let data = &[1; 100];
             buf.write_slice(data);
 
             buf.write_u64(8674083586, true);
         }
+    }
+
+    // This method tests the number of elements in the MultiReadBuf. It should be
+    // exacty the number of elements added to the list.
+    #[test]
+    fn test_multireadbuf_num() {
+        let data = vec![1; 100];
+        let buf = Bytes::from(data);
+
+        let mut list = Vec::new();
+        list.push(buf);
+        unsafe {
+            let multibuf = MultiReadBuf::new(list);
+            assert_eq!(multibuf.num(), 1);
+        }
+    }
+
+    // This method checks the length of one element in the list.
+    #[test]
+    fn test_multireadbuf_len() {
+        let data = vec![1; 100];
+        let buf = Bytes::from(data);
+
+        let mut list = Vec::new();
+        list.push(buf);
+        unsafe {
+            let multibuf = MultiReadBuf::new(list);
+            assert_eq!(multibuf.len(), 100);
+        }
+    }
+
+    // This method tests if the index is out of bound, then len() method should panic.
+    #[test]
+    #[should_panic]
+    fn test_multireadbuf_len_panic() {
+        let data = vec![1; 100];
+        let buf = Bytes::from(data);
+
+        let mut list = Vec::new();
+        list.push(buf);
+        unsafe {
+            let multibuf = MultiReadBuf::new(list);
+            assert_eq!(multibuf.next(), false);
+            multibuf.len();
+        }
+    }
+
+    // This method checks that next() should return false when there is
+    // no next element in the list.
+    #[test]
+    fn test_multireadbuf_next() {
+        let data = vec![1; 100];
+        let buf = Bytes::from(data);
+
+        let mut list = Vec::new();
+        list.push(buf);
+        unsafe {
+            let multibuf = MultiReadBuf::new(list);
+            assert_eq!(multibuf.next(), false);
+        }
+    }
+
+    // This method checks that next() should return true when there is
+    // a next element in the list.
+    #[test]
+    fn test_multireadbuf_next1() {
+        let data = vec![1; 100];
+        let buf = Bytes::from(data);
+        let data1 = vec![1; 100];
+        let buf1 = Bytes::from(data1);
+
+        let mut list = Vec::new();
+        list.push(buf);
+        list.push(buf1);
+        unsafe {
+            let multibuf = MultiReadBuf::new(list);
+            assert_eq!(multibuf.next(), true);
+        }
+    }
+
+    // This method checks that prev() should return false when there is
+    // no previous element in the list.
+    #[test]
+    fn test_multireadbuf_prev() {
+        let data = vec![1; 100];
+        let buf = Bytes::from(data);
+
+        let mut list = Vec::new();
+        list.push(buf);
+        unsafe {
+            let multibuf = MultiReadBuf::new(list);
+            multibuf.next();
+            assert_eq!(multibuf.prev(), false);
+        }
+    }
+
+    // This method checks that prev() should return true when there is
+    // a previous element in the list.
+    #[test]
+    fn test_multireadbuf_prev1() {
+        let data = vec![1; 100];
+        let buf = Bytes::from(data);
+        let data1 = vec![1; 100];
+        let buf1 = Bytes::from(data1);
+
+        let mut list = Vec::new();
+        list.push(buf);
+        list.push(buf1);
+        unsafe {
+            let multibuf = MultiReadBuf::new(list);
+            assert_eq!(multibuf.next(), true);
+            assert_eq!(multibuf.prev(), true);
+        }
+    }
+
+    // This method checks if read() method returns the pointer to the element present
+    // on the current index.
+    #[test]
+    fn test_multireadbuf_read() {
+        let data = vec![1; 100];
+        let buf = Bytes::from(data);
+
+        let mut list = Vec::new();
+        list.push(buf);
+        unsafe {
+            let multibuf = MultiReadBuf::new(list);
+            assert_eq!(multibuf.read().len(), 100);
+        }
+    }
+
+    // If the element a current index doesn't exist then read() method should panic.
+    #[test]
+    #[should_panic]
+    fn test_multireadbuf_read_panic() {
+        let data = vec![1; 100];
+        let buf = Bytes::from(data);
+
+        let mut list = Vec::new();
+        list.push(buf);
+        unsafe {
+            let multibuf = MultiReadBuf::new(list);
+            assert_eq!(multibuf.next(), false);
+            multibuf.read();
+        }
+    }
+
+    // This method checks the length of the readwrite set before and after
+    // adding the record into it.
+    #[test]
+    fn test_readwriteset_len() {
+        let mut buf = ReadWriteSetBuf::new();
+        let data = &[1; 100];
+        let record = Record::new(OpType::SandstormRead, data, data);
+        assert_eq!(buf.readwriteset.len(), 0);
+        buf.readwriteset.push(record);
+        assert_eq!(buf.readwriteset.len(), 1);
+    }
+
+    // This method tests the get_*() functions for the Record implementation.
+    #[test]
+    fn test_record_gets() {
+        let data = &[1; 100];
+        let record = Record::new(OpType::SandstormRead, data, data);
+        assert_eq!(record.get_key().len(), 100);
+        assert_eq!(record.get_object().len(), 100);
+        assert_eq!(record.get_optype(), OpType::SandstormRead);
+    }
+
+    // This method tests the equality of OpType values.
+    #[test]
+    fn test_optype_equal() {
+        assert_eq!(OpType::SandstormRead, OpType::SandstormRead);
+        assert_eq!(OpType::SandstormWrite, OpType::SandstormWrite);
+        assert_eq!(OpType::InvalidRecord, OpType::InvalidRecord);
+    }
+
+    // This method tests the not equal value for OpType enum.
+    #[test]
+    fn test_optype_ntequal() {
+        assert_ne!(OpType::SandstormRead, OpType::SandstormWrite);
+        assert_ne!(OpType::SandstormRead, OpType::InvalidRecord);
+
+        assert_ne!(OpType::SandstormWrite, OpType::SandstormRead);
+        assert_ne!(OpType::SandstormWrite, OpType::InvalidRecord);
+
+        assert_ne!(OpType::InvalidRecord, OpType::SandstormRead);
+        assert_ne!(OpType::InvalidRecord, OpType::SandstormWrite);
     }
 }
