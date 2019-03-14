@@ -53,7 +53,7 @@ pub struct Container<'a> {
 
     // The actual generator/coroutine containing the extension's code to be
     // executed inside the database.
-    gen: Box<Generator<Yield = u64, Return = u64>>,
+    gen: Option<Box<Generator<Yield = u64, Return = u64>>>,
 }
 
 // Implementation of methods on Container.
@@ -86,7 +86,7 @@ impl<'a> Container<'a> {
             time: 0,
             db_time: 0,
             db: Cell::new(Some(context)),
-            gen: gen,
+            gen: Some(gen),
         }
     }
 }
@@ -106,19 +106,25 @@ impl<'a> Task for Container<'a> {
             // As of 04/02/2018, calling resume() on a generator requires an unsafe block.
             unsafe {
                 // Catch any panics thrown from within the extension.
-                let res = catch_unwind(AssertUnwindSafe(|| match self.gen.resume() {
-                    GeneratorState::Yielded(_) => {
-                        if let Some(db) = self.db.get_mut() {
-                            self.db_time = db.db_credit();
+                let res = catch_unwind(AssertUnwindSafe(|| match self.gen.as_mut() {
+                    Some(gen) => match gen.resume() {
+                        GeneratorState::Yielded(_) => {
+                            if let Some(db) = self.db.get_mut() {
+                                self.db_time = db.db_credit();
+                            }
+                            self.state = YIELDED;
                         }
-                        self.state = YIELDED;
-                    }
 
-                    GeneratorState::Complete(_) => {
-                        if let Some(db) = self.db.get_mut() {
-                            self.db_time = db.db_credit();
+                        GeneratorState::Complete(_) => {
+                            if let Some(db) = self.db.get_mut() {
+                                self.db_time = db.db_credit();
+                            }
+                            self.state = COMPLETED;
                         }
-                        self.state = COMPLETED;
+                    },
+
+                    None => {
+                        panic!("No generator available for extension execution");
                     }
                 }));
 
@@ -169,10 +175,7 @@ impl<'a> Task for Container<'a> {
     )> {
         // First, drop the generator. Doing so ensures that self.db is the
         // only reference to the extension's execution context.
-        self.gen = Box::new(|| {
-            yield 0;
-            return 0;
-        });
+        self.gen = None;
 
         // Next, unwrap the execution context, and, retrieve and return the
         // request and response packets.
