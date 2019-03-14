@@ -61,7 +61,7 @@ fn main() {
                                         .map(| i | format!("test{}", i))
                                         .collect();
     for p in proc_names.iter() {
-        let mut ext = ext_manager.get(0, &p)
+        let mut ext = ext_manager.get(0, p.to_string())
                                     .unwrap()
                                     .get(Rc::clone(&db) as Rc<DB>);
         unsafe { ext.resume() };
@@ -82,7 +82,7 @@ fn main() {
     for _ in 0..1000000 {
         for p in proc_names.iter() {
             let l = rdtsc();
-            let mut ext = ext_manager.get(0, &p)
+            let mut ext = ext_manager.get(0, p.to_string())
                                         .unwrap()
                                         .get(Rc::clone(&db) as Rc<DB>);
             let r = rdtsc();
@@ -103,7 +103,7 @@ fn main() {
         panic!("Failed to load test extension!");
     }
 
-    let mut ext = ext_manager.get(0, "test").unwrap().get(Rc::clone(&db) as Rc<DB>);
+    let mut ext = ext_manager.get(0, String::from("test")).unwrap().get(Rc::clone(&db) as Rc<DB>);
 
     unsafe { while ext.resume() != GeneratorState::Complete(0) {} };
 

@@ -110,7 +110,7 @@ impl TaskManager {
         name.extend_from_slice(self.get_payload().split_at(name_length).0);
         let name: String = String::from_utf8(name).expect("ERROR: Failed to get ext name.");
 
-        if let Some(ext) = self.master.extensions.get(tenant_id, &name) {
+        if let Some(ext) = self.master.extensions.get(tenant_id, name) {
             let db = Rc::new(ProxyDB::new(
                 self.tenant,
                 self.id,

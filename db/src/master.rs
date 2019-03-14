@@ -1255,7 +1255,7 @@ impl Master {
             // If the tenant is valid, check if the extension exists inside the database after
             // setting the RPC status appropriately.
             status = RpcStatus::StatusInvalidExtension;
-            if let Some(ext) = self.extensions.get(tenant_id, &name) {
+            if let Some(ext) = self.extensions.get(tenant_id, name) {
                 let db = Rc::new(Context::new(
                     req,
                     name_length,

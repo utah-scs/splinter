@@ -207,14 +207,14 @@ impl ExtensionManager {
     /// # Return
     ///
     /// A ref-counted handle to the extension if it was found.
-    pub fn get(&self, tenant: TenantId, name: &str) -> Option<Arc<Extension>> {
+    pub fn get(&self, tenant: TenantId, name: String) -> Option<Arc<Extension>> {
         // Lookup the extension, if it exists, bump up it's refcount, and
         // return it. The bucket is determined by the least significant byte
         // of the tenant id.
         let bucket = (tenant & 0xff) as usize & (EXT_BUCKETS - 1);
         self.extensions[bucket]
             .read()
-            .get(&(tenant, String::from(name)))
+            .get(&(tenant, name))
             .and_then(|ext| Some(Arc::clone(&ext)))
     }
 
@@ -232,7 +232,7 @@ impl ExtensionManager {
     pub fn share(&self, owner: TenantId, share: TenantId, name: &str) -> bool {
         // First, try to retrieve a copy (Arc) of the extension from the owner.
         // If successfull, then share it with the tenant identified by `share`.
-        self.get(owner, name)
+        self.get(owner, String::from(name))
             .and_then(|ext| {
                 let bucket = (share & 0xff) as usize & (EXT_BUCKETS - 1);
                 self.extensions[bucket]
