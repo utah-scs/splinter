@@ -200,7 +200,7 @@ impl<'a> DB for Context<'a> {
                     .and_then(| object | { self.heap.resolve(object) })
                     // Return the value wrapped up inside a safe type.
                     .and_then(| (k, v) | {
-                        self.populate_read_write_set(Record::new(OpType::SandstormRead, &k, &v));
+                        self.populate_read_write_set(Record::new(OpType::SandstormRead, k.clone(), v.clone()));
                         *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
                         unsafe { Some(ReadBuf::new(v)) }
                         })
@@ -224,7 +224,7 @@ impl<'a> DB for Context<'a> {
                     .get(key)
                     .and_then(|obj| self.heap.resolve(obj))
                     .and_then(|(k, v)| {
-                        self.populate_read_write_set(Record::new(OpType::SandstormRead, &k, &v));
+                        self.populate_read_write_set(Record::new(OpType::SandstormRead, k.clone(), v.clone()));
                         objs.push(v);
                         Some(())
                     });
@@ -271,7 +271,7 @@ impl<'a> DB for Context<'a> {
         // If the table exists, write to the database.
         if let Some(table) = self.tenant.get_table(table_id) {
             return self.heap.resolve(buf.clone()).map_or(false, |(k, _v)| {
-                self.populate_read_write_set(Record::new(OpType::SandstormWrite, &k, &buf));
+                self.populate_read_write_set(Record::new(OpType::SandstormRead, k.clone(), buf.clone()));
                 table.put(k, buf);
                 *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
                 true

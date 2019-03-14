@@ -404,11 +404,11 @@ impl Record {
     ///
     /// # Return
     /// A read-write set record with the operation type, a key and a value.
-    pub fn new(r_optype: OpType, r_key: &[u8], r_object: &[u8]) -> Record {
+    pub fn new(r_optype: OpType, r_key: Bytes, r_object: Bytes) -> Record {
         Record {
             optype: r_optype,
-            key: Bytes::from(r_key),
-            object: Bytes::from(r_object),
+            key: r_key,
+            object: r_object,
         }
     }
 
@@ -888,8 +888,9 @@ mod tests {
     #[test]
     fn test_readwriteset_len() {
         let mut buf = ReadWriteSetBuf::new();
-        let data = &[1; 100];
-        let record = Record::new(OpType::SandstormRead, data, data);
+        let data = vec![1; 100];
+        let data = Bytes::from(data);
+        let record = Record::new(OpType::SandstormRead, data.clone(), data);
         assert_eq!(buf.readwriteset.len(), 0);
         buf.readwriteset.push(record);
         assert_eq!(buf.readwriteset.len(), 1);
@@ -898,8 +899,9 @@ mod tests {
     // This method tests the get_*() functions for the Record implementation.
     #[test]
     fn test_record_gets() {
-        let data = &[1; 100];
-        let record = Record::new(OpType::SandstormRead, data, data);
+        let data = vec![1; 100];
+        let data = Bytes::from(data);
+        let record = Record::new(OpType::SandstormRead, data.clone(), data);
         assert_eq!(record.get_key().len(), 100);
         assert_eq!(record.get_object().len(), 100);
         assert_eq!(record.get_optype(), OpType::SandstormRead);
