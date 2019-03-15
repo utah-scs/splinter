@@ -643,91 +643,94 @@ where
             let request = mac.parse_header::<IpHeader>().parse_header::<UdpHeader>();
 
             // Allocate a packet for the response upfront, and add in MAC, IP, and UDP headers.
-            let mut response = new_packet()
-                .expect("ERROR: Failed to allocate packet for response!")
-                .push_header(&self.resp_mac_header)
-                .expect("ERROR: Failed to add response MAC header")
-                .push_header(&self.resp_ip_header)
-                .expect("ERROR: Failed to add response IP header")
-                .push_header(&self.resp_udp_header)
-                .expect("ERROR: Failed to add response UDP header");
+            if let Some(mut response) = new_packet() {
+                let mut response = response
+                    .push_header(&self.resp_mac_header)
+                    .expect("ERROR: Failed to add response MAC header")
+                    .push_header(&self.resp_ip_header)
+                    .expect("ERROR: Failed to add response IP header")
+                    .push_header(&self.resp_udp_header)
+                    .expect("ERROR: Failed to add response UDP header");
 
-            // Set the destination port on the response UDP header.
-            response
-                .get_mut_header()
-                .set_dst_port(request.get_header().src_port());
+                // Set the destination port on the response UDP header.
+                response
+                    .get_mut_header()
+                    .set_dst_port(request.get_header().src_port());
 
-            if parse_rpc_service(&request) == wireformat::Service::MasterService {
-                // The request is for Master, get it's opcode, and call into Master.
-                let opcode = parse_rpc_opcode(&request);
-                if !FAST_PATH {
-                    match self.master_service.dispatch(opcode, request, response) {
-                        Ok(task) => {
-                            self.scheduler.enqueue(task);
+                if parse_rpc_service(&request) == wireformat::Service::MasterService {
+                    // The request is for Master, get it's opcode, and call into Master.
+                    let opcode = parse_rpc_opcode(&request);
+                    if !FAST_PATH {
+                        match self.master_service.dispatch(opcode, request, response) {
+                            Ok(task) => {
+                                self.scheduler.enqueue(task);
+                            }
+
+                            Err((req, res)) => {
+                                // Master returned an error. The allocated request and response packets
+                                // need to be freed up.
+                                ignore_packets.push(req);
+                                ignore_packets.push(res);
+                            }
                         }
+                    } else {
+                        match opcode {
+                            wireformat::OpCode::SandstormInvokeRpc => {
+                                // The request is for invoke. Dispatch RPC to its handler.
+                                match self.master_service.dispatch_invoke(request, response) {
+                                    Ok(task) => {
+                                        self.scheduler.enqueue(task);
+                                    }
 
-                        Err((req, res)) => {
-                            // Master returned an error. The allocated request and response packets
-                            // need to be freed up.
-                            ignore_packets.push(req);
-                            ignore_packets.push(res);
+                                    Err((req, res)) => {
+                                        // Master returned an error. The allocated request and response packets
+                                        // need to be freed up.
+                                        ignore_packets.push(req);
+                                        ignore_packets.push(res);
+                                    }
+                                }
+                            }
+
+                            wireformat::OpCode::SandstormGetRpc
+                            | wireformat::OpCode::SandstormPutRpc
+                            | wireformat::OpCode::SandstormMultiGetRpc => {
+                                // The request is native. Service it right away.
+                                match self
+                                    .master_service
+                                    .service_native(opcode, request, response)
+                                {
+                                    Ok((req, res)) => {
+                                        // Free request packet.
+                                        req.free_packet();
+
+                                        // Push response packet on the local queue of responses that are ready to be sent out.
+                                        native_responses.push(rpc::fixup_header_length_fields(res));
+                                    }
+
+                                    Err((req, res)) => {
+                                        // Master returned an error. The allocated request and response packets
+                                        // need to be freed up.
+                                        ignore_packets.push(req);
+                                        ignore_packets.push(res);
+                                    }
+                                }
+                            }
+
+                            _ => {
+                                // The request is unknown.
+                                ignore_packets.push(request);
+                                ignore_packets.push(response);
+                            }
                         }
                     }
                 } else {
-                    match opcode {
-                        wireformat::OpCode::SandstormInvokeRpc => {
-                            // The request is for invoke. Dispatch RPC to its handler.
-                            match self.master_service.dispatch_invoke(request, response) {
-                                Ok(task) => {
-                                    self.scheduler.enqueue(task);
-                                }
-
-                                Err((req, res)) => {
-                                    // Master returned an error. The allocated request and response packets
-                                    // need to be freed up.
-                                    ignore_packets.push(req);
-                                    ignore_packets.push(res);
-                                }
-                            }
-                        }
-
-                        wireformat::OpCode::SandstormGetRpc
-                        | wireformat::OpCode::SandstormPutRpc
-                        | wireformat::OpCode::SandstormMultiGetRpc => {
-                            // The request is native. Service it right away.
-                            match self
-                                .master_service
-                                .service_native(opcode, request, response)
-                            {
-                                Ok((req, res)) => {
-                                    // Free request packet.
-                                    req.free_packet();
-
-                                    // Push response packet on the local queue of responses that are ready to be sent out.
-                                    native_responses.push(rpc::fixup_header_length_fields(res));
-                                }
-
-                                Err((req, res)) => {
-                                    // Master returned an error. The allocated request and response packets
-                                    // need to be freed up.
-                                    ignore_packets.push(req);
-                                    ignore_packets.push(res);
-                                }
-                            }
-                        }
-
-                        _ => {
-                            // The request is unknown.
-                            ignore_packets.push(request);
-                            ignore_packets.push(response);
-                        }
-                    }
+                    // The request is not for Master. The allocated request and response packets need
+                    // to be freed up.
+                    ignore_packets.push(request);
+                    ignore_packets.push(response);
                 }
             } else {
-                // The request is not for Master. The allocated request and response packets need
-                // to be freed up.
-                ignore_packets.push(request);
-                ignore_packets.push(response);
+                println!("ERROR: Failed to allocate packet for response");
             }
         }
 
@@ -874,4 +877,16 @@ where
 
     /// Refer to the `Task` trait for Documentation.
     fn update_cache(&mut self, _record: &[u8]) {}
+}
+
+impl<T> Drop for Dispatch<T>
+where
+    T: PacketRx + PacketTx + Display + Clone + 'static,
+{
+    fn drop(&mut self) {
+        let responses = self.scheduler.responses();
+        if responses.len() > 0 {
+            self.try_send_packets(responses);
+        }
+    }
 }

@@ -17,6 +17,7 @@ use std::cell::Cell;
 use std::ops::{Generator, GeneratorState};
 use std::panic::*;
 use std::rc::Rc;
+use std::thread;
 
 use super::context::Context;
 use super::cycles;
@@ -132,6 +133,13 @@ impl<'a> Task for Container<'a> {
                 // does not get run again.
                 if let Err(_) = res {
                     self.state = COMPLETED;
+                    if thread::panicking() {
+                        if let Some((req, res)) = self.tear() {
+                            req.free_packet();
+                            res.free_packet();
+                        }
+                        loop {}
+                    }
                 }
             }
         }

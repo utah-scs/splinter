@@ -313,7 +313,7 @@ mod tests {
         assert!(man.load("../ext/test/target/release/libtest.so", 0, "test"));
 
         // Retrieve the extension, and the generator.
-        let ext = man.get(0, "test").unwrap();
+        let ext = man.get(0, "test".to_string()).unwrap();
         let mut gen = ext.get(Rc::new(NullDB::new()));
 
         // Assert that the test extension has one yield statement.
@@ -327,6 +327,6 @@ mod tests {
     #[should_panic]
     fn test_man_get_err() {
         let man = ExtensionManager::new();
-        man.get(0, "test").unwrap();
+        man.get(0, "test".to_string()).unwrap();
     }
 }
