@@ -134,11 +134,9 @@ impl<'a> Task for Container<'a> {
                 if let Err(_) = res {
                     self.state = COMPLETED;
                     if thread::panicking() {
-                        if let Some((req, res)) = self.tear() {
-                            req.free_packet();
-                            res.free_packet();
-                        }
-                        loop {}
+                        // Wait for 100 millisecond so that the thread is moved to the GHETTO core.
+                        let start = cycles::rdtsc();
+                        while cycles::rdtsc() - start < cycles::cycles_per_second() / 10 {}
                     }
                 }
             }
