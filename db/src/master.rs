@@ -24,6 +24,7 @@ use std::sync::Arc;
 use super::alloc::Allocator;
 use super::container::Container;
 use super::context::Context;
+use super::model;
 use super::native::Native;
 use super::service::Service;
 use super::task::{Task, TaskPriority};
@@ -43,9 +44,7 @@ use sandstorm::ext::*;
 /// Convert a raw pointer for Allocator into a Allocator reference. This can be used to pass
 /// the allocator reference across closures without cloning the allocator object.
 pub fn accessor<'a>(alloc: *const Allocator) -> &'a Allocator {
-    unsafe {
-        &*alloc
-    }
+    unsafe { &*alloc }
 }
 
 // The number of buckets in the `tenants` hashtable inside of Master.
@@ -307,6 +306,53 @@ impl Master {
         self.insert_tenant(tenant);
     }
 
+    /// Adds a tenant and a table full of objects.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant_id`: Identifier of the tenant to be added. Any existing tenant with the same
+    ///                identifier will be overwritten.
+    pub fn fill_analysis(&self, num_tenants: u32) {
+        let num: u32 = 3;
+        let table_id = 1;
+        let (sgd, d_tree, r_forest) = model::run_ml_application();
+        let mut models: Vec<Vec<u8>> = Vec::new();
+        models.push(sgd);
+        models.push(d_tree);
+        models.push(r_forest);
+
+        for tenant_id in 1..(num_tenants + 1) {
+            // Create a tenant containing the table.
+            let tenant = Tenant::new(tenant_id);
+            tenant.create_table(table_id);
+
+            let table = tenant
+                .get_table(table_id)
+                .expect("Failed to init test table.");
+
+            let mut key = vec![0; 30];
+
+            // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
+            // and a variable Byte value.
+            for i in 0..num {
+                let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+                &key[0..4].copy_from_slice(&temp);
+
+                let mut val = vec![0; models[i as usize].len()];
+                &val.copy_from_slice(&models[i as usize]);
+
+                let obj = self
+                    .heap
+                    .object(tenant_id, table_id, &key, &val)
+                    .expect("Failed to create test object.");
+                table.put(obj.0, obj.1);
+            }
+
+            // Add the tenant.
+            self.insert_tenant(tenant);
+        }
+    }
+
     /// Loads the get(), put(), tao(), and bad() extensions.
     ///
     /// # Arguments
@@ -355,10 +401,16 @@ impl Master {
             panic!("Failed to load pushback() extension.");
         }
 
-        // Load the pushback() extension.
+        // Load the scan() extension.
         let name = "../ext/scan/target/release/libscan.so";
         if self.extensions.load(name, tenant, "scan") == false {
             panic!("Failed to load scan() extension.");
+        }
+
+        // Load the analysis() extension.
+        let name = "../ext/analysis/target/release/libanalysis.so";
+        if self.extensions.load(name, tenant, "analysis") == false {
+            panic!("Failed to load analysis() extension.");
         }
     }
 

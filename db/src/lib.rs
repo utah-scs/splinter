@@ -65,3 +65,5 @@ pub mod table;
 pub mod task;
 /// This module contains the wireformat realted to the various functionalities.
 pub mod wireformat;
+/// This module contains the ML model for the applications
+pub mod model;
