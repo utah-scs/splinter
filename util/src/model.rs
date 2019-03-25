@@ -28,7 +28,16 @@ use self::rustlearn::metrics;
 use self::rustlearn::prelude::*;
 use self::rustlearn::trees::decision_tree;
 
-use super::cycles::rdtsc;
+/// Return a 64-bit timestamp using the rdtsc instruction.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub fn rdtsc() -> u64 {
+    unsafe {
+        let lo: u32;
+        let hi: u32;
+        asm!("rdtsc" : "={eax}"(lo), "={edx}"(hi) : : : "volatile");
+        (((hi as u64) << 32) | lo as u64)
+    }
+}
 
 /// Add function documentation
 pub fn get_raw_data(filename: &str) -> String {
@@ -56,14 +65,7 @@ pub fn build_x_matrix(data: &str, rows: usize, cols: usize) -> SparseRowArray {
     for (_row, line) in data.lines().enumerate() {
         let mut col_num = 0;
         for col_str in line.split_whitespace() {
-            if col_num > 0 {
-                let split: Vec<&str> = col_str.split(":").collect();
-                array.set(
-                    row_num,
-                    usize::from_str(split[0]).unwrap(),
-                    f32::from_str(split[1]).unwrap(),
-                );
-            }
+            array.set(row_num, col_num, f32::from_str(col_str).unwrap());
             col_num += 1;
         }
         row_num += 1;
@@ -80,14 +82,7 @@ pub fn build_col_matrix(data: &str, rows: usize, cols: usize) -> SparseColumnArr
     for (_row, line) in data.lines().enumerate() {
         let mut col_num = 0;
         for col_str in line.split_whitespace() {
-            if col_num > 0 {
-                let split: Vec<&str> = col_str.split(":").collect();
-                array.set(
-                    row_num,
-                    usize::from_str(split[0]).unwrap(),
-                    f32::from_str(split[1]).unwrap(),
-                );
-            }
+            array.set(row_num, col_num, f32::from_str(col_str).unwrap());
             col_num += 1;
         }
         row_num += 1;
@@ -112,16 +107,16 @@ pub fn build_y_array(data: &str) -> Array {
 
 /// Add function documentation
 pub fn get_train_data() -> (SparseRowArray, SparseRowArray) {
-    let X_train = build_x_matrix(&get_raw_data("./../data/train.feat"), 25000, 89527);
-    let X_test = build_x_matrix(&get_raw_data("./../data/test.feat"), 25000, 89527);
+    let X_train = build_x_matrix(&get_raw_data("./../data/train.csv"), 68411, 25);
+    let X_test = build_x_matrix(&get_raw_data("./../data/train.csv"), 68411, 25);
 
     (X_train, X_test)
 }
 
 /// Add function documentation
 pub fn get_target_data() -> (Array, Array) {
-    let y_train = build_y_array(&get_raw_data("./../data/target"));
-    let y_test = build_y_array(&get_raw_data("./../data/target"));
+    let y_train = build_y_array(&get_raw_data("./../data/target.csv"));
+    let y_test = build_y_array(&get_raw_data("./../data/target.csv"));
 
     (y_train, y_test)
 }
@@ -154,8 +149,8 @@ pub fn run_sgdclassifier(
     let model: sgdclassifier::SGDClassifier = bincode::deserialize(&serialized).unwrap();
     let diff1 = rdtsc() - start;
 
-    let X = build_x_matrix(&get_raw_data("./../data/positive.feat"), 1, 89527);
-    let Y = build_x_matrix(&get_raw_data("./../data/negative.feat"), 1, 89527);
+    let X = build_x_matrix(&get_raw_data("./../data/positive.feat"), 1, 25);
+    let Y = build_x_matrix(&get_raw_data("./../data/negative.feat"), 1, 25);
 
     let start = rdtsc();
     let pos = model.predict(&X).unwrap().data()[0];
@@ -196,8 +191,8 @@ pub fn run_decision_tree(
     let model: decision_tree::DecisionTree = bincode::deserialize(&serialized).unwrap();
     let diff1 = rdtsc() - start;
 
-    let X = build_col_matrix(&get_raw_data("./../data/positive.feat"), 1, 89527);
-    let Y = build_col_matrix(&get_raw_data("./../data/negative.feat"), 1, 89527);
+    let X = build_col_matrix(&get_raw_data("./../data/positive.feat"), 1, 25);
+    let Y = build_col_matrix(&get_raw_data("./../data/negative.feat"), 1, 25);
     let start = rdtsc();
     let pos = model.predict(&X).unwrap().data()[0];
     let neg = model.predict(&Y).unwrap().data()[0];
@@ -236,8 +231,8 @@ pub fn run_random_forest(
     let model: random_forest::RandomForest = bincode::deserialize(&serialized).unwrap();
     let diff1 = rdtsc() - start;
 
-    let X = build_x_matrix(&get_raw_data("./../data/positive.feat"), 1, 89527);
-    let Y = build_x_matrix(&get_raw_data("./../data/negative.feat"), 1, 89527);
+    let X = build_x_matrix(&get_raw_data("./../data/positive.feat"), 1, 25);
+    let Y = build_x_matrix(&get_raw_data("./../data/negative.feat"), 1, 25);
 
     let start = rdtsc();
     let pos = model.predict(&X).unwrap().data()[0];

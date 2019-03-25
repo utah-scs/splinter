@@ -64,3 +64,4 @@ clean:
 	(cd ext/analysis; cargo clean)
 	(cd sandstorm; cargo clean)
 	(cd net; ./build.sh clean)
+	(cd util; cargo clean)

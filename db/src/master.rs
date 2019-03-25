@@ -13,23 +13,26 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use bincode::serialize;
 use hashbrown::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::mem::{size_of, transmute};
 use std::rc::Rc;
 use std::str::from_utf8;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use super::alloc::Allocator;
 use super::container::Container;
 use super::context::Context;
-use super::model;
 use super::native::Native;
 use super::service::Service;
 use super::task::{Task, TaskPriority};
 use super::tenant::Tenant;
 use super::wireformat::*;
+
+use util::model;
 
 use e2d2::common::EmptyMetadata;
 use e2d2::headers::UdpHeader;
@@ -313,13 +316,9 @@ impl Master {
     /// * `tenant_id`: Identifier of the tenant to be added. Any existing tenant with the same
     ///                identifier will be overwritten.
     pub fn fill_analysis(&self, num_tenants: u32) {
-        let num: u32 = 3;
         let table_id = 1;
-        let (sgd, d_tree, r_forest) = model::run_ml_application();
-        let mut models: Vec<Vec<u8>> = Vec::new();
-        models.push(sgd);
-        models.push(d_tree);
-        models.push(r_forest);
+        let (sgd, _d_tree, _r_forest) = model::run_ml_application();
+        let data = model::get_raw_data("./../data/train.csv");
 
         for tenant_id in 1..(num_tenants + 1) {
             // Create a tenant containing the table.
@@ -332,18 +331,32 @@ impl Master {
 
             let mut key = vec![0; 30];
 
-            // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
-            // and a variable Byte value.
-            for i in 0..num {
-                let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+            // Add model to the table at zero index.
+            let mut val = vec![0; sgd.len()];
+            &val.copy_from_slice(&sgd);
+
+            let obj = self
+                .heap
+                .object(tenant_id, table_id, &key, &val)
+                .expect("Failed to create test object.");
+            table.put(obj.0, obj.1);
+
+            for (row, line) in data.lines().enumerate() {
+                // Prepare the key for the record.
+                let temp: [u8; 4] = unsafe { transmute(((row + 1) as u32).to_le()) };
                 &key[0..4].copy_from_slice(&temp);
 
-                let mut val = vec![0; models[i as usize].len()];
-                &val.copy_from_slice(&models[i as usize]);
+                // Prepare the value for the record.
+                let mut value: Vec<f32> = Vec::new();
+                for col_str in line.split_whitespace() {
+                    value.push(f32::from_str(col_str).unwrap());
+                }
+                let serialized = serialize(&value).unwrap();
 
+                // Insert the key-value in the table.
                 let obj = self
                     .heap
-                    .object(tenant_id, table_id, &key, &val)
+                    .object(tenant_id, table_id, &key, &serialized)
                     .expect("Failed to create test object.");
                 table.put(obj.0, obj.1);
             }

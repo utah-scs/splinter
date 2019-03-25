@@ -22,10 +22,12 @@ extern crate sandstorm;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+extern crate bincode;
 extern crate hashbrown;
 extern crate spin;
 extern crate time;
 extern crate toml;
+extern crate util;
 
 pub extern crate bytes;
 pub extern crate e2d2;
@@ -65,5 +67,3 @@ pub mod table;
 pub mod task;
 /// This module contains the wireformat realted to the various functionalities.
 pub mod wireformat;
-/// This module contains the ML model for the applications
-pub mod model;
