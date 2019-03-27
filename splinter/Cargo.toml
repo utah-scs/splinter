@@ -57,6 +57,7 @@ zipf         = "2.0"
 db           = {path = "../db"}
 sandstorm    = {path = "../sandstorm"}
 e2d2         = {path = "../net/framework"}
+util         = {path = "../util"}
 
 # Add feature name in default features to enable cyclecounter for the given stage,
 # where stage name can be ["execution"].

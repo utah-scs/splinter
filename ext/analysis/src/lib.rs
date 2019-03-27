@@ -24,7 +24,7 @@ extern crate sandstorm;
 use std::ops::Generator;
 use std::rc::Rc;
 
-use rustlearn::linear_models::sgdclassifier;
+//use rustlearn::linear_models::sgdclassifier;
 use rustlearn::prelude::*;
 use rustlearn::traits::SupervisedModel;
 
@@ -46,9 +46,8 @@ use sandstorm::pack::pack;
 #[allow(unused_assignments)]
 pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
     Box::new(move || {
-        let mut model_obj = None;
         let mut obj = None;
-        let model: Vec<u8> = vec![0; 30];
+
         {
             // First off, retrieve the arguments to the extension.
             let args = db.args();
@@ -78,39 +77,32 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
                 | (table[7] as u64) << 56;
 
             // Finally, lookup the database for the object.
-            model_obj = db.get(table, &model);
             obj = db.get(table, key);
         }
 
-        // Populate a response to the tenant.
-        match model_obj {
-            // If the object was found, write it to the response.
-            Some(model_val) => {
-                let model_value = model_val.read();
-                let model: sgdclassifier::SGDClassifier =
-                    bincode::deserialize(&model_value).unwrap();
-                match obj {
-                    Some(val) => {
-                        let value = val.read();
-                        let predict: Vec<f32> = bincode::deserialize(&value).unwrap();
-                        let response =
-                            model.predict(&Array::from(&vec![predict])).unwrap().data()[0];
-                        db.resp(pack(&response));
-                        return 0;
-                    }
-
-                    None => {
-                        let error = "Object does not exist";
-                        db.resp(error.as_bytes());
-                        return 0;
-                    }
+        // If the object was found, write it to the response.
+        match obj {
+            Some(val) => match db.get_model() {
+                Some(model) => {
+                    let value = val.read();
+                    let predict: Vec<f32> = bincode::deserialize(&value).unwrap();
+                    let response = model
+                        .deserialized
+                        .predict(&Array::from(&vec![predict]))
+                        .unwrap()
+                        .data()[0];
+                    db.resp(pack(&response));
+                    return 0;
                 }
-            }
+                None => {
+                    let error = "Object does not exist1";
+                    db.resp(error.as_bytes());
+                    return 0;
+                }
+            },
 
-            // If the object was not found, write an error message to the
-            // response.
             None => {
-                let error = "Object does not exist";
+                let error = "Object does not exist2";
                 db.resp(error.as_bytes());
                 return 0;
             }

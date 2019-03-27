@@ -21,6 +21,7 @@ use super::alloc::Allocator;
 use super::cycles::*;
 use super::tenant::Tenant;
 use super::wireformat::{InvokeRequest, InvokeResponse, RpcStatus};
+use util::model::Model;
 
 use sandstorm::buf::{MultiReadBuf, OpType, ReadBuf, ReadWriteSetBuf, Record, WriteBuf};
 use sandstorm::common::*;
@@ -75,6 +76,9 @@ pub struct Context<'a> {
 
     // The credit which the extension has earned by making the db calls.
     db_credit: RefCell<u64>,
+
+    // The model for a given extension which is stored based on the name of the extension.
+    model: Option<Arc<Model>>,
 }
 
 // Methods on Context.
@@ -104,6 +108,7 @@ impl<'a> Context<'a> {
         res: Packet<InvokeResponse, EmptyMetadata>,
         tenant: Arc<Tenant>,
         alloc: &'a Allocator,
+        model: Option<Arc<Model>>,
     ) -> Context<'a> {
         Context {
             request: req,
@@ -115,6 +120,7 @@ impl<'a> Context<'a> {
             allocs: Cell::new(0),
             readwriteset: RefCell::new(ReadWriteSetBuf::new()),
             db_credit: RefCell::new(0),
+            model: model,
         }
     }
 
@@ -224,7 +230,11 @@ impl<'a> DB for Context<'a> {
                     .get(key)
                     .and_then(|obj| self.heap.resolve(obj))
                     .and_then(|(k, v)| {
-                        self.populate_read_write_set(Record::new(OpType::SandstormRead, k.clone(), v.clone()));
+                        self.populate_read_write_set(Record::new(
+                            OpType::SandstormRead,
+                            k.clone(),
+                            v.clone(),
+                        ));
                         objs.push(v);
                         Some(())
                     });
@@ -271,7 +281,11 @@ impl<'a> DB for Context<'a> {
         // If the table exists, write to the database.
         if let Some(table) = self.tenant.get_table(table_id) {
             return self.heap.resolve(buf.clone()).map_or(false, |(k, _v)| {
-                self.populate_read_write_set(Record::new(OpType::SandstormRead, k.clone(), buf.clone()));
+                self.populate_read_write_set(Record::new(
+                    OpType::SandstormRead,
+                    k.clone(),
+                    buf.clone(),
+                ));
                 table.put(k, buf);
                 *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
                 true
@@ -322,5 +336,12 @@ impl<'a> DB for Context<'a> {
     /// Lookup the `DB` trait for documentation on this method.
     fn search_get_in_cache(&self, _table: u64, _key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
         (true, false, None)
+    }
+
+    fn get_model(&self) -> Option<Arc<Model>> {
+        match self.model {
+            Some(ref model) => Some(Arc::clone(&model)),
+            None => None,
+        }
     }
 }

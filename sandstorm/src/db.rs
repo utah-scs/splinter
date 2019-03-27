@@ -13,7 +13,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use super::buf::{ReadBuf, Record, WriteBuf, MultiReadBuf};
+use super::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
+use util::model::Model;
+use std::sync::Arc;
 
 /// Definition of the DB trait that will allow extensions to access
 /// the database.
@@ -138,4 +140,12 @@ pub trait DB {
     /// is successful; False otherwise. And the third member represents a handle that can be used
     /// to read the value if the key-value pair exists inside the local cache.
     fn search_get_in_cache(&self, table: u64, key: &[u8]) -> (bool, bool, Option<ReadBuf>);
+
+    /// This method will return the ML model for the given extension. If the model does't exist
+    /// for an extension then the method will return `None`.
+    ///
+    /// # Return
+    ///
+    /// The model if exists; None otherwise.
+    fn get_model(&self) -> Option<Arc<Model>>;
 }

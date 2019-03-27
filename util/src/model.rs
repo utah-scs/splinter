@@ -13,20 +13,20 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![allow(non_snake_case)]
-extern crate bincode;
-extern crate rustlearn;
+use bincode::{deserialize, serialize};
+use hashbrown::HashMap;
 
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
-use self::rustlearn::ensemble::random_forest;
-use self::rustlearn::linear_models::sgdclassifier;
-use self::rustlearn::metrics;
-use self::rustlearn::prelude::*;
-use self::rustlearn::trees::decision_tree;
+use rustlearn::ensemble::random_forest;
+use rustlearn::linear_models::sgdclassifier;
+use rustlearn::metrics;
+use rustlearn::prelude::*;
+use rustlearn::trees::decision_tree;
 
 /// Return a 64-bit timestamp using the rdtsc instruction.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -37,6 +37,45 @@ pub fn rdtsc() -> u64 {
         asm!("rdtsc" : "={eax}"(lo), "={edx}"(hi) : : : "volatile");
         (((hi as u64) << 32) | lo as u64)
     }
+}
+
+/// Store the model for each extension.
+pub struct Model {
+    /// This is used to store the serialized version of the model.
+    pub serialized: Vec<u8>,
+
+    /// This is used to store the deserialized version of the model.
+    pub deserialized: sgdclassifier::SGDClassifier,
+}
+
+///
+impl Model {
+    ///
+    pub fn new(serialized: Vec<u8>) -> Model {
+        Model {
+            deserialized: deserialize(&serialized).unwrap(),
+            serialized: serialized,
+        }
+    }
+}
+
+///
+pub fn insert_model(name: String, serialized: Vec<u8>) {
+    let model = Model::new(serialized);
+    GLOBAL_MODEL.lock().unwrap().insert(name, Arc::new(model));
+}
+
+///
+pub fn get_model(name: String) -> Option<Arc<Model>> {
+    if let Some(model) = GLOBAL_MODEL.lock().unwrap().get(&name) {
+        Some(Arc::clone(model))
+    } else {
+        None
+    }
+}
+
+lazy_static! {
+    pub static ref GLOBAL_MODEL: Mutex<HashMap<String, Arc<Model>>> = Mutex::new(HashMap::new());
 }
 
 /// Add function documentation
@@ -143,10 +182,10 @@ pub fn run_sgdclassifier(
 
     println!("SGDClassifier accuracy: {}%", accuracy * 100.0);
 
-    let serialized = bincode::serialize(&model).unwrap();
+    let serialized = serialize(&model).unwrap();
     println!("{}", serialized.len());
     let start = rdtsc();
-    let model: sgdclassifier::SGDClassifier = bincode::deserialize(&serialized).unwrap();
+    let model: sgdclassifier::SGDClassifier = deserialize(&serialized).unwrap();
     let diff1 = rdtsc() - start;
 
     let X = build_x_matrix(&get_raw_data("./../data/positive.feat"), 1, 25);
@@ -185,10 +224,10 @@ pub fn run_decision_tree(
 
     println!("DecisionTree accuracy: {}%", accuracy * 100.0);
 
-    let serialized = bincode::serialize(&model).unwrap();
+    let serialized = serialize(&model).unwrap();
     println!("{}", serialized.len());
     let start = rdtsc();
-    let model: decision_tree::DecisionTree = bincode::deserialize(&serialized).unwrap();
+    let model: decision_tree::DecisionTree = deserialize(&serialized).unwrap();
     let diff1 = rdtsc() - start;
 
     let X = build_col_matrix(&get_raw_data("./../data/positive.feat"), 1, 25);
@@ -225,10 +264,10 @@ pub fn run_random_forest(
     let accuracy = metrics::accuracy_score(y_test, &predictions);
 
     println!("RandomForest accuracy: {}%", accuracy * 100.0);
-    let serialized = bincode::serialize(&model).unwrap();
+    let serialized = serialize(&model).unwrap();
     println!("{}", serialized.len());
     let start = rdtsc();
-    let model: random_forest::RandomForest = bincode::deserialize(&serialized).unwrap();
+    let model: random_forest::RandomForest = deserialize(&serialized).unwrap();
     let diff1 = rdtsc() - start;
 
     let X = build_x_matrix(&get_raw_data("./../data/positive.feat"), 1, 25);

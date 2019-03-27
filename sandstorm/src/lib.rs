@@ -30,14 +30,14 @@ pub mod common;
 pub mod db;
 /// Module to manage the extensions; load, install, get etc.
 pub mod ext;
+/// Module to put all the db related macros like GET(), PUT(), etc.
+pub mod macros;
 /// Mock implementation of `DB` trait.
 pub mod mock;
 /// Null DB implemention to be used in ext_bench benchmark.
 pub mod null;
 /// Module to serialize bytes which can be transferred over the network.
 pub mod pack;
-/// Module to put all the db related macros like GET(), PUT(), etc.
-pub mod macros;
 
 pub use std::boxed;
 pub use std::convert;
@@ -53,4 +53,5 @@ extern crate byteorder;
 extern crate hashbrown;
 extern crate libloading;
 extern crate spin;
+extern crate util;
 pub use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};

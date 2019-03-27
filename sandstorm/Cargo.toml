@@ -10,3 +10,4 @@ hashbrown = "0.1.8"
 libc = "0.2.43"
 libloading = "0.3"
 spin = "0.4.7"
+util = {path = "../util"}

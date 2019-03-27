@@ -20,6 +20,7 @@
 
 extern crate db;
 extern crate sandstorm;
+extern crate util;
 pub extern crate env_logger;
 #[macro_use]
 pub extern crate log;

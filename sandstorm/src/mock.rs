@@ -15,13 +15,15 @@
 
 use std::fmt::Debug;
 
-use super::buf::{ReadBuf, Record, WriteBuf, MultiReadBuf};
+use super::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
 use super::db::DB;
 
 extern crate bytes;
 use self::bytes::{Bytes, BytesMut};
 
 use std::cell::RefCell;
+use std::sync::Arc;
+use util::model::Model;
 
 /// A mock database of testing purposes.
 pub struct MockDB {
@@ -122,6 +124,12 @@ impl DB for MockDB {
             table, key
         ));
 
-        (false, false, unsafe { Some(ReadBuf::new(Bytes::with_capacity(0))) })
+        (false, false, unsafe {
+            Some(ReadBuf::new(Bytes::with_capacity(0)))
+        })
+    }
+
+    fn get_model(&self) -> Option<Arc<Model>> {
+        None
     }
 }

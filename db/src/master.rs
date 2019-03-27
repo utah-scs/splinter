@@ -32,12 +32,11 @@ use super::task::{Task, TaskPriority};
 use super::tenant::Tenant;
 use super::wireformat::*;
 
-use util::model;
+use util::model::{get_raw_data, insert_model, run_ml_application, GLOBAL_MODEL};
 
 use e2d2::common::EmptyMetadata;
 use e2d2::headers::UdpHeader;
 use e2d2::interface::Packet;
-
 use spin::RwLock;
 
 use sandstorm::common::{TableId, TenantId, PACKET_UDP_LEN};
@@ -317,8 +316,10 @@ impl Master {
     ///                identifier will be overwritten.
     pub fn fill_analysis(&self, num_tenants: u32) {
         let table_id = 1;
-        let (sgd, _d_tree, _r_forest) = model::run_ml_application();
-        let data = model::get_raw_data("./../data/train.csv");
+        let (sgd, _d_tree, _r_forest) = run_ml_application();
+        insert_model(String::from("analysis"), sgd.clone());
+
+        let data = get_raw_data("./../data/train.csv");
 
         for tenant_id in 1..(num_tenants + 1) {
             // Create a tenant containing the table.
@@ -330,17 +331,6 @@ impl Master {
                 .expect("Failed to init test table.");
 
             let mut key = vec![0; 30];
-
-            // Add model to the table at zero index.
-            let mut val = vec![0; sgd.len()];
-            &val.copy_from_slice(&sgd);
-
-            let obj = self
-                .heap
-                .object(tenant_id, table_id, &key, &val)
-                .expect("Failed to create test object.");
-            table.put(obj.0, obj.1);
-
             for (row, line) in data.lines().enumerate() {
                 // Prepare the key for the record.
                 let temp: [u8; 4] = unsafe { transmute(((row + 1) as u32).to_le()) };
@@ -1320,6 +1310,14 @@ impl Master {
             // If the tenant is valid, check if the extension exists inside the database after
             // setting the RPC status appropriately.
             status = RpcStatus::StatusInvalidExtension;
+
+            // Get the model for the given extension.
+            let mut model = None;
+            if let Some(a_model) = GLOBAL_MODEL.lock().unwrap().get(&name) {
+                model = Some(Arc::clone(a_model));
+            }
+
+            // Create a Container for an extension and return.
             if let Some(ext) = self.extensions.get(tenant_id, name) {
                 let db = Rc::new(Context::new(
                     req,
@@ -1328,6 +1326,7 @@ impl Master {
                     res,
                     tenant,
                     alloc,
+                    model,
                 ));
                 let gen = ext.get(Rc::clone(&db) as Rc<DB>);
 

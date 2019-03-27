@@ -16,6 +16,12 @@
 //! This crate contains common utility code which is used on both client and server.
 #![feature(asm)]
 #![warn(missing_docs)]
+#![allow(non_snake_case)]
+extern crate bincode;
+#[macro_use]
+extern crate lazy_static;
+extern crate hashbrown;
+extern crate rustlearn;
 
 /// This module contains the code for Machine Learning model.
 pub mod model;

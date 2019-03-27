@@ -25,7 +25,7 @@ use super::dispatch::*;
 
 extern crate bytes;
 use self::bytes::{Bytes, BytesMut};
-
+use util::model::Model;
 /// This struct represents a record for a read/write set. Each record in the read/write set will
 /// be of this type.
 #[derive(Clone)]
@@ -256,5 +256,10 @@ impl DB for ProxyDB {
             .send_get_from_extension(self.tenant, table, key, self.parent_id);
         *self.db_credit.borrow_mut() += rdtsc() - start;
         (false, false, None)
+    }
+
+    /// Lookup the `DB` trait for documentation on this method.
+    fn get_model(&self) -> Option<Arc<Model>> {
+        None
     }
 }
