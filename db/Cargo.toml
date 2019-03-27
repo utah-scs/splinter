@@ -47,7 +47,8 @@ util         = {path = "../util"}
 # Add feature name in default features to enable cyclecounter for the given stage,
 # where stage name can be ["dispatch", "execution"].
 [features]
-default = ["pushback"]
-dispatch = []
-execution = []
-pushback = []
+default = ["ml-model"]
+dispatch = [] # Print the time spent in various parts of dispatch stage.
+execution = [] # Print the time spend in various parts of execution stage.
+pushback = [] # Consider extension for pushback if this feature is enabled.
+ml-model = [] # Update the model reference in Context if this feature is enabled.

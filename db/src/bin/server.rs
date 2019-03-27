@@ -253,6 +253,12 @@ fn print_info() {
     } else {
         info!("Fast path for native operations is DISABLED");
     }
+    if cfg!(feature = "ml-model") {
+        info!("ML Model generation for invoke operations is ENABLED");
+    } else {
+        info!("ML Model generation for invoke operations is DISABLED");
+    }
+    println!("\n");
 }
 
 fn main() {

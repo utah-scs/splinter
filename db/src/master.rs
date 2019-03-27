@@ -1313,10 +1313,11 @@ impl Master {
 
             // Get the model for the given extension.
             let mut model = None;
-            if let Some(a_model) = GLOBAL_MODEL.lock().unwrap().get(&name) {
-                model = Some(Arc::clone(a_model));
+            if cfg!(feature = "execution") {
+                if let Some(a_model) = GLOBAL_MODEL.lock().unwrap().get(&name) {
+                    model = Some(Arc::clone(a_model));
+                }
             }
-
             // Create a Container for an extension and return.
             if let Some(ext) = self.extensions.get(tenant_id, name) {
                 let db = Rc::new(Context::new(
