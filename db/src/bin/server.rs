@@ -132,6 +132,13 @@ fn setup_server<S>(
     handles.write().push(Arc::clone(&sched));
 
     match config.workload.as_str() {
+        // If the workload is ANALYSIS, then updated the thread local static variables for the Model.
+        //
+        // Why not training it here? - For each misbehaving task the training will take place,
+        //                             not recommended.
+        //
+        // Why not just use the Static Global? - Costly because of Mutex/RwLock and also Static
+        //                                       Global does an atomic access.
         "ANALYSIS" => {
             if let Some(a_model) = MODEL.lock().unwrap().get(&String::from("analysis")) {
                 insert_model(String::from("analysis"), a_model.serialized.clone());
@@ -334,7 +341,10 @@ fn main() {
         }
 
         "PUSHBACK" => {
-            info!("Populating PUSHBACK data for tenant 1024");
+            info!(
+                "Populating PUSHBACK data, {} tenants, {} records/tenant",
+                config.num_tenants, config.num_records
+            );
             for tenant in 1..(config.num_tenants + 1) {
                 master.fill_test(tenant, 1, config.num_records);
                 master.load_test(tenant);
@@ -343,8 +353,8 @@ fn main() {
 
         "ANALYSIS" => {
             info!(
-                "Populating ANALYSIS data, {} tenants, {} records/tenant",
-                config.num_tenants, config.num_records
+                "Populating ANALYSIS data, {} tenants, training dataset/tenant",
+                config.num_tenants
             );
             master.fill_analysis(config.num_tenants);
             for tenant in 1..(config.num_tenants + 1) {

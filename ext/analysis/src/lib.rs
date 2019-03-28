@@ -24,7 +24,6 @@ extern crate sandstorm;
 use std::ops::Generator;
 use std::rc::Rc;
 
-//use rustlearn::linear_models::sgdclassifier;
 use rustlearn::prelude::*;
 use rustlearn::traits::SupervisedModel;
 
@@ -80,7 +79,8 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             obj = db.get(table, key);
         }
 
-        // If the object was found, write it to the response.
+        // If the object was found, perform the classification on the object and write it
+        // to the response.
         match obj {
             Some(val) => match db.get_model() {
                 Some(model) => {
@@ -94,15 +94,16 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
                     db.resp(pack(&response));
                     return 0;
                 }
+
                 None => {
-                    let error = "Object does not exist1";
+                    let error = "ML Model does not exist";
                     db.resp(error.as_bytes());
                     return 0;
                 }
             },
 
             None => {
-                let error = "Object does not exist2";
+                let error = "Object does not exist";
                 db.resp(error.as_bytes());
                 return 0;
             }

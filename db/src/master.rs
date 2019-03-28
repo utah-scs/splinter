@@ -32,6 +32,7 @@ use super::task::{Task, TaskPriority};
 use super::tenant::Tenant;
 use super::wireformat::*;
 
+use util::common::TESTING_DATASET;
 use util::model::{get_raw_data, insert_global_model, run_ml_application, GLOBAL_MODEL};
 
 use e2d2::common::EmptyMetadata;
@@ -312,14 +313,15 @@ impl Master {
     ///
     /// # Arguments
     ///
-    /// * `tenant_id`: Identifier of the tenant to be added. Any existing tenant with the same
-    ///                identifier will be overwritten.
+    /// * `num_tenants`: The number of tenants for this workload.
     pub fn fill_analysis(&self, num_tenants: u32) {
+        // Run the ML model required for the extension and store the serialized version
+        // and deserialized version of the model, which will be used in the extension.
         let (sgd, _d_tree, _r_forest) = run_ml_application();
         insert_global_model(String::from("analysis"), sgd.clone());
 
         let table_id = 1;
-        let data = get_raw_data("./../data/train.csv");
+        let data = get_raw_data(TESTING_DATASET);
 
         for tenant_id in 1..(num_tenants + 1) {
             // Create a tenant containing the table.
@@ -1313,8 +1315,8 @@ impl Master {
 
             // Get the model for the given extension.
             let mut model = None;
-
-            if cfg!(feature = "execution") {
+            // If the extension doesn't need an ML model, don't waste CPU cycles in lookup.
+            if cfg!(feature = "ml-model") {
                 GLOBAL_MODEL.with(|a_model| {
                     if let Some(a_model) = (*a_model).borrow().get(&name) {
                         model = Some(Arc::clone(a_model));
