@@ -63,17 +63,12 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             // Next, split the arguments into a view over the table identifier
             // (first eight bytes), and a view over the key to be looked up.
             // De-serialize the table identifier into a u64.
-            let (table, remaining) = args.split_at(8);
-            let (_, key) = remaining.split_at(8);
-            let table: u64 = 0
-                | table[0] as u64
-                | (table[1] as u64) << 8
-                | (table[2] as u64) << 16
-                | (table[3] as u64) << 24
-                | (table[4] as u64) << 32
-                | (table[5] as u64) << 40
-                | (table[6] as u64) << 48
-                | (table[7] as u64) << 56;
+            let (stable, key) = args.split_at(8);
+
+            let mut table: u64 = 0;
+            for (idx, e) in stable.iter().enumerate() {
+                table |= (*e as u64) << (idx << 3);
+            }
 
             // Finally, lookup the database for the object.
             obj = db.get(table, key);

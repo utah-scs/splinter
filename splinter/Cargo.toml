@@ -40,6 +40,10 @@ path = "src/bin/client/pushback.rs"
 name = "ycsb-abce"
 path = "src/bin/client/ycsb-abce.rs"
 
+[[bin]]
+name = "analysis"
+path = "src/bin/client/analysis.rs"
+
 [dependencies]
 libc         = "0.2.43"
 nix          = "0.11.0"
