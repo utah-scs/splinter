@@ -32,7 +32,7 @@ use super::task::{Task, TaskPriority};
 use super::tenant::Tenant;
 use super::wireformat::*;
 
-use util::model::{get_raw_data, insert_model, run_ml_application, GLOBAL_MODEL};
+use util::model::{get_raw_data, insert_global_model, run_ml_application, GLOBAL_MODEL};
 
 use e2d2::common::EmptyMetadata;
 use e2d2::headers::UdpHeader;
@@ -315,10 +315,10 @@ impl Master {
     /// * `tenant_id`: Identifier of the tenant to be added. Any existing tenant with the same
     ///                identifier will be overwritten.
     pub fn fill_analysis(&self, num_tenants: u32) {
-        let table_id = 1;
         let (sgd, _d_tree, _r_forest) = run_ml_application();
-        insert_model(String::from("analysis"), sgd.clone());
+        insert_global_model(String::from("analysis"), sgd.clone());
 
+        let table_id = 1;
         let data = get_raw_data("./../data/train.csv");
 
         for tenant_id in 1..(num_tenants + 1) {
@@ -1313,11 +1313,15 @@ impl Master {
 
             // Get the model for the given extension.
             let mut model = None;
+
             if cfg!(feature = "execution") {
-                if let Some(a_model) = GLOBAL_MODEL.lock().unwrap().get(&name) {
-                    model = Some(Arc::clone(a_model));
-                }
+                GLOBAL_MODEL.with(|a_model| {
+                    if let Some(a_model) = (*a_model).borrow().get(&name) {
+                        model = Some(Arc::clone(a_model));
+                    }
+                });
             }
+
             // Create a Container for an extension and return.
             if let Some(ext) = self.extensions.get(tenant_id, name) {
                 let db = Rc::new(Context::new(

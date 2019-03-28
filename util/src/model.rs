@@ -21,6 +21,7 @@ use std::io::Read;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
 
 use rustlearn::ensemble::random_forest;
 use rustlearn::linear_models::sgdclassifier;
@@ -61,21 +62,22 @@ impl Model {
 
 ///
 pub fn insert_model(name: String, serialized: Vec<u8>) {
-    let model = Model::new(serialized);
-    GLOBAL_MODEL.lock().unwrap().insert(name, Arc::new(model));
+    GLOBAL_MODEL.with(|a_model| {
+        let model = Model::new(serialized);
+        (*a_model).borrow_mut().insert(name, Arc::new(model));
+    });
 }
 
+thread_local!(pub static GLOBAL_MODEL: RefCell<HashMap<String, Arc<Model>>> = RefCell::new(HashMap::new()));
+
 ///
-pub fn get_model(name: String) -> Option<Arc<Model>> {
-    if let Some(model) = GLOBAL_MODEL.lock().unwrap().get(&name) {
-        Some(Arc::clone(model))
-    } else {
-        None
-    }
+pub fn insert_global_model(name: String, serialized: Vec<u8>) {
+    let model = Model::new(serialized);
+    MODEL.lock().unwrap().insert(name, Arc::new(model));
 }
 
 lazy_static! {
-    pub static ref GLOBAL_MODEL: Mutex<HashMap<String, Arc<Model>>> = Mutex::new(HashMap::new());
+    pub static ref MODEL: Mutex<HashMap<String, Arc<Model>>> = Mutex::new(HashMap::new());
 }
 
 /// Add function documentation
@@ -183,7 +185,7 @@ pub fn run_sgdclassifier(
     println!("SGDClassifier accuracy: {}%", accuracy * 100.0);
 
     let serialized = serialize(&model).unwrap();
-    println!("{}", serialized.len());
+    println!("Size of serialized model {} Bytes", serialized.len());
     let start = rdtsc();
     let model: sgdclassifier::SGDClassifier = deserialize(&serialized).unwrap();
     let diff1 = rdtsc() - start;
@@ -225,7 +227,7 @@ pub fn run_decision_tree(
     println!("DecisionTree accuracy: {}%", accuracy * 100.0);
 
     let serialized = serialize(&model).unwrap();
-    println!("{}", serialized.len());
+    println!("Size of serialized model {} Bytes", serialized.len());
     let start = rdtsc();
     let model: decision_tree::DecisionTree = deserialize(&serialized).unwrap();
     let diff1 = rdtsc() - start;
@@ -265,7 +267,7 @@ pub fn run_random_forest(
 
     println!("RandomForest accuracy: {}%", accuracy * 100.0);
     let serialized = serialize(&model).unwrap();
-    println!("{}", serialized.len());
+    println!("Size of serialized model {} Bytes", serialized.len());
     let start = rdtsc();
     let model: random_forest::RandomForest = deserialize(&serialized).unwrap();
     let diff1 = rdtsc() - start;

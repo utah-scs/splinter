@@ -19,6 +19,7 @@ extern crate db;
 extern crate libc;
 extern crate nix;
 extern crate spin;
+extern crate util;
 
 use std::sync::Arc;
 use std::thread::{sleep, spawn};
@@ -46,6 +47,7 @@ use spin::RwLock;
 
 use libc::ucontext_t;
 use nix::sys::signal;
+use util::model::{insert_model, MODEL};
 
 /// Interval in milliseconds at which all schedulers in the system will be scanned for misbehaving
 /// tasks.
@@ -128,6 +130,16 @@ fn setup_server<S>(
 
     // Add the scheduler to the passed in `handles` vector.
     handles.write().push(Arc::clone(&sched));
+
+    match config.workload.as_str() {
+        "ANALYSIS" => {
+            if let Some(a_model) = MODEL.lock().unwrap().get(&String::from("analysis")) {
+                insert_model(String::from("analysis"), a_model.serialized.clone());
+            }
+        }
+
+        _ => {}
+    }
 
     // Add the server to a netbricks pipeline.
     match scheduler.add_task(Server::new(sched)) {
