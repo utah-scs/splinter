@@ -364,11 +364,11 @@ where
                 // bytes of the key matter, the rest are zero. The value is always zero.
                 self.workload.borrow_mut().abc(
                     |tenant, key| {
-                        // First 16 bytes on the payload were already pre-populated with the
-                        // extension name (8 bytes), the table id (8 bytes), Just write
+                        // First 12 bytes on the payload were already pre-populated with the
+                        // extension name (4 bytes), the table id (8 bytes), Just write
                         // in the first 4 bytes of the key and first 4 bytes of value.
-                        p_get[16..20].copy_from_slice(&key[0..4]);
-                        p_get[46..50].copy_from_slice(&key[0..4]);
+                        p_get[12..16].copy_from_slice(&key[0..4]);
+                        p_get[42..46].copy_from_slice(&key[0..4]);
                         self.add_request(&p_get, tenant, 4, curr);
                         self.sender.send_invoke(tenant, 4, &p_get, curr)
                     },
@@ -416,8 +416,6 @@ where
                                 // If the status is StatusOk then add the stamp to the latencies and
                                 // free the packet.
                                 RpcStatus::StatusOk => {
-                                    let records = p.get_payload();
-                                    println!("OK {:?}", records); //Delete later.
                                     self.recvd += 1;
                                     self.latencies
                                         .push(curr - p.get_header().common_header.stamp);

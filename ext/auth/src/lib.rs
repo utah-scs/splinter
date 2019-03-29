@@ -71,7 +71,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             // De-serialize the table identifier into a u64.
             let (s_table, remain_args) = args.split_at(8);
             let (username, pass) = remain_args.split_at(30);
-            password.extend_from_slice(pass);
+            password.copy_from_slice(pass);
 
             // Get the table id from the unwrapped arguments.
             let mut table: u64 = 0;
