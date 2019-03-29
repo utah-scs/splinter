@@ -1,0 +1,11 @@
+[package]
+name = "auth"
+version = "0.1.0"
+authors = ["Jacob Barzee <jmbarzee@gmail.com>"]
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+sandstorm = { path = "../../sandstorm" }
+rust-crypto = "0.2.36"

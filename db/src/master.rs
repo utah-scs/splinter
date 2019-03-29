@@ -13,7 +13,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use crypto::bcrypt::bcrypt;
 use hashbrown::HashMap;
+
 use std::fs::File;
 use std::io::Write;
 use std::mem::{size_of, transmute};
@@ -43,9 +45,7 @@ use sandstorm::ext::*;
 /// Convert a raw pointer for Allocator into a Allocator reference. This can be used to pass
 /// the allocator reference across closures without cloning the allocator object.
 pub fn accessor<'a>(alloc: *const Allocator) -> &'a Allocator {
-    unsafe {
-        &*alloc
-    }
+    unsafe { &*alloc }
 }
 
 // The number of buckets in the `tenants` hashtable inside of Master.
@@ -307,6 +307,54 @@ impl Master {
         self.insert_tenant(tenant);
     }
 
+    /// Populates the authentication dataset.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant_id`: Identifier of the tenant to be added. Any existing tenant with the same
+    ///                identifier will be overwritten.
+    /// * `table_id`:  Identifier of the table to be added to the tenant. This table will contain
+    ///                all the objects.
+    /// * `num`:       The number of objects to be added to the data table.
+    pub fn fill_auth(&self, tenant_id: TenantId, table_id: TableId, num: u32) {
+        // Create a tenant containing the table.
+        let tenant = Tenant::new(tenant_id);
+        tenant.create_table(table_id);
+
+        let table = tenant
+            .get_table(table_id)
+            .expect("Failed to init test table.");
+
+        let mut username = vec![0; 30];
+        let mut password = vec![0; 72];
+        let mut hash_salt = vec![0; 40];
+        let mut salt = vec![0; 16];
+
+        // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
+        // and a 40 Byte value(24 byte HASH followed by 16 byte SALT).
+        for i in 1..(num + 1) {
+            let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+            &username[0..4].copy_from_slice(&temp);
+            &password[0..4].copy_from_slice(&temp);
+            &hash_salt[24..28].copy_from_slice(&temp);
+            &salt[0..4].copy_from_slice(&temp);
+
+            let output: &mut [u8] = &mut [0; 24];
+            bcrypt(1, &salt, &password, output);
+            &hash_salt[0..24].copy_from_slice(&output);
+
+            // Add a mapping of the username and (HASH+SALT) in the table.
+            let obj = self
+                .heap
+                .object(tenant_id, table_id, &username, &hash_salt)
+                .expect("Failed to create test object.");
+            table.put(obj.0, obj.1);
+        }
+
+        // Add the tenant.
+        self.insert_tenant(tenant);
+    }
+
     /// Loads the get(), put(), tao(), and bad() extensions.
     ///
     /// # Arguments
@@ -359,6 +407,12 @@ impl Master {
         let name = "../ext/scan/target/release/libscan.so";
         if self.extensions.load(name, tenant, "scan") == false {
             panic!("Failed to load scan() extension.");
+        }
+
+        // Load the pushback() extension.
+        let name = "../ext/auth/target/release/libauth.so";
+        if self.extensions.load(name, tenant, "auth") == false {
+            panic!("Failed to load auth() extension.");
         }
     }
 
