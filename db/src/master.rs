@@ -315,7 +315,40 @@ impl Master {
     ///                all the objects.
     /// * `num`:       The number of objects to be added to the data table.
     pub fn fill_auth(&self, _tenant_id: TenantId, _table_id: TableId, _num: u32) {
-        //TODO: Add the records in the table.
+        // Create a tenant containing the table.
+        let tenant = Tenant::new(tenant_id);
+        tenant.create_table(table_id);
+
+        let table = tenant
+            .get_table(table_id)
+            .expect("Failed to init test table.");
+
+        let mut username = vec![0; 30];
+        let mut password = vec![0; 72];
+        let mut hash_salt = vec![0; 40];
+
+        // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
+        // and a 40 Byte value(24 byte HASH followed by 16 byte SALT).
+        for i in 1..(num + 1) {
+            let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+            &username[0..4].copy_from_slice(&temp);
+            &password[0..4].copy_from_slice(&temp);
+            &hash_salt[24..28].copy_from_slice(&temp);
+
+            let output: &mut [u8] = &mut [0; 24];
+            bcrypt(1, salt, &password, output);
+            &hash_salt[0..24].copy_from_slice(&output);
+
+            // Add a mapping of the username and (HASH+SALT) in the table.
+            let obj = self
+                .heap
+                .object(tenant_id, table_id, &username, &hash_salt)
+                .expect("Failed to create test object.");
+            table.put(obj.0, obj.1);
+        }
+
+        // Add the tenant.
+        self.insert_tenant(tenant);
     }
 
     /// Loads the get(), put(), tao(), and bad() extensions.

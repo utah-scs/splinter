@@ -328,7 +328,6 @@ fn main() {
                 "Populating AUTH data, {} tenants, {} records/tenant",
                 config.num_tenants, config.num_records
             );
-            info!("TODO: Add the records in the table.");
             for tenant in 1..(config.num_tenants + 1) {
                 master.fill_auth(tenant, 1, config.num_records);
                 master.load_test(tenant);
