@@ -17,15 +17,22 @@
 #![feature(no_unsafe)]
 #![feature(generators, generator_trait)]
 
-
-use std::rc::Rc;
-use std::ops::Generator;
-
-extern crate sandstorm;
-use sandstorm::db::DB;
-
 extern crate crypto;
-use crypto::{bcrypt::bcrypt};
+extern crate sandstorm;
+
+use crypto::bcrypt::bcrypt;
+
+use std::ops::Generator;
+use std::rc::Rc;
+
+use sandstorm::db::DB;
+use sandstorm::pack::pack;
+
+/// Status codes for the response to the tenant.
+const INVALIDARG: u8 = 0x01;
+const SUCCESSFUL: u8 = 0x02;
+const UNSUCCESSFUL: u8 = 0x03;
+const ABSENTOBJECT: u8 = 0x4;
 
 /// This function implements the get() extension using the sandstorm interface.
 ///
@@ -40,37 +47,39 @@ use crypto::{bcrypt::bcrypt};
 #[no_mangle]
 #[allow(unreachable_code)]
 #[allow(unused_assignments)]
-pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
+pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
     Box::new(move || {
         let mut obj = None;
-        let password: &[u8];
+        let mut status = INVALIDARG;
+        let mut password: Vec<u8> = vec![0; 72];
 
         {
             // First off, retrieve the arguments to the extension.
             let args = db.args();
 
             // Check that the arguments received is long enough to contain an
-            // 8 byte table id and a key to be looked up. If not, then write
-            // an error message to the response and return to the database.
-            if args.len() <= 8 {
-                let error = "Invalid args";
-                db.resp(error.as_bytes());
+            // 8 byte table id, a 30 byte key to be looked up and a 72 byte
+            // password to match. If not, then write an error message to the
+            // response and return to the database.
+            if args.len() != 110 {
+                db.resp(pack(&status));
                 return 1;
             }
 
             // Next, split the arguments into a view over the table identifier
             // (first eight bytes), and a view over the key to be looked up.
             // De-serialize the table identifier into a u64.
-            let (table, remain_args) = args.split_at(8);
-            let table: u64 = 0 | table[0] as u64 | (table[1] as u64) << 8 |
-                            (table[2] as u64) << 16 | (table[3] as u64) << 24 |
-                            (table[4] as u64) << 32 | (table[5] as u64) << 40 |
-                            (table[6] as u64) << 48 | (table[7] as u64) << 56;
+            let (s_table, remain_args) = args.split_at(8);
+            let (username, pass) = remain_args.split_at(30);
+            password.extend_from_slice(pass);
 
+            // Get the table id from the unwrapped arguments.
+            let mut table: u64 = 0;
+            for (idx, e) in s_table.iter().enumerate() {
+                table |= (*e as u64) << (idx << 3);
+            }
 
             // Finally, lookup the database for the object.
-            let (username, remain_args) = remain_args.split_at(72);
-            password = remain_args;
             obj = db.get(table, username);
         }
 
@@ -78,24 +87,26 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
         match obj {
             // If the object was found, find it's hash and write it to the response.
             Some(val) => {
-                assert!(val.len() == 40);
-                
+                // The value is 40 bytes long; 24 bytes for hash and 16 bytes for the salt.
                 let bytes = val.read();
-                let hash = &bytes[0 .. 24];
-                let salt = &bytes[24 .. 40];
+                if bytes.len() != 40 {
+                    db.resp(pack(&status));
+                    return 0;
+                }
+                let hash = &bytes[0..24];
+                let salt = &bytes[24..40];
+
+                // Compute the hash using salt and password, store in output.
                 let output: &mut [u8] = &mut [0; 24];
+                bcrypt(1, salt, &password, output);
 
-                // salt = 16 bytes
-                // password <= 72 bytes
-                // output = 24 bytes
-                bcrypt(1, salt, password, output);
-
+                // Compare the calculated hash and DB stored hash.
                 if output == hash {
-                    let result = "Successful login";
-                    db.resp(result.as_bytes());
+                    status = SUCCESSFUL;
+                    db.resp(pack(&status));
                 } else {
-                    let result = "Invalid username/password combination";
-                    db.resp(result.as_bytes());
+                    status = UNSUCCESSFUL;
+                    db.resp(pack(&status));
                 }
                 return 0;
             }
@@ -103,8 +114,8 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
             // If the object was not found, write an error message to the
             // response.
             None => {
-                let error = "Object does not exist";
-                db.resp(error.as_bytes());
+                status = ABSENTOBJECT;
+                db.resp(pack(&status));
                 return 0;
             }
         }

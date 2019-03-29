@@ -43,9 +43,7 @@ use sandstorm::ext::*;
 /// Convert a raw pointer for Allocator into a Allocator reference. This can be used to pass
 /// the allocator reference across closures without cloning the allocator object.
 pub fn accessor<'a>(alloc: *const Allocator) -> &'a Allocator {
-    unsafe {
-        &*alloc
-    }
+    unsafe { &*alloc }
 }
 
 // The number of buckets in the `tenants` hashtable inside of Master.
@@ -307,6 +305,19 @@ impl Master {
         self.insert_tenant(tenant);
     }
 
+    /// Populates the authentication dataset.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant_id`: Identifier of the tenant to be added. Any existing tenant with the same
+    ///                identifier will be overwritten.
+    /// * `table_id`:  Identifier of the table to be added to the tenant. This table will contain
+    ///                all the objects.
+    /// * `num`:       The number of objects to be added to the data table.
+    pub fn fill_auth(&self, _tenant_id: TenantId, _table_id: TableId, _num: u32) {
+        //TODO: Add the records in the table.
+    }
+
     /// Loads the get(), put(), tao(), and bad() extensions.
     ///
     /// # Arguments
@@ -359,6 +370,12 @@ impl Master {
         let name = "../ext/scan/target/release/libscan.so";
         if self.extensions.load(name, tenant, "scan") == false {
             panic!("Failed to load scan() extension.");
+        }
+
+        // Load the pushback() extension.
+        let name = "../ext/auth/target/release/libauth.so";
+        if self.extensions.load(name, tenant, "auth") == false {
+            panic!("Failed to load auth() extension.");
         }
     }
 

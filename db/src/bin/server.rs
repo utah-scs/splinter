@@ -243,7 +243,7 @@ extern "C" fn handle_sigsegv(
 
 /// Print server startup information.
 fn print_info() {
-      if cfg!(feature = "pushback") {
+    if cfg!(feature = "pushback") {
         info!("Push-back for invoke operations is ENABLED");
     } else {
         info!("Push-back for invoke operations is DISABLED");
@@ -319,6 +319,18 @@ fn main() {
             info!("Populating PUSHBACK data for tenant 1024");
             for tenant in 1..(config.num_tenants + 1) {
                 master.fill_test(tenant, 1, config.num_records);
+                master.load_test(tenant);
+            }
+        }
+
+        "AUTH" => {
+            info!(
+                "Populating AUTH data, {} tenants, {} records/tenant",
+                config.num_tenants, config.num_records
+            );
+            info!("TODO: Add the records in the table.");
+            for tenant in 1..(config.num_tenants + 1) {
+                master.fill_auth(tenant, 1, config.num_records);
                 master.load_test(tenant);
             }
         }
