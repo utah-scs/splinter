@@ -70,5 +70,6 @@ util         = {path = "../util"}
 # Add feature name in default features to enable cyclecounter for the given stage,
 # where stage name can be ["execution"].
 [features]
-default = []
+default = ["ml-model"]
 execution = []
+ml-model = []

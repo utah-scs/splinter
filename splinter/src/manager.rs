@@ -24,6 +24,7 @@ use db::master::Master;
 use db::task::{Task, TaskPriority, TaskState, TaskState::*};
 
 use sandstorm::common::TenantId;
+use util::model::GLOBAL_MODEL;
 
 /// TaskManager handles the information for a pushed-back extension on the client side.
 pub struct TaskManager {
@@ -110,6 +111,17 @@ impl TaskManager {
         name.extend_from_slice(self.get_payload().split_at(name_length).0);
         let name: String = String::from_utf8(name).expect("ERROR: Failed to get ext name.");
 
+        // Get the model for the given extension.
+        let mut model = None;
+        // If the extension doesn't need an ML model, don't waste CPU cycles in lookup.
+        if cfg!(feature = "ml-model") {
+            GLOBAL_MODEL.with(|a_model| {
+                if let Some(a_model) = (*a_model).borrow().get(&name) {
+                    model = Some(Arc::clone(a_model));
+                }
+            });
+        }
+
         if let Some(ext) = self.master.extensions.get(tenant_id, name) {
             let db = Rc::new(ProxyDB::new(
                 self.tenant,
@@ -117,6 +129,7 @@ impl TaskManager {
                 Arc::clone(&self.payload),
                 self.name_length as usize,
                 sender_service,
+                model,
             ));
             self.task
                 .push(Box::new(Container::new(TaskPriority::REQUEST, db, ext)));

@@ -21,6 +21,7 @@ extern crate sandstorm;
 extern crate spin;
 extern crate splinter;
 extern crate time;
+extern crate util;
 extern crate zipf;
 
 mod setup;
@@ -48,6 +49,7 @@ use rand::distributions::{Normal, Sample};
 use rand::{Rng, SeedableRng, XorShiftRng};
 use splinter::manager::TaskManager;
 use splinter::*;
+use util::model::{insert_global_model, insert_model, run_ml_application, MODEL};
 use zipf::ZipfDistribution;
 
 // Flag to indicate that the client has finished sending and receiving the packets.
@@ -272,9 +274,7 @@ where
     ) -> AnalysisRecvSend<T> {
         // The payload on an invoke() based get request consists of the extensions name ("analysis"),
         // the table id to perform the lookup on, number of get(), number of CPU cycles and the key to lookup.
-        let payload_len = "analysis".as_bytes().len()
-            + mem::size_of::<u64>()
-            + config.key_len;
+        let payload_len = "analysis".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
         let mut payload_analysis = Vec::with_capacity(payload_len);
         payload_analysis.extend_from_slice("analysis".as_bytes());
         payload_analysis.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
@@ -642,6 +642,10 @@ fn setup_send_recv<S>(
         std::process::exit(1);
     }
 
+    if let Some(a_model) = MODEL.lock().unwrap().get(&String::from("analysis")) {
+        insert_model(String::from("analysis"), a_model.serialized.clone());
+    }
+
     // Add the receiver to a netbricks pipeline.
     match scheduler.add_task(AnalysisRecvSend::new(
         ports[0].clone(),
@@ -675,11 +679,18 @@ fn main() {
 
     let masterservice = Arc::new(Master::new());
 
+    // Enable ml-model feature for this extension.
+    assert_eq!(cfg!(feature = "ml-model"), true);
     // Create tenants with extensions.
     info!("Populating extension for {} tenants", config.num_tenants);
     for tenant in 1..(config.num_tenants + 1) {
         masterservice.load_test(tenant);
     }
+
+    // Run the ML model required for the extension and store the serialized version
+    // and deserialized version of the model, which will be used in the extension.
+    let (sgd, _d_tree, _r_forest) = run_ml_application();
+    insert_global_model(String::from("analysis"), sgd.clone());
 
     // Setup Netbricks.
     let mut net_context = setup::config_and_init_netbricks(&config);

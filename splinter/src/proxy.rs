@@ -26,6 +26,7 @@ use super::dispatch::*;
 extern crate bytes;
 use self::bytes::{Bytes, BytesMut};
 use util::model::Model;
+
 /// This struct represents a record for a read/write set. Each record in the read/write set will
 /// be of this type.
 #[derive(Clone)]
@@ -89,6 +90,9 @@ pub struct ProxyDB {
 
     // The credit which the extension has earned by making the db calls.
     db_credit: RefCell<u64>,
+
+    // The model for a given extension which is stored based on the name of the extension.
+    model: Option<Arc<Model>>,
 }
 
 impl ProxyDB {
@@ -113,6 +117,7 @@ impl ProxyDB {
         request: Arc<Vec<u8>>,
         name_length: usize,
         sender_service: Arc<Sender>,
+        model: Option<Arc<Model>>,
     ) -> ProxyDB {
         ProxyDB {
             tenant: tenant_id,
@@ -124,6 +129,7 @@ impl ProxyDB {
             readset: RefCell::new(Vec::with_capacity(4)),
             writeset: RefCell::new(Vec::with_capacity(4)),
             db_credit: RefCell::new(0),
+            model: model,
         }
     }
 
@@ -260,6 +266,9 @@ impl DB for ProxyDB {
 
     /// Lookup the `DB` trait for documentation on this method.
     fn get_model(&self) -> Option<Arc<Model>> {
-        None
+        match self.model {
+            Some(ref model) => Some(Arc::clone(&model)),
+            None => None,
+        }
     }
 }
