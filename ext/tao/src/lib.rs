@@ -2,6 +2,7 @@
 #![feature(generator_trait)]
 #![feature(try_from)]
 #![no_std]
+#![forbid(unsafe_code)]
 
 extern crate sandstorm;
 

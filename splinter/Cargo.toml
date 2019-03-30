@@ -44,6 +44,10 @@ path = "src/bin/client/ycsb-abce.rs"
 name = "analysis"
 path = "src/bin/client/analysis.rs"
 
+[[bin]]
+name = "auth"
+path = "src/bin/client/auth.rs"
+
 [dependencies]
 libc         = "0.2.43"
 nix          = "0.11.0"

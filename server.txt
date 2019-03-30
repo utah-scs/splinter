@@ -1,2 +1,0 @@
-#List all the servers in the given format
-#username@hostname::22

@@ -23,6 +23,7 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate bincode;
+extern crate crypto;
 extern crate hashbrown;
 extern crate spin;
 extern crate time;

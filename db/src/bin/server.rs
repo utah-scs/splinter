@@ -362,6 +362,17 @@ fn main() {
             }
         }
 
+        "AUTH" => {
+            info!(
+                "Populating AUTH data, {} tenants, {} records/tenant",
+                config.num_tenants, config.num_records
+            );
+            for tenant in 1..(config.num_tenants + 1) {
+                master.fill_auth(tenant, 1, config.num_records);
+                master.load_test(tenant);
+            }
+        }
+
         _ => {
             info!("Populating SANITY data for tenant 100");
             master.fill_test(100, 100, 0);
