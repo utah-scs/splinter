@@ -15,6 +15,7 @@
 
 #![feature(use_extern_macros)]
 
+extern crate crypto;
 extern crate db;
 extern crate rand;
 extern crate sandstorm;
@@ -31,6 +32,8 @@ use std::fmt::Display;
 use std::mem;
 use std::mem::transmute;
 use std::sync::Arc;
+
+use crypto::bcrypt::bcrypt;
 
 use db::config;
 use db::cyclecounter::CycleCounter;
@@ -237,7 +240,7 @@ where
     // Keeps track of the state of a multi-operation request. For example, an extension performs
     // four get operations before performing aggregation and all these get operations are dependent
     // on the previous value.
-    native_state: RefCell<HashMap<u64, u8>>,
+    native_state: RefCell<HashMap<u64, Vec<u8>>>,
 }
 
 // Implementation of methods on AuthRecv.
@@ -353,10 +356,15 @@ where
             if self.native == true {
                 // Configured to issue native RPCs, issue a regular get()/put() operation.
                 self.workload.borrow_mut().abc(
-                    |tenant, key| self.sender.send_get(tenant, 1, key, curr),
-                    |tenant, key, val| self.sender.send_put(tenant, 1, key, val, curr),
+                    |tenant, key| {
+                        self.sender.send_get(tenant, 1, key, curr);
+                        self.native_state.borrow_mut().insert(curr, key.to_vec());
+                    },
+                    |tenant, key, val| {
+                        self.sender.send_put(tenant, 1, key, val, curr);
+                        self.native_state.borrow_mut().insert(curr, key.to_vec());
+                    },
                 );
-                self.native_state.borrow_mut().entry(curr).or_insert(1);
                 self.outstanding += 1;
             } else {
                 // Configured to issue invoke() RPCs.
@@ -492,14 +500,48 @@ where
                     match parse_rpc_opcode(&packet) {
                         OpCode::SandstormGetRpc => {
                             let p = packet.parse_header::<GetResponse>();
+                            match p.get_header().common_header.status {
+                                // If the status is StatusOk then add the stamp to the latencies and
+                                // free the packet.
+                                RpcStatus::StatusOk => {
+                                    let timestamp = p.get_header().common_header.stamp;
+                                    let value = p.get_payload();
+                                    if value.len() != 40 {
+                                        info!("Something is wrong with the size of the response");
+                                    } else {
+                                        let mut password: Vec<
+                                            u8,
+                                        > = vec![0; 72];
+                                        if let Some(key) =
+                                            self.native_state.borrow().get(&timestamp)
+                                        {
+                                            password[0..30].copy_from_slice(&key);
+                                        }
+                                        let hash = &value[0..24];
+                                        let salt = &value[24..40];
 
-                            //TODO: Get the value(HASH+SALT) from payload and
-                            // run bcrpt over (key + salt) and compare it with HASH.
-                            let timestamp = p.get_header().common_header.stamp;
-                            self.latencies.push(cycles::rdtsc() - timestamp);
-                            self.native_state.borrow_mut().remove(&timestamp);
-                            self.recvd += 1;
-                            self.outstanding -= 1;
+                                        let output: &mut [u8] = &mut [0; 24];
+                                        bcrypt(1, salt, &password, output);
+
+                                        // Compare the calculated hash and DB stored hash.
+                                        let mut status: u64;
+                                        if output == hash {
+                                            status = 1;
+                                        } else {
+                                            status = 0;
+                                        }
+
+                                        self.latencies.push(cycles::rdtsc() - timestamp - status);
+                                        self.native_state.borrow_mut().remove(&timestamp);
+                                        self.recvd += 1;
+                                        self.outstanding -= 1;
+                                    }
+                                }
+                                _ => {
+                                    self.outstanding -= 1;
+                                    info!("Couldn't parse the response");
+                                }
+                            }
                             p.free_packet();
                         }
 

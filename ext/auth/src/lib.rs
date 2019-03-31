@@ -18,6 +18,7 @@
 #![feature(generators, generator_trait)]
 
 extern crate crypto;
+#[macro_use]
 extern crate sandstorm;
 
 use crypto::bcrypt::bcrypt;
@@ -50,8 +51,10 @@ const ABSENTOBJECT: u8 = 0x4;
 pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
     Box::new(move || {
         let mut obj = None;
+        let mut table: u64 = 0;
         let mut status = INVALIDARG;
-        let mut password: Vec<u8> = vec![0; 72];
+        let mut username: Vec<u8> = Vec::with_capacity(30);
+        let mut password: Vec<u8> = Vec::with_capacity(72);
 
         {
             // First off, retrieve the arguments to the extension.
@@ -70,18 +73,19 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             // (first eight bytes), and a view over the key to be looked up.
             // De-serialize the table identifier into a u64.
             let (s_table, remain_args) = args.split_at(8);
-            let (username, pass) = remain_args.split_at(30);
-            password.copy_from_slice(pass);
+            let (userid, pass) = remain_args.split_at(30);
+            username.extend_from_slice(userid);
+            password.extend_from_slice(pass);
 
             // Get the table id from the unwrapped arguments.
-            let mut table: u64 = 0;
             for (idx, e) in s_table.iter().enumerate() {
                 table |= (*e as u64) << (idx << 3);
             }
-
-            // Finally, lookup the database for the object.
-            obj = db.get(table, username);
         }
+
+        // Finally, lookup the database for the object.
+        GET!(db, table, username, obj);
+        yield 0;
 
         // Populate a response to the tenant.
         match obj {

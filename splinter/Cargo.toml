@@ -50,6 +50,7 @@ path = "src/bin/client/auth.rs"
 
 [dependencies]
 bincode      = "1.0"
+rust-crypto  = "0.2.36"
 libc         = "0.2.43"
 nix          = "0.11.0"
 log          = "0.3"
