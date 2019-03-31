@@ -15,8 +15,10 @@
 
 #![feature(use_extern_macros)]
 
+extern crate bincode;
 extern crate db;
 extern crate rand;
+extern crate rustlearn;
 extern crate sandstorm;
 extern crate spin;
 extern crate splinter;
@@ -47,9 +49,11 @@ use db::wireformat::*;
 
 use rand::distributions::{Normal, Sample};
 use rand::{Rng, SeedableRng, XorShiftRng};
+use rustlearn::prelude::*;
+use rustlearn::traits::SupervisedModel;
 use splinter::manager::TaskManager;
 use splinter::*;
-use util::model::{insert_global_model, insert_model, run_ml_application, MODEL};
+use util::model::{insert_global_model, insert_model, run_ml_application, GLOBAL_MODEL, MODEL};
 use zipf::ZipfDistribution;
 
 // Flag to indicate that the client has finished sending and receiving the packets.
@@ -245,6 +249,9 @@ where
     // four get operations before performing aggregation and all these get operations are dependent
     // on the previous value.
     native_state: RefCell<HashMap<u64, u8>>,
+
+    //Name of the extension for which the client is generating the requests.
+    extname: String,
 }
 
 // Implementation of methods on AnalysisRecv.
@@ -329,6 +336,7 @@ where
             analysis_completed: 0,
             cycle_counter: CycleCounter::new(),
             native_state: RefCell::new(HashMap::with_capacity(32)),
+            extname: String::from("analysis"),
         }
     }
 
@@ -506,13 +514,35 @@ where
                     //The extension is executed locally on the client side.
                     match parse_rpc_opcode(&packet) {
                         OpCode::SandstormGetRpc => {
-                            //TODO: Get the model, get the key and perform the prediction.
                             let p = packet.parse_header::<GetResponse>();
-                            let timestamp = p.get_header().common_header.stamp;
-                            self.latencies.push(cycles::rdtsc() - timestamp);
-                            self.native_state.borrow_mut().remove(&timestamp);
-                            self.recvd += 1;
-                            self.outstanding -= 1;
+                            match p.get_header().common_header.status {
+                                // If the status is StatusOk then add the stamp to the latencies and
+                                // free the packet.
+                                RpcStatus::StatusOk => {
+                                    let mut response: f32 = 0.0;
+                                    let value = p.get_payload();
+                                    let predict: Vec<f32> = bincode::deserialize(value).unwrap();
+                                    GLOBAL_MODEL.with(|a_model| {
+                                        if let Some(model) = (*a_model).borrow().get(&self.extname)
+                                        {
+                                            response = model
+                                                .deserialized
+                                                .predict(&Array::from(&vec![predict]))
+                                                .unwrap()
+                                                .data()[0];
+                                        }
+                                    });
+                                    let timestamp = p.get_header().common_header.stamp;
+                                    self.latencies
+                                        .push(cycles::rdtsc() - timestamp - response as u64);
+                                    self.recvd += 1;
+                                    self.outstanding -= 1;
+                                }
+                                _ => {
+                                    self.outstanding -= 1;
+                                    info!("Couldn't parse the response");
+                                }
+                            }
                             p.free_packet();
                         }
 
