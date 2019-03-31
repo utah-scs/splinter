@@ -360,6 +360,7 @@ fn main() {
             for tenant in 1..(config.num_tenants + 1) {
                 master.load_test(tenant);
             }
+            assert_eq!(cfg!(feature = "ml-model"), true);
         }
 
         "AUTH" => {

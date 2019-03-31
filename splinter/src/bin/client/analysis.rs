@@ -59,6 +59,9 @@ static mut FINISHED: bool = false;
 static ORDER: f64 = 2500.0;
 static STD_DEV: f64 = 500.0;
 
+// Type: 1, KeySize: 30, ValueSize:108
+const RECORD_SIZE: usize = 139;
+
 // Analysis benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
 // share the same benchmark instance. Each thread can call `abc()` which
@@ -449,7 +452,7 @@ where
                                     match self.manager.borrow_mut().remove(&timestamp) {
                                         Some(mut manager) => {
                                             manager.create_generator(Arc::clone(&self.sender));
-                                            manager.update_rwset(records);
+                                            manager.update_rwset(records, RECORD_SIZE);
                                             self.waiting.push_back(manager);
                                         }
 
@@ -546,7 +549,7 @@ where
                 if cfg!(feature = "execution") {
                     self.cycle_counter.total_cycles(_time, 1);
                     self.analysis_completed += 1;
-                    if self.analysis_completed == 1000000 {
+                    if self.analysis_completed == 100000 {
                         info!(
                             "Completion time per extension {}",
                             self.cycle_counter.get_average()

@@ -56,6 +56,9 @@ static mut FINISHED: bool = false;
 pub const KEY_LENGTH: usize = 30;
 pub const VAL_LENGTH: usize = 72;
 
+// Type: 1, KeySize: 30, ValueSize:40
+const RECORD_SIZE: usize = 71;
+
 // AUTH benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
 // share the same benchmark instance. Each thread can call `abc()` which
@@ -434,7 +437,7 @@ where
                                     match self.manager.borrow_mut().remove(&timestamp) {
                                         Some(mut manager) => {
                                             manager.create_generator(Arc::clone(&self.sender));
-                                            manager.update_rwset(records);
+                                            manager.update_rwset(records, RECORD_SIZE);
                                             self.waiting.push_back(manager);
                                         }
 
