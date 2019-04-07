@@ -203,11 +203,13 @@ impl ProxyDB {
 
 impl DB for ProxyDB {
     /// Lookup the `DB` trait for documentation on this method.
-    fn get(&self, _table: u64, _key: &[u8]) -> Option<ReadBuf> {
+    fn get(&self, _table: u64, key: &[u8]) -> Option<ReadBuf> {
         let start = rdtsc();
         self.set_waiting(false);
+        let index = self.search_cache(self.readset.borrow().to_vec(), key);
+        let value = self.readset.borrow()[index].value.clone();
         *self.db_credit.borrow_mut() += rdtsc() - start;
-        unsafe { Some(ReadBuf::new(Bytes::with_capacity(0))) }
+        unsafe { Some(ReadBuf::new(value)) }
     }
 
     /// Lookup the `DB` trait for documentation on this method.

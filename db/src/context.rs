@@ -33,6 +33,9 @@ use e2d2::interface::Packet;
 /// extension on the table heap.
 const MAX_ALLOC: usize = 10240;
 
+/// The flag to enable-disable including the RW set in the pushback response.
+const INCLUDE_RWSET: bool = true;
+
 /// This type is passed into the init method of every extension. The methods
 /// on this type form the interface allowing extensions to read and write
 /// data from and to the database. The constructors for this type (new() and
@@ -146,30 +149,32 @@ impl<'a> Context<'a> {
             .common_header
             .status = RpcStatus::StatusPushback;
 
-        // Remove the original payload and append the read-write set to the response payload.
-        let payload_len = self.response.borrow().get_payload().len();
-        match self
-            .response
-            .borrow_mut()
-            .remove_from_payload_tail(payload_len)
-        {
-            Ok(_) => {}
+        if INCLUDE_RWSET {
+            // Remove the original payload and append the read-write set to the response payload.
+            let payload_len = self.response.borrow().get_payload().len();
+            match self
+                .response
+                .borrow_mut()
+                .remove_from_payload_tail(payload_len)
+            {
+                Ok(_) => {}
 
-            Err(ref err) => {
-                error!(
-                    "Unable to delete previous payload while doing pushback {}",
-                    err
-                );
+                Err(ref err) => {
+                    error!(
+                        "Unable to delete previous payload while doing pushback {}",
+                        err
+                    );
+                }
             }
-        }
 
-        let rwset = &self.readwriteset.borrow_mut().readwriteset;
-        for record in rwset.iter() {
-            let ptr = &record.get_optype() as *const _ as *const u8;
-            let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
-            self.resp(slice);
-            self.resp(record.get_key().as_ref());
-            self.resp(record.get_object().as_ref());
+            let rwset = &self.readwriteset.borrow_mut().readwriteset;
+            for record in rwset.iter() {
+                let ptr = &record.get_optype() as *const _ as *const u8;
+                let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+                self.resp(slice);
+                self.resp(record.get_key().as_ref());
+                self.resp(record.get_object().as_ref());
+            }
         }
     }
 

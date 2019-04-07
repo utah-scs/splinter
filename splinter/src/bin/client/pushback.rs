@@ -505,6 +505,7 @@ where
                                         .borrow_mut()
                                         .remove(&p.get_header().common_header.stamp);
                                     if let Some(mut manager) = manager {
+                                        manager.update_rwset(p.get_payload());
                                         self.waiting.push_back(manager);
                                     }
                                 }

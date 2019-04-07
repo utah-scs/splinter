@@ -41,6 +41,7 @@ use spin::RwLock;
 use sandstorm::common::{TableId, TenantId, PACKET_UDP_LEN};
 use sandstorm::db::DB;
 use sandstorm::ext::*;
+use sandstorm::pack::pack;
 
 /// Convert a raw pointer for Allocator into a Allocator reference. This can be used to pass
 /// the allocator reference across closures without cloning the allocator object.
@@ -552,6 +553,7 @@ impl Master {
         // Create a generator for this request.
         let gen = Box::new(move || {
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
+            let optype: u8 = 0x1; // OpType::SandstormRead
 
             let outcome =
                 // Check if the tenant exists. If it does, then check if the
@@ -580,6 +582,7 @@ impl Master {
                                 let mut result = Ok(());
                                 status = RpcStatus::StatusInternalError;
                                 if req_generator == GetGenerator::SandstormExtension {
+                                    let _result = res.add_to_payload_tail(1, pack(&optype));
                                     result = res.add_to_payload_tail(k.len(), &k[..]);
                                 }
                                 match result {
