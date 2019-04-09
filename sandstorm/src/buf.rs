@@ -381,7 +381,6 @@ pub enum OpType {
 
 /// This struct represents a record for a read/write set. Each record in the read/write set will
 /// be of this type.
-#[derive(Clone)]
 pub struct Record {
     /// This variable shows the type of operation for the record, Read or Write.
     optype: OpType,
@@ -425,28 +424,6 @@ impl Record {
     /// Return the object for the performed operation.
     pub fn get_object(&self) -> Bytes {
         self.object.clone()
-    }
-}
-
-/// This struct maintains the read/write set per extension. When the extension is pushed-back
-/// without completing it on the server. This READ/WRITE set is also trasferred to the client.
-#[derive(Clone)]
-pub struct ReadWriteSetBuf {
-    /// The read-write set, a vector of type `Record`.
-    pub readwriteset: Vec<Record>,
-}
-
-// Implementation of methods on ReadWriteSetBuf.
-impl ReadWriteSetBuf {
-    /// This function creates a new instance of ReadWriteSetBuf.
-    ///
-    /// # Return
-    ///
-    /// A `ReadWriteSetBuf` which can be used to store the read/write set per extension.
-    pub fn new() -> ReadWriteSetBuf {
-        ReadWriteSetBuf {
-            readwriteset: Vec::new(),
-        }
     }
 }
 

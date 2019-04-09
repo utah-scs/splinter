@@ -22,7 +22,7 @@ use super::cycles::*;
 use super::tenant::Tenant;
 use super::wireformat::{InvokeRequest, InvokeResponse, RpcStatus};
 
-use sandstorm::buf::{MultiReadBuf, OpType, ReadBuf, ReadWriteSetBuf, Record, WriteBuf};
+use sandstorm::buf::{MultiReadBuf, OpType, ReadBuf, Record, WriteBuf};
 use sandstorm::common::*;
 use sandstorm::db::DB;
 
@@ -74,7 +74,7 @@ pub struct Context<'a> {
     allocs: Cell<usize>,
 
     // The buffer which maintains the read/write set per extension.
-    readwriteset: RefCell<ReadWriteSetBuf>,
+    readwriteset: RefCell<Vec<Record>>,
 
     // The credit which the extension has earned by making the db calls.
     db_credit: RefCell<u64>,
@@ -116,7 +116,7 @@ impl<'a> Context<'a> {
             tenant: tenant,
             heap: alloc,
             allocs: Cell::new(0),
-            readwriteset: RefCell::new(ReadWriteSetBuf::new()),
+            readwriteset: RefCell::new(Vec::new()),
             db_credit: RefCell::new(0),
         }
     }
@@ -167,7 +167,7 @@ impl<'a> Context<'a> {
                 }
             }
 
-            let rwset = &self.readwriteset.borrow_mut().readwriteset;
+            let rwset = &self.readwriteset.borrow_mut();
             for record in rwset.iter() {
                 let ptr = &record.get_optype() as *const _ as *const u8;
                 let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
@@ -321,7 +321,7 @@ impl<'a> DB for Context<'a> {
 
     /// Lookup the `DB` trait for documentation on this method.
     fn populate_read_write_set(&self, record: Record) {
-        self.readwriteset.borrow_mut().readwriteset.push(record);
+        self.readwriteset.borrow_mut().push(record);
     }
 
     /// Lookup the `DB` trait for documentation on this method.
