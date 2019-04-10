@@ -51,7 +51,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
         let mut key_value: u32 = 0;
         let mut number: u32 = 0;
         let mut keys: Vec<u8> = Vec::with_capacity(30);
-        let mut predict: Vec<Vec<f32>> = Vec::new();
+        let mut values: Vec<Vec<u8>> = Vec::new();
 
         {
             // First off, retrieve the arguments to the extension.
@@ -91,8 +91,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             GET!(db, table, keys, obj);
             match obj {
                 Some(val) => {
-                    let value = val.read();
-                    predict.push(bincode::deserialize(&value).unwrap());
+                    values.push(val.read().clone().to_vec());
                 }
 
                 None => {
@@ -111,23 +110,26 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
 
         // If the object was found, perform the classification on the object and write it
         // to the response.
-        match db.get_model() {
-            Some(model) => {
-                let response = model.deserialized.predict(&Array::from(&predict)).unwrap();
-
-                let response = response.data();
-                for i in 0..response.len() {
-                    db.resp(pack(&response[i]));
+        for value in values.iter() {
+            match db.get_model() {
+                Some(model) => {
+                    let predict: Vec<f32> = bincode::deserialize(&value).unwrap();
+                    let response = model
+                        .deserialized
+                        .predict(&Array::from(&vec![predict]))
+                        .unwrap()
+                        .data()[0];
+                    db.resp(pack(&response));
                 }
-                return 0;
-            }
 
-            None => {
-                let error = "ML Model does not exist";
-                db.resp(error.as_bytes());
-                return 0;
+                None => {
+                    let error = "ML Model does not exist";
+                    db.resp(error.as_bytes());
+                    return 0;
+                }
             }
         }
+        return 0;
     })
 }
 
