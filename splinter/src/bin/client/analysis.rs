@@ -252,6 +252,9 @@ where
 
     //Name of the extension for which the client is generating the requests.
     extname: String,
+
+    // The batch size for number of records used in the prediction function.
+    number: u32,
 }
 
 // Implementation of methods on AnalysisRecv.
@@ -282,12 +285,17 @@ where
         dst_ports: u16,
         masterservice: Arc<Master>,
     ) -> AnalysisRecvSend<T> {
+        let num = config.num_aggr as u32;
         // The payload on an invoke() based get request consists of the extensions name ("analysis"),
-        // the table id to perform the lookup on, number of get(), number of CPU cycles and the key to lookup.
-        let payload_len = "analysis".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
+        // the table id to perform the lookup on, number of get(), and the key to lookup.
+        let payload_len = "analysis".as_bytes().len()
+            + mem::size_of::<u64>()
+            + mem::size_of::<u32>()
+            + config.key_len;
         let mut payload_analysis = Vec::with_capacity(payload_len);
         payload_analysis.extend_from_slice("analysis".as_bytes());
         payload_analysis.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
+        payload_analysis.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(num.to_le()) });
         payload_analysis.resize(payload_len, 0);
 
         // The payload on an invoke() based put request consists of the extensions name ("put"),
@@ -337,6 +345,7 @@ where
             cycle_counter: CycleCounter::new(),
             native_state: RefCell::new(HashMap::with_capacity(32)),
             extname: String::from("analysis"),
+            number: num,
         }
     }
 
@@ -388,10 +397,10 @@ where
                 // bytes of the key matter, the rest are zero. The value is always zero.
                 self.workload.borrow_mut().abc(
                     |tenant, key, _ord| {
-                        // First 16 bytes on the payload were already pre-populated with the
-                        // extension name (8 bytes), the table id (8 bytes). Just write
-                        // in the first 4 bytes of the key.
-                        p_get[16..20].copy_from_slice(&key[0..4]);
+                        // First 20 bytes on the payload were already pre-populated with the
+                        // extension name (8 bytes), the table id (8 bytes), the number of
+                        // gets(4 bytes). Just write in the first 4 bytes of the key.
+                        p_get[20..24].copy_from_slice(&key[0..4]);
                         self.add_request(&p_get, tenant, 8, curr);
                         self.sender.send_invoke(tenant, 8, &p_get, curr)
                     },
@@ -515,6 +524,28 @@ where
                     match parse_rpc_opcode(&packet) {
                         OpCode::SandstormGetRpc => {
                             let p = packet.parse_header::<GetResponse>();
+                            let timestamp = p.get_header().common_header.stamp;
+                            let count = *self.native_state.borrow().get(&timestamp).unwrap();
+                            if count == self.number as u8 {
+                                self.recvd += 1;
+                                self.outstanding -= 1;
+                                self.native_state.borrow_mut().remove(&timestamp);
+                            } else {
+                                self.workload.borrow_mut().abc(
+                                    |tenant, key, _ord| {
+                                        self.sender.send_get(tenant, 1, key, timestamp)
+                                    },
+                                    |tenant, key, val, _ord| {
+                                        self.sender.send_put(tenant, 1, key, val, timestamp)
+                                    },
+                                );
+                                if let Some(count) =
+                                    self.native_state.borrow_mut().get_mut(&timestamp)
+                                {
+                                    *count += 1;
+                                }
+                            }
+
                             match p.get_header().common_header.status {
                                 // If the status is StatusOk then add the stamp to the latencies and
                                 // free the packet.
@@ -532,12 +563,10 @@ where
                                                 .data()[0];
                                         }
                                     });
-                                    let timestamp = p.get_header().common_header.stamp;
                                     self.latencies
                                         .push(cycles::rdtsc() - timestamp - response as u64);
-                                    self.recvd += 1;
-                                    self.outstanding -= 1;
                                 }
+
                                 _ => {
                                     self.outstanding -= 1;
                                     info!("Couldn't parse the response");
