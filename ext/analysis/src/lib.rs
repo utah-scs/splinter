@@ -48,8 +48,10 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
     Box::new(move || {
         let mut obj = None;
         let mut table: u64 = 0;
+        let mut key_value: u32 = 0;
+        let mut number: u32 = 0;
         let mut keys: Vec<u8> = Vec::with_capacity(30);
-        let mut predict: Vec<f32> = Vec::with_capacity(25);
+        let mut predict: Vec<Vec<f32>> = Vec::new();
 
         {
             // First off, retrieve the arguments to the extension.
@@ -67,29 +69,42 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             // Next, split the arguments into a view over the table identifier
             // (first eight bytes), and a view over the key to be looked up.
             // De-serialize the table identifier into a u64.
-            let (stable, key) = args.split_at(8);
+            let (stable, remaining) = args.split_at(8);
+            let (num, key) = remaining.split_at(4);
             keys.extend_from_slice(key);
 
             for (idx, e) in stable.iter().enumerate() {
                 table |= (*e as u64) << (idx << 3);
             }
+
+            for (idx, e) in num.iter().enumerate() {
+                number |= (*e as u32) << (idx << 3);
+            }
+
+            for (idx, e) in key[0..4].iter().enumerate() {
+                key_value |= (*e as u32) << (idx << 3);
+            }
         }
 
         // Finally, lookup the database for the object.
-        GET!(db, table, keys, obj);
-        match obj {
-            Some(val) => {
-                let value = val.read();
-                predict = bincode::deserialize(&value).unwrap();
+        for _i in 0..number {
+            GET!(db, table, keys, obj);
+            match obj {
+                Some(val) => {
+                    let value = val.read();
+                    predict.push(bincode::deserialize(&value).unwrap());
+                }
+
+                None => {
+                    let error = "Object does not exist";
+                    db.resp(error.as_bytes());
+                    return 0;
+                }
             }
 
-            None => {
-                let error = "Object does not exist";
-                db.resp(error.as_bytes());
-                return 0;
-            }
+            key_value += 1;
+            keys[0..4].copy_from_slice(&transform_u32_to_u8_slice(key_value));
         }
-
         // Deserialize took some CPU compute and the extension should yield to
         // avoid as classified as misbehaving extension.
         yield 0;
@@ -98,12 +113,12 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
         // to the response.
         match db.get_model() {
             Some(model) => {
-                let response = model
-                    .deserialized
-                    .predict(&Array::from(&vec![predict]))
-                    .unwrap()
-                    .data()[0];
-                db.resp(pack(&response));
+                let response = model.deserialized.predict(&Array::from(&predict)).unwrap();
+
+                let response = response.data();
+                for i in 0..response.len() {
+                    db.resp(pack(&response[i]));
+                }
                 return 0;
             }
 
@@ -114,4 +129,12 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             }
         }
     })
+}
+
+fn transform_u32_to_u8_slice(x: u32) -> [u8; 4] {
+    let b4: u8 = ((x >> 24) & 0xff) as u8;
+    let b3: u8 = ((x >> 16) & 0xff) as u8;
+    let b2: u8 = ((x >> 8) & 0xff) as u8;
+    let b1: u8 = (x & 0xff) as u8;
+    return [b1, b2, b3, b4];
 }
