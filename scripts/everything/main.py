@@ -71,9 +71,9 @@ if __name__ == '__main__':
                         help='the user for ssh',
                         metavar='user')
 
-    parser.add_argument('server',
-                        help='the server of the cluster. e.g. "hp174.utah.cloudlab.us"',
-                        metavar='server')
+    parser.add_argument('host',
+                        help='any host in the cluster. e.g. "hp174.utah.cloudlab.us"',
+                        metavar='host')
 
     subparsers = parser.add_subparsers(
         title="Command",
@@ -102,6 +102,14 @@ if __name__ == '__main__':
                             default='125',
                             metavar='dlt')
 
+    parserAuth = subparsers.add_parser('auth',
+            help='run auth on Sandstorm')
+    # parserAuth.add_argument('min',
+    #                         help='Minimum request rate of the YCSB clients (in thousands)',
+    #                         nargs='?',
+    #                         type=int,
+    #                         default='250')
+
     parserKill = subparsers.add_parser('kill',
                                        help='kill clients and server running Sandstorm')
 
@@ -120,10 +128,11 @@ if __name__ == '__main__':
 
     # Setup Cluster
     try:
-        cluster = cl.Cluster(args.user, args.server)
+        cluster = cl.Cluster(args.user, args.host)
         cluster.setupLogger(logCurrent, args.verbose)
     except Exception as e:
         logger.error("Could not establish cluster information!")
+        logger.error(e.msg)
         exit(1)
     cluster.dump(logging.INFO)
     cluster.checkAuth()
@@ -162,10 +171,15 @@ if __name__ == '__main__':
         cluster.startServer()
         cluster.runYCSB(rates)
         # cluster.killServer()
+    if cmd == 'auth':
+        cluster.startServer()
+        cluster.runAuth()
+        # cluster.killServer()
 
     elif cmd == 'kill':
-        # TODO @jmbarzee check for --extension
+        # TODO @jmbarzee logic to know if we should kill the extension
         cluster.kill(args.extension)
+        # cluster.killServer() //TODO make this work
 
     elif cmd == 'bench':
         raise NotImplementedError()

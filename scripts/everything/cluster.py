@@ -346,6 +346,17 @@ class Cluster(object):
             self.__logger.error(str(e))
             exit(1)
 
+    def runAuth(self, rates):
+        try:
+            self.__logger.info("run Auth started...")
+            self.__executeOnClients('"cd splinter; sudo ./scripts/run-auth"')
+            self.__logger.info("run Auth concluded...")
+
+        except Exception as e:
+            self.__logger.error('run Auth failed!')
+            self.__logger.error(str(e))
+            exit(1)
+
     def bench(self):
         # TODO @jmbarzee implement bench
         # TODO @jmbarzee configure logging correctly
