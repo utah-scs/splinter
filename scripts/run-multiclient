@@ -22,11 +22,12 @@ run() {
         exit -1
     fi
 
+    num_clients=$(cat clients.txt | grep "22" | wc -l)
     sizes=(4)
     order=(0 1000 2000 3000 4000 5000 6000 7000 8000 9000 10000)
 
-    invoke=$(parallel-ssh -h clients.txt -t 0 -i "cd splinter; cat splinter/client.toml" | grep "use_invoke" | awk '{print $3}')
-    echo "ASize Order 50 99 Thrpt" > ../pushback_invoke_"$invoke".data
+    invoke="false"
+    echo "ASize Order 50 99 Thrpt" > pushback_invoke_"$invoke".data
 
     for size in ${sizes[@]}
     do
@@ -34,12 +35,14 @@ run() {
         do
             rm -rf sample.temp
             # The client is using the rate just to wait for Total/rate time.
-            parallel-ssh -h clients.txt -t 0 -i "cd splinter; sudo ./scripts/run-$extname $size $ord" >> ../sample.temp 2>&1
+            parallel-ssh -h clients.txt -t 0 -i "cd splinter; sudo ./scripts/run-$extname $size $ord" >> sample.temp 2>&1
             thrpt=$(cat sample.temp | grep "PUSHBACK Throughput" | \
                                  awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
 
-            median=$(cat sample.temp | grep "Median" | awk '{ print $2 }')
-            taill=$(cat sample.temp | grep "Median" | awk '{ print $4 }')
+            median=$(cat sample.temp | grep "Median" | \
+                     awk -v clients="$num_clients" 'BEGIN { sum = 0 } { sum += $2 } END { print sum/clients }')
+            taill=$(cat sample.temp | grep "Median" | \
+                    awk -v clients="$num_clients" 'BEGIN { sum = 0 } { sum += $4 } END { print sum/clients }')
             echo $size $ord $median $taill $thrpt >> pushback_invoke_$invoke.data
         done
     done

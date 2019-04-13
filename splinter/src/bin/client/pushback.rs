@@ -427,6 +427,11 @@ where
             // of pushed-back task to .1M and after that send 1 packet each iteration, which will
             // execute on the server side as it stop triggering the pushback mechanism.
             if self.waiting.len() >= 100000 {
+                let mut batch = 4;
+                while batch > 0 {
+                    self.execute_task();
+                    batch -= 1;
+                }
                 break;
             }
         }
