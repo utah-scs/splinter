@@ -7,4 +7,5 @@ authors = ["Chinmay Kulkarni <chnm.kulkarni@gmail.com>"]
 crate-type = ["dylib"]
 
 [dependencies]
+bytes     = "0.4.7"
 sandstorm = { path = "../../sandstorm" }

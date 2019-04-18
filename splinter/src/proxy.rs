@@ -154,8 +154,8 @@ impl ProxyDB {
     ///
     /// # Arguments
     /// * `record`: A reference to a record with a key and a value.
-    pub fn set_read_record(&self, record: &[u8]) {
-        let (key, value) = record.split_at(30);
+    pub fn set_read_record(&self, record: &[u8], keylen: usize) {
+        let (key, value) = record.split_at(keylen);
         self.readset
             .borrow_mut()
             .push(KV::new(Bytes::from(key), Bytes::from(value)));
@@ -166,8 +166,8 @@ impl ProxyDB {
     ///
     /// # Arguments
     /// * `record`: A reference to a record with a key and a value.
-    pub fn set_write_record(&self, record: &[u8]) {
-        let (key, value) = record.split_at(30);
+    pub fn set_write_record(&self, record: &[u8], keylen: usize) {
+        let (key, value) = record.split_at(keylen);
         self.writeset
             .borrow_mut()
             .push(KV::new(Bytes::from(key), Bytes::from(value)));

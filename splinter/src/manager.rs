@@ -143,9 +143,9 @@ impl TaskManager {
     /// # Arguments
     /// * `records`: A reference to the RWset sent back by the server when the extension is
     ///             pushed back.
-    pub fn update_rwset(&mut self, records: &[u8], recordlen: usize) {
+    pub fn update_rwset(&mut self, records: &[u8], recordlen: usize, keylen: usize) {
         for record in records.chunks(recordlen) {
-            self.task[0].update_cache(record);
+            self.task[0].update_cache(record, keylen);
         }
     }
 

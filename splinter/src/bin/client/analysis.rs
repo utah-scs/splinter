@@ -469,7 +469,7 @@ where
                                     match self.manager.borrow_mut().remove(&timestamp) {
                                         Some(mut manager) => {
                                             manager.create_generator(Arc::clone(&self.sender));
-                                            manager.update_rwset(records, RECORD_SIZE);
+                                            manager.update_rwset(records, RECORD_SIZE, 30);
                                             self.waiting.push_back(manager);
                                         }
 

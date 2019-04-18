@@ -128,5 +128,5 @@ pub trait Task {
     /// # Arguments
     ///
     /// * `record`: The record, which will be added to the RW set.
-    fn update_cache(&mut self, record: &[u8]);
+    fn update_cache(&mut self, record: &[u8], keylen: usize);
 }
