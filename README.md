@@ -22,3 +22,15 @@ following
       - logging output to `logs/latest/`
     If you want to know more about the features of this script,
     use `python3 scripts/everything/main.py -h`
+  
+## How to run server and client for each extension
+What are the parameters for each client, What is the key and value sizes, etc.
+### Aggregate
+
+### Analysis
+
+### Auth
+
+### Pushback
+
+### TAO
