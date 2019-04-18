@@ -14,8 +14,8 @@
  */
 
 use super::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
-use util::model::Model;
 use std::sync::Arc;
+use util::model::Model;
 
 /// Definition of the DB trait that will allow extensions to access
 /// the database.
@@ -140,6 +140,27 @@ pub trait DB {
     /// is successful; False otherwise. And the third member represents a handle that can be used
     /// to read the value if the key-value pair exists inside the local cache.
     fn search_get_in_cache(&self, table: u64, key: &[u8]) -> (bool, bool, Option<ReadBuf>);
+
+    /// This method performs a lookup for a set of keys stored inside the local cache as
+    /// key-value pairs, and returns a hanle that can be used to read the value for each key
+    /// if the key-value pair exists.
+    ///
+    /// # Arguments
+    /// * `table`: An identifier of the data table the key-value pair
+    ///            belongs to.
+    /// * `key_len`: Length of each key in the key list.
+    /// * `keys`: A slice which contains multiple keys.
+    ///
+    /// # Return
+    ///
+    /// A handle that can be used to read the value for each key in the list, if the key-value
+    /// pair exists inside the database.
+    fn search_multiget_in_cache(
+        &self,
+        table: u64,
+        key_len: u16,
+        keys: &[u8],
+    ) -> (bool, bool, Option<MultiReadBuf>);
 
     /// This method will return the ML model for the given extension. If the model does't exist
     /// for an extension then the method will return `None`.

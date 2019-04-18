@@ -30,9 +30,11 @@ macro_rules! GET {
     };
 }
 
+/// TODO: Change it later, not implemented fully.
 #[macro_export]
 macro_rules! MULTIGET {
     ($db:ident, $table:ident, $keylen:ident, $keys:ident, $buf:ident) => {
+        let mut is_server = false;
         let mut objs = Vec::new();
         for key in $keys.chunks($keylen as usize) {
             if key.len() != $keylen as usize {
@@ -41,13 +43,16 @@ macro_rules! MULTIGET {
             let (server, _, val) = $db.search_get_in_cache($table, key);
             if server == true {
                 $buf = $db.multiget($table, $keylen, &$keys);
+                is_server = server;
                 break;
             } else {
                 objs.push(Bytes::from(val.unwrap().read()))
             }
         }
-        unsafe {
-            $buf = Some(MultiReadBuf::new(objs));
+        if is_server == false {
+            unsafe {
+                $buf = Some(MultiReadBuf::new(objs));
+            }
         }
     };
 }

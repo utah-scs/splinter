@@ -265,6 +265,36 @@ impl DB for ProxyDB {
     }
 
     /// Lookup the `DB` trait for documentation on this method.
+    fn search_multiget_in_cache(
+        &self,
+        table: u64,
+        key_len: u16,
+        keys: &[u8],
+    ) -> (bool, bool, Option<MultiReadBuf>) {
+        let start = rdtsc();
+        let mut objs = Vec::new();
+        for key in keys.chunks(key_len as usize) {
+            if key.len() != key_len as usize {
+                return (false, false, None);
+            }
+
+            let index = self.search_cache(self.readset.borrow().to_vec(), key);
+            if index != 1024 {
+                let value = self.readset.borrow()[index].value.clone();
+                objs.push(value);
+            } else {
+                self.set_waiting(true);
+                self.sender
+                    .send_get_from_extension(self.tenant, table, key, self.parent_id);
+                *self.db_credit.borrow_mut() += rdtsc() - start;
+                return (false, false, None);
+            }
+        }
+        *self.db_credit.borrow_mut() += rdtsc() - start;
+        return (false, true, unsafe { Some(MultiReadBuf::new(objs)) });
+    }
+
+    /// Lookup the `DB` trait for documentation on this method.
     fn get_model(&self) -> Option<Arc<Model>> {
         match self.model {
             Some(ref model) => Some(Arc::clone(&model)),

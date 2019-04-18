@@ -17,11 +17,7 @@
 #![feature(generator_trait)]
 #![no_std]
 
-extern crate bytes;
-#[macro_use]
 extern crate sandstorm;
-
-use bytes::Bytes;
 
 use sandstorm::boxed::Box;
 use sandstorm::buf::{MultiReadBuf, ReadBuf};
@@ -46,6 +42,17 @@ macro_rules! GET1 {
             $obj = val;
         } else {
             $obj = $db.get($table, &$key);
+        }
+    };
+}
+
+macro_rules! MULTIGET1 {
+    ($db:ident, $table:ident, $keylen:ident, $keys:ident, $buf:ident) => {
+        let (server, _, val) = $db.search_multiget_in_cache($table, $keylen, $keys);
+        if server == true {
+            $buf = $db.multiget($table, $keylen, &$keys);
+        } else {
+            $buf = val;
         }
     };
 }
@@ -107,7 +114,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
                     .split_at((KEYLENGTH as usize) * (num_k as usize))
                     .0;
 
-                MULTIGET!(db, table, KEYLENGTH, value, buf);
+                MULTIGET1!(db, table, KEYLENGTH, value, buf);
 
                 match buf {
                     Some(vals) => {

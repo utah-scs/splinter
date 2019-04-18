@@ -73,6 +73,15 @@ impl DB for NullDB {
         (false, false, None)
     }
 
+    fn search_multiget_in_cache(
+        &self,
+        _table: u64,
+        _key_len: u16,
+        _keys: &[u8],
+    ) -> (bool, bool, Option<MultiReadBuf>) {
+        return (false, false, None);
+    }
+
     fn get_model(&self) -> Option<Arc<Model>> {
         None
     }

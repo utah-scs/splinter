@@ -129,6 +129,20 @@ impl DB for MockDB {
         })
     }
 
+    fn search_multiget_in_cache(
+        &self,
+        table: u64,
+        key_len: u16,
+        keys: &[u8],
+    ) -> (bool, bool, Option<MultiReadBuf>) {
+        self.debug_log(&format!(
+            "Invoked multiget() on table {} for keys {:?} with key length {}",
+            table, keys, key_len
+        ));
+
+        unsafe { (false, false, Some(MultiReadBuf::new(Vec::new()))) }
+    }
+
     fn get_model(&self) -> Option<Arc<Model>> {
         None
     }
