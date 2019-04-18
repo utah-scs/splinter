@@ -28,12 +28,23 @@ fi
 # If a command line argument was provided, use it as a request rate for YCSB.
 if [ $# -eq 1 ]
 then
-    # Configure the client TOML file with the request rate.
-    sed -i "s/req_rate = [1-9][0-9]*/req_rate = $1/g" client.toml
+    rm -rf samples.temp
+    # Configure the client TOML file with the aggr size.
+    sed -i "s/num_aggr = [1-9][0-9]*/num_aggr = $1/g" client.toml
 
     # Run YCSB.
-    RUST_LOG=debug ./target/release/aggregate
+    RUST_LOG=debug ./target/release/aggregate >> ../samples.temp
 
+    thrpt=$(cat ../samples.temp | grep "Throughput" | \
+                awk 'BEGIN { sum = 0 } { sum += $7 } END { print sum }')
+
+    m=$(cat ../samples.temp | grep "Throughput" | \
+                awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum/8 }')
+
+    t=$(cat ../samples.temp | grep "Throughput" | \
+                awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum/8 }')
+
+    echo "Median(ns): $m Tail(ns): $t Throghput: $thrpt"
     exit 0
 fi
 
@@ -58,14 +69,8 @@ cores=$(cat client.toml | grep "server_udp_ports" | awk '{ print $NF }')
 # The number of records to aggregate across.
 sizes=(2 4 6 8 10 12)
 
-# The different request rates that the YCSB client will be configured and run
-# with.
-rates=(100000 125000 150000 175000 200000 225000 250000 275000 300000 325000 \
-       350000 375000 400000 425000 450000 475000 500000 525000 550000 575000 \
-       600000 625000 675000 700000)
-
 # Header for the output file. Required inorder to plot the results.
-echo "Offered 50 99 Thrpt Tenants TSkew Cores ASize" > ../aggregate_invoke_"$invoke".out
+echo "50 99 Thrpt Tenants TSkew Cores ASize" > ../aggregate_invoke_"$invoke".out
 
 # Run Aggregate for each of the above request rates and sizes.
 for size in ${sizes[@]}
@@ -73,18 +78,12 @@ do
     # Configure the client TOML file with the aggregate size.
     sed -i "s/num_aggr = [1-9][0-9]*/num_aggr = $size/g" client.toml
 
-    for rate in ${rates[@]}
-    do
-        echo "rate=$rate, invoke=$invoke, tenants=$tenants, tenant_skew=$tenant_skew, cores=$cores, aggr=$size"
+    echo "invoke=$invoke, tenants=$tenants, tenant_skew=$tenant_skew, cores=$cores, aggr=$size"
 
-        # Configure the client TOML file with the request rate.
-        sed -i "s/req_rate = [1-9][0-9]*/req_rate = $rate/g" client.toml
-
-        # Run Aggregate, and write out the median, 99th, and throughput.
-        RUST_LOG=debug ./target/release/aggregate 2>&1 | grep "Median(ns)" | \
-                awk "{ print $rate, \$3, \$5, \$7, $tenants, $tenant_skew, $cores, $size }" \
-                >> ../aggregate_invoke_"$invoke".out
-    done
+    # Run Aggregate, and write out the median, 99th, and throughput.
+    RUST_LOG=debug ./target/release/aggregate 2>&1 | grep "Median(ns)" | \
+             awk "{ print \$3, \$5, \$7, $tenants, $tenant_skew, $cores, $size }" \
+             >> ../aggregate_invoke_"$invoke".out
 done
 
 exit 0
