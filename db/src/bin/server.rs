@@ -374,6 +374,17 @@ fn main() {
             }
         }
 
+        "MIX" => {
+            info!("Populating MIX data, {} tenants", config.num_tenants);
+            info!("TAO: {} records/tenant", config.num_records);
+            info!("AUTH: 1000 records/tenants");
+            info!("Pushback: {} records/tenants", config.num_records);
+            for tenant in 1..(config.num_tenants + 1) {
+                master.fill_mix(tenant, config.num_records);
+                master.load_test(tenant);
+            }
+        }
+
         _ => {
             info!("Populating SANITY data for tenant 100");
             master.fill_test(100, 100, 0);
