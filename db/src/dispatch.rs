@@ -876,7 +876,7 @@ where
     }
 
     /// Refer to the `Task` trait for Documentation.
-    fn update_cache(&mut self, _record: &[u8]) {}
+    fn update_cache(&mut self, _record: &[u8], _keylen: usize) {}
 }
 
 impl<T> Drop for Dispatch<T>

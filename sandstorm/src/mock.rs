@@ -15,13 +15,15 @@
 
 use std::fmt::Debug;
 
-use super::buf::{ReadBuf, Record, WriteBuf, MultiReadBuf};
+use super::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
 use super::db::DB;
 
 extern crate bytes;
 use self::bytes::{Bytes, BytesMut};
 
 use std::cell::RefCell;
+use std::sync::Arc;
+use util::model::Model;
 
 /// A mock database of testing purposes.
 pub struct MockDB {
@@ -122,6 +124,26 @@ impl DB for MockDB {
             table, key
         ));
 
-        (false, false, unsafe { Some(ReadBuf::new(Bytes::with_capacity(0))) })
+        (false, false, unsafe {
+            Some(ReadBuf::new(Bytes::with_capacity(0)))
+        })
+    }
+
+    fn search_multiget_in_cache(
+        &self,
+        table: u64,
+        key_len: u16,
+        keys: &[u8],
+    ) -> (bool, bool, Option<MultiReadBuf>) {
+        self.debug_log(&format!(
+            "Invoked multiget() on table {} for keys {:?} with key length {}",
+            table, keys, key_len
+        ));
+
+        unsafe { (false, false, Some(MultiReadBuf::new(Vec::new()))) }
+    }
+
+    fn get_model(&self) -> Option<Arc<Model>> {
+        None
     }
 }

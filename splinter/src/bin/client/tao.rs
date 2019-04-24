@@ -31,6 +31,7 @@ use db::e2d2::allocators::CacheAligned;
 use db::e2d2::interface::PortQueue;
 use db::e2d2::scheduler::*;
 use db::log::*;
+use db::rpc::parse_rpc_opcode;
 use db::wireformat::*;
 
 use rand::distributions::Sample;
@@ -335,7 +336,7 @@ impl TaoSendRecv {
                             p.free_packet();
                             continue;
                         }
-                        let p  = packet.parse_header::<InvokeResponse>();
+                        let p = packet.parse_header::<InvokeResponse>();
                         p.free_packet();
                     }
                 }
@@ -358,33 +359,54 @@ impl TaoSendRecv {
         if let Some(mut resps) = self.receiver.recv_res() {
             while let Some(packet) = resps.pop() {
                 if self.native {
-                    let p = packet.parse_header::<GetResponse>();
+                    match parse_rpc_opcode(&packet) {
+                        OpCode::SandstormGetRpc => {
+                            let p = packet.parse_header::<GetResponse>();
 
-                    // Response to obj_get.
-                    if p.get_payload().len() < 50 {
-                        self.recvd += 1;
-                        self.outstanding -= 1;
+                            // Response to obj_get.
+                            if p.get_payload().len() < 50 {
+                                self.recvd += 1;
+                                self.outstanding -= 1;
 
-                        if self.recvd & 0xf == 0 {
-                            self.o_latencies
-                                .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                                if self.recvd & 0xf == 0 {
+                                    self.o_latencies
+                                        .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                                }
+
+                                p.free_packet();
+                                continue;
+                            }
+
+                            self.assoc_keys(p.get_payload());
+
+                            self.sender.send_multiget(
+                                p.get_header().common_header.tenant,
+                                2,
+                                18,
+                                4,
+                                &self.assoc_keys,
+                                p.get_header().common_header.stamp,
+                            );
+                            p.free_packet();
                         }
 
-                        p.free_packet();
-                        continue;
+                        OpCode::SandstormMultiGetRpc => {
+                            self.recvd += 1;
+                            self.outstanding -= 1;
+
+                            let p = packet.parse_header::<MultiGetResponse>();
+                            if self.recvd & 0xf == 0 {
+                                self.a_latencies
+                                    .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                            }
+                            p.free_packet();
+                        }
+
+                        _ => {
+                            packet.free_packet();
+                            info!("Something is wrong");
+                        }
                     }
-
-                    self.assoc_keys(p.get_payload());
-
-                    self.sender.send_multiget(
-                        p.get_header().common_header.tenant,
-                        2,
-                        18,
-                        4,
-                        &self.assoc_keys,
-                        p.get_header().common_header.stamp,
-                    );
-                    p.free_packet();
                 } else {
                     self.recvd += 1;
                     self.outstanding -= 1;
@@ -408,23 +430,6 @@ impl TaoSendRecv {
                             self.a_latencies
                                 .push(cycles::rdtsc() - p.get_header().common_header.stamp);
                         }
-                    }
-                    p.free_packet();
-                }
-            }
-        }
-
-        // If running in native mode, then check for multiget() responses.
-        if self.native {
-            if let Some(mut resps) = self.multi_rx.recv_res() {
-                while let Some(packet) = resps.pop() {
-                    self.recvd += 1;
-                    self.outstanding -= 1;
-
-                    let p = packet.parse_header::<MultiGetResponse>();
-                    if self.recvd & 0xf == 0 {
-                        self.a_latencies
-                            .push(cycles::rdtsc() - p.get_header().common_header.stamp);
                     }
                     p.free_packet();
                 }

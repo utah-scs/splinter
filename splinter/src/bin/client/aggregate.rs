@@ -22,15 +22,21 @@ extern crate zipf;
 
 mod setup;
 
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
 use std::mem::{size_of, transmute};
 use std::sync::Arc;
 
 use db::config;
+use db::cyclecounter::CycleCounter;
 use db::cycles;
 use db::e2d2::allocators::CacheAligned;
 use db::e2d2::interface::PortQueue;
 use db::e2d2::scheduler::*;
 use db::log::*;
+use db::master::Master;
+use db::rpc::parse_rpc_opcode;
+use db::task::TaskState::*;
 use db::wireformat::*;
 
 use rand::distributions::Sample;
@@ -38,11 +44,15 @@ use rand::{SeedableRng, XorShiftRng};
 
 use zipf::ZipfDistribution;
 
+use splinter::manager::TaskManager;
 use splinter::*;
+
+// Type: 1, KeySize: 30, ValueSize:100
+const RECORD_SIZE: usize = 131;
 
 /// This type implements the send half of a client that issues back to back reads to a server and
 /// aggregates the returned value into a single 64 bit integer.
-struct AggregateSend {
+struct AggregateSendRecv {
     /// Random number generator required to seed the Zipfian distribution.
     random: XorShiftRng,
 
@@ -61,27 +71,64 @@ struct AggregateSend {
     /// The total number of requests that have been sent so far.
     sent: u64,
 
-    /// The time interval between two requests (in cycles).
-    delay: u64,
-
     /// The time (in cycles) at which the workload started generating requests.
     start: u64,
 
-    /// The time (in cycles) at which the next request should be issued/generated.
-    next: u64,
-
     /// Network stack that can actually send an RPC over the network.
-    sender: dispatch::Sender,
+    sender: Arc<dispatch::Sender>,
 
     /// Request buffer for a native get operation. Helps reduce heap allocations.
     n_buff: Vec<u8>,
 
     /// Request buffer for an invoke operation. Again, helps reduce heap allocations.
     i_buff: Vec<u8>,
+
+    /// The network stack required to receives RPC response packets from a network port.
+    receiver: dispatch::Receiver<CacheAligned<PortQueue>>,
+
+    /// The number of response packets to wait for before printing out statistics.
+    responses: u64,
+
+    /// The total number of responses received so far.
+    recvd: u64,
+
+    /// Vector of sampled request latencies. Required to calculate distributions once all responses
+    /// have been received.
+    latencies: Vec<u64>,
+
+    /// Number of keys to aggregate across. Required for the native case.
+    num: u32,
+
+    /// Order of the final polynomial to be computed.
+    ord: u32,
+
+    // To keep the mapping between sent and received packets. The client doesn't want to send
+    // more than 32(XXX) outstanding packets.
+    outstanding: u64,
+
+    /// A ref counted pointer to a master service. The master service
+    /// implements the primary interface to the database.
+    master_service: Arc<Master>,
+
+    // To keep a mapping between each packet and request parameters. This information will be used
+    // when the server pushes back the extension.
+    manager: RefCell<HashMap<u64, TaskManager>>,
+
+    // Run-queue of tasks waiting to execute. Tasks on this queue have either yielded, or have been
+    // recently enqueued and never run before.
+    waiting: VecDeque<TaskManager>,
+
+    // Number of tasks completed on the client, after server pushback. Wraps around
+    // after each 1L such tasks.
+    pushback_completed: u64,
+
+    // Counts the number of CPU cycle spent on the task execution when client executes the
+    // extensions on its end.
+    cycle_counter: CycleCounter,
 }
 
 // Implementation of methods on AggregateSend.
-impl AggregateSend {
+impl AggregateSendRecv {
     /// Constructs an `AggregateSend` that can be added to a Netbricks pipeline.
     ///
     /// # Arguments
@@ -93,6 +140,8 @@ impl AggregateSend {
     /// * `dst_ports`: The total number of UDP ports the server is listening on.
     /// * `num`:       Number of keys to aggregate across.
     /// * `ord`:       Order of the final polynomial to be computed.
+    /// * `resps`:     The number of responses to wait for before calculating statistics.
+    /// * `send`:      Network port on which packets will be recv.
     pub fn new(
         config: &config::ClientConfig,
         port: CacheAligned<PortQueue>,
@@ -100,11 +149,17 @@ impl AggregateSend {
         dst_ports: u16,
         num: u32,
         ord: u32,
-    ) -> AggregateSend {
+        resps: u64,
+        send: CacheAligned<PortQueue>,
+        masterservice: Arc<Master>,
+    ) -> AggregateSendRecv {
         // Allocate a vector for the invoke() RPC's payload. The payload consists of the name of
         // the extension, the table id (8 bytes), the key length, the aggregate size, and the order.
-        let len = "aggregate".as_bytes().len() + size_of::<u64>() + size_of::<u32>()
-            + size_of::<u32>() + config.key_len;
+        let len = "aggregate".as_bytes().len()
+            + size_of::<u64>()
+            + size_of::<u32>()
+            + size_of::<u32>()
+            + config.key_len;
         let mut i_buff = Vec::with_capacity(len);
 
         // Pre-populate the extension name and table id.
@@ -118,7 +173,7 @@ impl AggregateSend {
         let mut n_buff = Vec::with_capacity(config.key_len);
         n_buff.resize(config.key_len, 0);
 
-        AggregateSend {
+        AggregateSendRecv {
             random: XorShiftRng::from_seed(rand::random::<[u32; 4]>()),
             k_dist: ZipfDistribution::new(config.n_keys, config.skew)
                 .expect("Failed to init key generator."),
@@ -127,12 +182,22 @@ impl AggregateSend {
             native: !config.use_invoke,
             requests: reqs,
             sent: 0,
-            delay: cycles::cycles_per_second() / config.req_rate as u64,
             start: cycles::rdtsc(),
-            next: 0,
-            sender: dispatch::Sender::new(config, port, dst_ports),
+            receiver: dispatch::Receiver::new(send),
+            sender: Arc::new(dispatch::Sender::new(config, port, dst_ports)),
             n_buff: n_buff,
             i_buff: i_buff,
+            responses: resps,
+            recvd: 0,
+            latencies: Vec::with_capacity(2 * 1000 * 1000),
+            num: num,
+            ord: ord,
+            outstanding: 0,
+            master_service: Arc::clone(&masterservice),
+            manager: RefCell::new(HashMap::new()),
+            waiting: VecDeque::new(),
+            pushback_completed: 0,
+            cycle_counter: CycleCounter::new(),
         }
     }
 
@@ -169,113 +234,32 @@ impl AggregateSend {
             // Invoke request. Add the key to the pre-populated payload.
             false => {
                 self.i_buff[25..29].copy_from_slice(&k);
+                self.add_request(&self.i_buff, t, 9, curr);
                 self.sender.send_invoke(t, 9, &self.i_buff, curr);
             }
         }
     }
-}
 
-// Implementation of the Executable trait so that we can use Netbrick's DPDK bindings.
-impl Executable for AggregateSend {
-    fn execute(&mut self) {
+    fn send(&mut self) {
         // Return if there are no more requests to generate.
         if self.requests <= self.sent {
             return;
         }
 
         // Send out a request at the configured request rate.
-        let curr = cycles::rdtsc();
-        if curr >= self.next || self.next == 0 {
+        while self.outstanding < 32 {
+            let curr = cycles::rdtsc();
             self.generate(curr);
-
             self.sent += 1;
-            self.next = self.start + self.sent * self.delay;
-        }
-    }
-
-    fn dependencies(&mut self) -> Vec<usize> {
-        vec![]
-    }
-}
-
-/// This type implements the receive half of a client that issues back to back reads to a
-/// server and aggregates the returned value into a single 64 bit integer.
-struct AggregateRecv {
-    /// The network stack required to receives RPC response packets from a network port.
-    receiver: dispatch::Receiver<CacheAligned<PortQueue>>,
-
-    /// Second receiver stack to receive multiget RPC response packets when operating in
-    /// native mode.
-    multi_rx: dispatch::Receiver<CacheAligned<PortQueue>>,
-
-    /// Network stack that can actually send an RPC over the network. Required for the native case.
-    sender: dispatch::Sender,
-
-    /// Flag indicating whether requests sent out were native (true) or invocations (false).
-    native: bool,
-
-    /// The number of response packets to wait for before printing out statistics.
-    responses: u64,
-
-    /// Time stamp in cycles at which measurement started. Required to calculate observed
-    /// throughput of the Sandstorm server.
-    start: u64,
-
-    /// The total number of responses received so far.
-    recvd: u64,
-
-    /// Vector of sampled request latencies. Required to calculate distributions once all responses
-    /// have been received.
-    latencies: Vec<u64>,
-
-    /// Number of keys to aggregate across. Required for the native case.
-    num: u32,
-
-    /// Order of the final polynomial to be computed.
-    ord: u32,
-}
-
-// Implementation of methods on AggregateRecv.
-impl AggregateRecv {
-    /// Returns an `AggregateRecv`.
-    ///
-    /// # Arguments
-    ///
-    /// * `port` :     Network port on which responses will be polled for.
-    /// * `resps`:     The number of responses to wait for before calculating statistics.
-    /// * `native`:    Boolean indicating whether responses are for native (true) RPCs or
-    ///                invoke (false) RPCs
-    /// * `send`:      Network port over which requests will be sent out.
-    /// * `dst_ports`: The total number of UDP ports the server is listening on.
-    /// * `config`:    Client configuration with Workload related (key and value length etc.) as
-    ///                well as network related (Server and Client MAC address etc.) parameters.
-    /// * `num`:       The number of keys aggregations are to be performed across.
-    /// * `ord`:       Order of the final polynomial to be computed.
-    ///
-    /// # Return
-    ///
-    /// A receiver that measures the median latency and throughput of a Sandstorm server.
-    fn new(
-        port: CacheAligned<PortQueue>,
-        resps: u64,
-        native: bool,
-        send: CacheAligned<PortQueue>,
-        dst_ports: u16,
-        config: &config::ClientConfig,
-        num: u32,
-        ord: u32,
-    ) -> AggregateRecv {
-        AggregateRecv {
-            receiver: dispatch::Receiver::new(port),
-            multi_rx: dispatch::Receiver::new(send.clone()),
-            sender: dispatch::Sender::new(config, send, dst_ports),
-            native: native,
-            responses: resps,
-            start: cycles::rdtsc(),
-            recvd: 0,
-            latencies: Vec::with_capacity(2 * 1000 * 1000),
-            num: num,
-            ord: ord,
+            self.outstanding += 1;
+            if self.waiting.len() >= 100000 {
+                let mut batch = 4;
+                while batch > 0 {
+                    self.execute_task();
+                    batch -= 1;
+                }
+                break;
+            }
         }
     }
 
@@ -316,17 +300,14 @@ impl AggregateRecv {
         let tail = self.latencies[(self.latencies.len() * 99) / 100];
 
         info!(
-            "Median(ns): {} Tail(ns): {} Throughput(Kops/s): {}",
+            "Median(ns): {} Tail(ns): {} Throughput: {}",
             cycles::to_seconds(median) * 1e9,
             cycles::to_seconds(tail) * 1e9,
             self.recvd as f64 / cycles::to_seconds(stop - self.start)
         );
     }
-}
 
-// Implementation of the Executable trait so that we can use Netbrick's DPDK bindings.
-impl Executable for AggregateRecv {
-    fn execute(&mut self) {
+    fn recv(&mut self) {
         // Do nothing if all responses have been received.
         if self.responses <= self.recvd {
             return;
@@ -336,41 +317,76 @@ impl Executable for AggregateRecv {
         if let Some(mut resps) = self.receiver.recv_res() {
             while let Some(packet) = resps.pop() {
                 if self.native {
-                    let p = packet.parse_header::<GetResponse>();
-                    self.sender.send_multiget(
-                        p.get_header().common_header.tenant,
-                        1,
-                        30,
-                        self.num,
-                        p.get_payload(),
-                        p.get_header().common_header.stamp,
-                    );
-                    p.free_packet();
+                    match parse_rpc_opcode(&packet) {
+                        OpCode::SandstormGetRpc => {
+                            let p = packet.parse_header::<GetResponse>();
+                            self.sender.send_multiget(
+                                p.get_header().common_header.tenant,
+                                1,
+                                30,
+                                self.num,
+                                p.get_payload(),
+                                p.get_header().common_header.stamp,
+                            );
+                            p.free_packet();
+                        }
+
+                        OpCode::SandstormMultiGetRpc => {
+                            self.recvd += 1;
+                            self.outstanding -= 1;
+
+                            let p = packet.parse_header::<MultiGetResponse>();
+                            let _s = self.aggregate(0, p.get_payload());
+                            if self.recvd & 0xf == 0 {
+                                self.latencies
+                                    .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                            }
+                            p.free_packet();
+                        }
+
+                        _ => {
+                            packet.free_packet();
+                            info!("Something is wrong");
+                        }
+                    }
                 } else {
-                    self.recvd += 1;
-
                     let p = packet.parse_header::<InvokeResponse>();
-                    if self.recvd & 0xf == 0 {
-                        self.latencies
-                            .push(cycles::rdtsc() - p.get_header().common_header.stamp);
-                    }
-                    p.free_packet();
-                }
-            }
-        }
+                    match p.get_header().common_header.status {
+                        RpcStatus::StatusOk => {
+                            self.recvd += 1;
+                            self.outstanding -= 1;
+                            if self.recvd & 0xf == 0 {
+                                self.latencies
+                                    .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                            }
+                            self.remove_request(p.get_header().common_header.stamp);
+                        }
 
-        // If running in native mode, then check for multiget() responses.
-        if self.native {
-            if let Some(mut resps) = self.multi_rx.recv_res() {
-                while let Some(packet) = resps.pop() {
-                    self.recvd += 1;
+                        RpcStatus::StatusPushback => {
+                            let records = p.get_payload();
+                            let (key, record) = records.split_at(369); // 1B for type, 8B for key, and 12 * 30B for value
+                            let hdr = &p.get_header();
+                            let timestamp = hdr.common_header.stamp;
 
-                    let p = packet.parse_header::<MultiGetResponse>();
-                    let _s = self.aggregate(0, p.get_payload());
-                    if self.recvd & 0xf == 0 {
-                        self.latencies
-                            .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                            // Create task and run the generator.
+                            match self.manager.borrow_mut().remove(&timestamp) {
+                                Some(mut manager) => {
+                                    manager.create_generator(Arc::clone(&self.sender));
+                                    manager.update_rwset(key, 369, 8);
+                                    manager.update_rwset(record, RECORD_SIZE, 30);
+                                    self.waiting.push_back(manager);
+                                }
+
+                                None => {
+                                    info!("No manager with {} timestamp", timestamp);
+                                }
+                            }
+                            self.outstanding -= 1;
+                        }
+
+                        _ => {}
                     }
+
                     p.free_packet();
                 }
             }
@@ -380,6 +396,68 @@ impl Executable for AggregateRecv {
         if self.responses <= self.recvd {
             self.measurements();
         }
+    }
+
+    fn add_request(&self, req: &[u8], tenant: u32, name_length: u32, id: u64) {
+        let req = TaskManager::new(
+            Arc::clone(&self.master_service),
+            &req,
+            tenant,
+            name_length,
+            id,
+        );
+        match self.manager.borrow_mut().insert(id, req) {
+            Some(_) => {
+                info!("Already present in the Hashmap");
+            }
+
+            None => {}
+        }
+    }
+
+    fn remove_request(&self, id: u64) {
+        self.manager.borrow_mut().remove(&id);
+    }
+
+    fn execute_task(&mut self) {
+        // Don't do anything after all responses have been received.
+        if self.waiting.len() == 0 {
+            return;
+        }
+
+        //Execute the pushed-back task.
+        let manager = self.waiting.pop_front();
+        if let Some(mut manager) = manager {
+            let (taskstate, _time) = manager.execute_task();
+            if taskstate == YIELDED {
+                self.waiting.push_back(manager);
+            } else if taskstate == WAITING {
+                self.manager.borrow_mut().insert(manager.get_id(), manager);
+            } else if taskstate == COMPLETED {
+                self.recvd += 1;
+                if cfg!(feature = "execution") {
+                    self.cycle_counter.total_cycles(_time, 1);
+                    self.pushback_completed += 1;
+                    if self.pushback_completed == 1000000 {
+                        info!(
+                            "Completion time per extension {}",
+                            self.cycle_counter.get_average()
+                        );
+                        self.pushback_completed = 0;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Executable trait allowing AuthRecv to be scheduled by Netbricks.
+impl Executable for AggregateSendRecv {
+    // Called internally by Netbricks.
+    fn execute(&mut self) {
+        self.send();
+        self.recv();
+        self.execute_task();
     }
 
     fn dependencies(&mut self) -> Vec<usize> {
@@ -396,13 +474,15 @@ impl Executable for AggregateRecv {
 /// * `scheduler`: Netbricks scheduler to which AggregateSend will be added.
 /// * `num`:       Number of keys aggregations are to be performed across.
 /// * `ord`:       Order of the final polynomial to be computed.
-fn setup_send<S>(
+fn setup_send_recv<S>(
     config: &config::ClientConfig,
     ports: Vec<CacheAligned<PortQueue>>,
     scheduler: &mut S,
     _core: i32,
     num: u32,
     ord: u32,
+    send: Vec<CacheAligned<PortQueue>>,
+    masterservice: Arc<Master>,
 ) where
     S: Scheduler + Sized,
 {
@@ -412,72 +492,21 @@ fn setup_send<S>(
     }
 
     // Add the sender to a netbricks pipeline.
-    match scheduler.add_task(AggregateSend::new(
+    match scheduler.add_task(AggregateSendRecv::new(
         config,
         ports[0].clone(),
         config.num_reqs as u64,
         config.server_udp_ports as u16,
         num,
         ord,
+        32 * 1000 * 1000 as u64,
+        send[0].clone(),
+        masterservice,
     )) {
         Ok(_) => {
             info!(
                 "Successfully added AggregateSend with tx queue {}.",
                 ports[0].txq()
-            );
-        }
-
-        Err(ref err) => {
-            error!("Error while adding to Netbricks pipeline {}", err);
-            std::process::exit(1);
-        }
-    }
-}
-
-/// Sets up AggregateRecv by adding it to a Netbricks scheduler.
-///
-/// # Arguments
-///
-/// * `ports`:     Network port on which packets will be received.
-/// * `scheduler`: Netbricks scheduler to which AggregateRecv will be added.
-/// * `native`:    Boolean indicating whether responses are for native (true) or invoke (false)
-///                RPCs.
-/// * `send`:      Network port on which packets will be sent.
-/// * `config`:    Network related configuration such as the MAC and IP address.
-/// * `num`:       Number of keys aggregations are to be performed across.
-/// * `ord`:       Order of the final polynomial to be computed.
-fn setup_recv<S>(
-    ports: Vec<CacheAligned<PortQueue>>,
-    scheduler: &mut S,
-    _core: i32,
-    native: bool,
-    send: Vec<CacheAligned<PortQueue>>,
-    config: &config::ClientConfig,
-    num: u32,
-    ord: u32,
-) where
-    S: Scheduler + Sized,
-{
-    if ports.len() != 1 {
-        error!("Client should be configured with exactly 1 port!");
-        std::process::exit(1);
-    }
-
-    // Add the receiver to a netbricks pipeline.
-    match scheduler.add_task(AggregateRecv::new(
-        ports[0].clone(),
-        32 * 1000 * 1000 as u64,
-        native,
-        send[0].clone(),
-        config.server_udp_ports as u16,
-        config,
-        num,
-        ord,
-    )) {
-        Ok(_) => {
-            info!(
-                "Successfully added AggregateRecv with tx, rx queue {:?}.",
-                (send[0].txq(), ports[0].rxq())
             );
         }
 
@@ -494,6 +523,14 @@ fn main() {
     let config = config::ClientConfig::load();
     info!("Starting up Sandstorm client with config {:?}", config);
 
+    let masterservice = Arc::new(Master::new());
+
+    // Create tenants with extensions.
+    info!("Populating extension for {} tenants", config.num_tenants);
+    for tenant in 1..(config.num_tenants + 1) {
+        masterservice.load_test(tenant);
+    }
+
     // Based on the supplied client configuration, compute the amount of time it will take to send
     // out `num_reqs` requests at a rate of `req_rate` requests per second.
     let exec = config.num_reqs / config.req_rate;
@@ -507,58 +544,42 @@ fn main() {
     // The core id's which will run the sender and receiver threads.
     // XXX The following two arrays heavily depend on the set of cores
     // configured in setup.rs
-    let senders = [0, 2, 4, 6];
-    let receive = [1, 3, 5, 7];
-    assert!((senders.len() == 4) && (receive.len() == 4));
-
-    // Required by AggregateRecv.
-    let native = !config.use_invoke;
+    let senders_and_receivers = [0, 1, 2, 3, 4, 5, 6, 7];
+    assert!(senders_and_receivers.len() == 8);
 
     // Aggregation size.
     let num = config.num_aggr;
     let ord = config.order;
 
-    // Setup 4 senders and 4 receivers.
-    for i in 0..4 {
+    // Setup 8 senders and receivers.
+    for i in 0..8 {
         // First, retrieve a tx-rx queue pair from Netbricks
         let port = net_context
             .rx_queues
-            .get(&senders[i])
+            .get(&senders_and_receivers[i])
             .expect("Failed to retrieve network port!")
             .clone();
 
+        let master_service = Arc::clone(&masterservice);
         // Setup the receive side.
         net_context
             .add_pipeline_to_core(
-                receive[i],
+                senders_and_receivers[i],
                 Arc::new(
                     move |send, sched: &mut StandaloneScheduler, core: i32, _sibling| {
-                        setup_recv(
+                        setup_send_recv(
+                            &config::ClientConfig::load(),
                             port.clone(),
                             sched,
                             core,
-                            native,
-                            send,
-                            &config::ClientConfig::load(),
                             num,
                             ord,
+                            send,
+                            Arc::clone(&master_service),
                         )
                     },
                 ),
-            )
-            .expect("Failed to initialize receive side.");
-
-        // Setup the send side.
-        net_context
-            .add_pipeline_to_core(
-                senders[i],
-                Arc::new(
-                    move |ports, sched: &mut StandaloneScheduler, core: i32, _sibling| {
-                        setup_send(&config::ClientConfig::load(), ports, sched, core, num, ord)
-                    },
-                ),
-            )
-            .expect("Failed to initialize send side.");
+            ).expect("Failed to initialize receive side.");
     }
 
     // Run the client.

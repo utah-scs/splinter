@@ -19,6 +19,7 @@ extern crate db;
 extern crate libc;
 extern crate nix;
 extern crate spin;
+extern crate util;
 
 use std::sync::Arc;
 use std::thread::{sleep, spawn};
@@ -46,6 +47,7 @@ use spin::RwLock;
 
 use libc::ucontext_t;
 use nix::sys::signal;
+use util::model::{insert_model, MODEL};
 
 /// Interval in milliseconds at which all schedulers in the system will be scanned for misbehaving
 /// tasks.
@@ -128,6 +130,23 @@ fn setup_server<S>(
 
     // Add the scheduler to the passed in `handles` vector.
     handles.write().push(Arc::clone(&sched));
+
+    match config.workload.as_str() {
+        // If the workload is ANALYSIS, then updated the thread local static variables for the Model.
+        //
+        // Why not training it here? - For each misbehaving task the training will take place,
+        //                             not recommended.
+        //
+        // Why not just use the Static Global? - Costly because of Mutex/RwLock and also Static
+        //                                       Global does an atomic access.
+        "ANALYSIS" => {
+            if let Some(a_model) = MODEL.lock().unwrap().get(&String::from("analysis")) {
+                insert_model(String::from("analysis"), a_model.serialized.clone());
+            }
+        }
+
+        _ => {}
+    }
 
     // Add the server to a netbricks pipeline.
     match scheduler.add_task(Server::new(sched)) {
@@ -253,6 +272,12 @@ fn print_info() {
     } else {
         info!("Fast path for native operations is DISABLED");
     }
+    if cfg!(feature = "ml-model") {
+        info!("ML Model generation for invoke operations is ENABLED");
+    } else {
+        info!("ML Model generation for invoke operations is DISABLED");
+    }
+    println!("\n");
 }
 
 fn main() {
@@ -316,11 +341,26 @@ fn main() {
         }
 
         "PUSHBACK" => {
-            info!("Populating PUSHBACK data for tenant 1024");
+            info!(
+                "Populating PUSHBACK data, {} tenants, {} records/tenant",
+                config.num_tenants, config.num_records
+            );
             for tenant in 1..(config.num_tenants + 1) {
                 master.fill_test(tenant, 1, config.num_records);
                 master.load_test(tenant);
             }
+        }
+
+        "ANALYSIS" => {
+            info!(
+                "Populating ANALYSIS data, {} tenants, training dataset/tenant",
+                config.num_tenants
+            );
+            master.fill_analysis(config.num_tenants);
+            for tenant in 1..(config.num_tenants + 1) {
+                master.load_test(tenant);
+            }
+            assert_eq!(cfg!(feature = "ml-model"), true);
         }
 
         "AUTH" => {
@@ -330,6 +370,17 @@ fn main() {
             );
             for tenant in 1..(config.num_tenants + 1) {
                 master.fill_auth(tenant, 1, config.num_records);
+                master.load_test(tenant);
+            }
+        }
+
+        "MIX" => {
+            info!("Populating MIX data, {} tenants", config.num_tenants);
+            info!("TAO: {} records/tenant", config.num_records);
+            info!("AUTH: 1000 records/tenants");
+            info!("Pushback: {} records/tenants", config.num_records);
+            for tenant in 1..(config.num_tenants + 1) {
+                master.fill_mix(tenant, config.num_records);
                 master.load_test(tenant);
             }
         }

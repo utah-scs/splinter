@@ -1,0 +1,13 @@
+[package]
+name = "analysis"
+version = "0.1.0"
+authors = ["ankitb"]
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+sandstorm = {path = "../../sandstorm"}
+util      = {path = "../../util"}
+bincode   = "1.0"
+rustlearn = "0.5.0"

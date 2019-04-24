@@ -14,7 +14,6 @@
  */
 
 #[macro_export]
-
 macro_rules! GET {
     ($db:ident, $table:ident, $key:ident, $obj:ident) => {
         let (server, found, val) = $db.search_get_in_cache($table, &$key);
@@ -27,6 +26,33 @@ macro_rules! GET {
             }
         } else {
             $obj = $db.get($table, &$key);
+        }
+    };
+}
+
+/// TODO: Change it later, not implemented fully.
+#[macro_export]
+macro_rules! MULTIGET {
+    ($db:ident, $table:ident, $keylen:ident, $keys:ident, $buf:ident) => {
+        let mut is_server = false;
+        let mut objs = Vec::new();
+        for key in $keys.chunks($keylen as usize) {
+            if key.len() != $keylen as usize {
+                break;
+            }
+            let (server, _, val) = $db.search_get_in_cache($table, key);
+            if server == true {
+                $buf = $db.multiget($table, $keylen, &$keys);
+                is_server = server;
+                break;
+            } else {
+                objs.push(Bytes::from(val.unwrap().read()))
+            }
+        }
+        if is_server == false {
+            unsafe {
+                $buf = Some(MultiReadBuf::new(objs));
+            }
         }
     };
 }

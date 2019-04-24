@@ -25,6 +25,7 @@ use super::dispatch::*;
 
 extern crate bytes;
 use self::bytes::{Bytes, BytesMut};
+use util::model::Model;
 
 /// This struct represents a record for a read/write set. Each record in the read/write set will
 /// be of this type.
@@ -89,6 +90,9 @@ pub struct ProxyDB {
 
     // The credit which the extension has earned by making the db calls.
     db_credit: RefCell<u64>,
+
+    // The model for a given extension which is stored based on the name of the extension.
+    model: Option<Arc<Model>>,
 }
 
 impl ProxyDB {
@@ -113,6 +117,7 @@ impl ProxyDB {
         request: Arc<Vec<u8>>,
         name_length: usize,
         sender_service: Arc<Sender>,
+        model: Option<Arc<Model>>,
     ) -> ProxyDB {
         ProxyDB {
             tenant: tenant_id,
@@ -124,6 +129,7 @@ impl ProxyDB {
             readset: RefCell::new(Vec::with_capacity(4)),
             writeset: RefCell::new(Vec::with_capacity(4)),
             db_credit: RefCell::new(0),
+            model: model,
         }
     }
 
@@ -148,8 +154,8 @@ impl ProxyDB {
     ///
     /// # Arguments
     /// * `record`: A reference to a record with a key and a value.
-    pub fn set_read_record(&self, record: &[u8]) {
-        let (key, value) = record.split_at(30);
+    pub fn set_read_record(&self, record: &[u8], keylen: usize) {
+        let (key, value) = record.split_at(keylen);
         self.readset
             .borrow_mut()
             .push(KV::new(Bytes::from(key), Bytes::from(value)));
@@ -160,8 +166,8 @@ impl ProxyDB {
     ///
     /// # Arguments
     /// * `record`: A reference to a record with a key and a value.
-    pub fn set_write_record(&self, record: &[u8]) {
-        let (key, value) = record.split_at(30);
+    pub fn set_write_record(&self, record: &[u8], keylen: usize) {
+        let (key, value) = record.split_at(keylen);
         self.writeset
             .borrow_mut()
             .push(KV::new(Bytes::from(key), Bytes::from(value)));
@@ -258,5 +264,43 @@ impl DB for ProxyDB {
             .send_get_from_extension(self.tenant, table, key, self.parent_id);
         *self.db_credit.borrow_mut() += rdtsc() - start;
         (false, false, None)
+    }
+
+    /// Lookup the `DB` trait for documentation on this method.
+    fn search_multiget_in_cache(
+        &self,
+        table: u64,
+        key_len: u16,
+        keys: &[u8],
+    ) -> (bool, bool, Option<MultiReadBuf>) {
+        let start = rdtsc();
+        let mut objs = Vec::new();
+        for key in keys.chunks(key_len as usize) {
+            if key.len() != key_len as usize {
+                return (false, false, None);
+            }
+
+            let index = self.search_cache(self.readset.borrow().to_vec(), key);
+            if index != 1024 {
+                let value = self.readset.borrow()[index].value.clone();
+                objs.push(value);
+            } else {
+                self.set_waiting(true);
+                self.sender
+                    .send_get_from_extension(self.tenant, table, key, self.parent_id);
+                *self.db_credit.borrow_mut() += rdtsc() - start;
+                return (false, false, None);
+            }
+        }
+        *self.db_credit.borrow_mut() += rdtsc() - start;
+        return (false, true, unsafe { Some(MultiReadBuf::new(objs)) });
+    }
+
+    /// Lookup the `DB` trait for documentation on this method.
+    fn get_model(&self) -> Option<Arc<Model>> {
+        match self.model {
+            Some(ref model) => Some(Arc::clone(&model)),
+            None => None,
+        }
     }
 }

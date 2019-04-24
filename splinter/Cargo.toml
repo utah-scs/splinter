@@ -41,10 +41,16 @@ name = "ycsb-abce"
 path = "src/bin/client/ycsb-abce.rs"
 
 [[bin]]
+name = "analysis"
+path = "src/bin/client/analysis.rs"
+
+[[bin]]
 name = "auth"
 path = "src/bin/client/auth.rs"
 
 [dependencies]
+bincode      = "1.0"
+rust-crypto  = "0.2.36"
 libc         = "0.2.43"
 nix          = "0.11.0"
 log          = "0.3"
@@ -54,6 +60,7 @@ spin         = "0.4.7"  # Consider using parking lot?
 bytes        = "0.4.7"
 env_logger   = "0.3"
 libloading   = "0.3"
+rustlearn    = "0.5.0"
 serde        = "1.0.37"
 serde_derive = "1.0.37"
 toml         = "0.4.5"
@@ -61,9 +68,11 @@ zipf         = "2.0"
 db           = {path = "../db"}
 sandstorm    = {path = "../sandstorm"}
 e2d2         = {path = "../net/framework"}
+util         = {path = "../util"}
 
 # Add feature name in default features to enable cyclecounter for the given stage,
 # where stage name can be ["execution"].
 [features]
-default = []
+default = ["ml-model"]
 execution = []
+ml-model = []

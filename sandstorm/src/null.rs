@@ -13,11 +13,12 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::fmt::Debug;
-
 use super::db::DB;
+use std::fmt::Debug;
+use std::sync::Arc;
 
-use super::buf::{ReadBuf, Record, WriteBuf, MultiReadBuf};
+use super::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
+use util::model::Model;
 
 /// A null database of testing and benchmarking purposes.
 pub struct NullDB {}
@@ -70,5 +71,18 @@ impl DB for NullDB {
 
     fn search_get_in_cache(&self, _table: u64, _key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
         (false, false, None)
+    }
+
+    fn search_multiget_in_cache(
+        &self,
+        _table: u64,
+        _key_len: u16,
+        _keys: &[u8],
+    ) -> (bool, bool, Option<MultiReadBuf>) {
+        return (false, false, None);
+    }
+
+    fn get_model(&self) -> Option<Arc<Model>> {
+        None
     }
 }

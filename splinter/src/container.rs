@@ -203,14 +203,14 @@ impl Task for Container {
     }
 
     /// Refer to the `Task` trait for Documentation.
-    fn update_cache(&mut self, record: &[u8]) {
+    fn update_cache(&mut self, record: &[u8], keylen: usize) {
         if let Some(proxydb) = self.db.get_mut() {
             match parse_record_optype(record) {
                 OpType::SandstormRead => {
-                    proxydb.set_read_record(record.split_at(1).1);
+                    proxydb.set_read_record(record.split_at(1).1, keylen);
                 }
 
-                OpType::SandstormWrite => proxydb.set_write_record(record.split_at(1).1),
+                OpType::SandstormWrite => proxydb.set_write_record(record.split_at(1).1, keylen),
 
                 _ => {}
             }

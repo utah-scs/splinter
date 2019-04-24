@@ -58,6 +58,9 @@ static mut ORD_DIST: bool = false;
 static ORDER: f64 = 2500.0;
 static STD_DEV: f64 = 500.0;
 
+// Type: 1, KeySize: 30, ValueSize:100
+const RECORD_SIZE: usize = 131;
+
 // PUSHBACK benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
 // share the same benchmark instance. Each thread can call `abc()` which
@@ -476,7 +479,7 @@ where
                                     match self.manager.borrow_mut().remove(&timestamp) {
                                         Some(mut manager) => {
                                             manager.create_generator(Arc::clone(&self.sender));
-                                            manager.update_rwset(records);
+                                            manager.update_rwset(records, RECORD_SIZE, 30);
                                             self.waiting.push_back(manager);
                                         }
 

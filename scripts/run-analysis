@@ -1,0 +1,103 @@
+#!/bin/bash
+#
+# Copyright (c) 2018 University of Utah
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+# Export DPDK bindings to the current shell.
+export LD_LIBRARY_PATH=$(pwd)/net/target/native
+
+cd splinter
+
+# Check for a TOML file with client related configuration.
+if [[ ! -f client.toml ]]; then
+    echo "Missing client.toml file (in db directory)."
+    exit -1
+fi
+
+if [ $# -eq 1 ]
+then
+    # Remove any preexisting temp files.
+    rm -f ../samples.temp
+
+    # Run Analysis.
+    RUST_LOG=debug ./target/release/analysis >> ../samples.temp
+
+    # Calculate the total throughput.
+    cat ../samples.temp | grep "Analysis"
+    thrpt=$(cat ../samples.temp | grep "Analysis Throughput" | \
+        awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+
+    # Print out final numbers.
+    m=$(cat ../samples.temp | grep ">>>" | awk '{ print $2 }')
+    t=$(cat ../samples.temp | grep ">>>" | awk '{ print $3 }')
+    echo ""
+    echo "Median(ns): $m, Tail(ns): $t, Throughput(op/s): $thrpt"
+    rm -f ../samples.temp
+fi
+
+# Get the "use_invoke" field from the client configuration. The output file
+# will be markes with the value of this field, allowing to distinguish between
+# experiments run with an invoke based Analysis, and experiments run with a native
+# operation based Analysis.
+invoke=$(cat client.toml | grep "use_invoke" | awk '{ print $NF }')
+
+# The number of tenants requests are being generated for. Each data point in the
+# output file is marked with this number.
+tenants=$(cat client.toml | grep "num_tenants" | awk '{ print $NF }')
+
+# The skew with which tenants are chosen by the client. Each data point in the
+# output file is marked with this number.
+tenant_skew=$(cat client.toml | grep "tenant_skew" | awk '{ print $NF }')
+
+# The number of server cores being stressed by Analysis. Each data point in the
+# output file is marked with this number.
+cores=$(cat client.toml | grep "server_udp_ports" | awk '{ print $NF }')
+
+# The different request rates that the Analysis client will be configured and run
+# with.
+sizes=(4)
+
+# Header for the output file. Required inorder to plot the results.
+echo "ASize 50 99 Tenants TSkew Cores Thrpt" > ../analysis_invoke_"$invoke".data
+
+# Run Analysis for each of the above request rates.
+for size in ${sizes[@]}
+do
+    # Configure the client TOML file with the aggregate size.
+    sed -i "s/num_aggr = [1-9][0-9]*/num_aggr = $size/g" client.toml
+
+    echo "invoke=$invoke, tenants=$tenants, tenant_skew=$tenant_skew, cores=$cores, size=$size"
+
+    # Run Analysis, and write out the output to a file.
+    rm -f ../samples.temp
+    RUST_LOG=debug ./target/release/analysis >> ../samples.temp 2>&1
+
+    # Calculate the total measured server throughput.
+    thrpt=$(cat ../samples.temp | grep "Analysis Throughput" | \
+        awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+
+    # Print the panic!() message on the console to avoid any error.
+    cat ../samples.temp | grep "panicked" >> analysis_invoke_"$invoke".data
+
+    # Print final numbers to a file.
+    cat ../samples.temp | grep ">>>" | \
+        awk "{ print $size, \$2, \$3, $tenants, $tenant_skew, $cores, $thrpt }" >> \
+        ../analysis_invoke_"$invoke".data
+
+    # Cleanup temp file.
+    rm ../samples.temp
+
+done
+
+exit 0
