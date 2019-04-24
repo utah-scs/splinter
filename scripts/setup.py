@@ -37,9 +37,10 @@ def setupCargo():
     printColor("bold", "=============== Fixing Deps ==========================")
     fix = "cargo generate-lockfile; " + \
           "cargo update -p spin:0.4.10 --precise 0.4.7; " + \
-          "cargo update -p serde:1.0.85 --precise 1.0.37; " + \
-          "cargo update -p serde_derive:1.0.85 --precise 1.0.37; " + \
-          "cargo update -p env_logger:0.5.13 --precise 0.5.3; "
+          "cargo update -p serde:1.0.90 --precise 1.0.37; " + \
+          "cargo update -p serde_derive:1.0.90 --precise 1.0.37; " + \
+          "cargo update -p env_logger:0.5.13 --precise 0.5.3; " + \
+          "cargo update -p rustc-demangle:0.1.14 --precise 0.1.13; "
 
     # Fix dependencies inside db.
     cmd = "cd db; " + fix + "cd ../"
@@ -47,6 +48,15 @@ def setupCargo():
 
     # Fix dependencies inside ext/test.
     cmd = "cd ext/test; " + fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/pushback.
+    cmd = "cd ext/pushback; " + fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+
+    # Fix dependencies inside splinter.
+    cmd = "cd splinter; " + fix + "cd ../"
     subprocess.check_call(cmd, shell=True)
 
 """This function first compiles DPDK using Netbricks scripts on CloudLab's xl170.

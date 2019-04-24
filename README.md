@@ -7,20 +7,30 @@ To run Sandstorm on [CloudLab](https://www.cloudlab.us/login.php), do the
 following
 
 1. Instantiate an experiment using the `splinter-cluster` profile under the
-   `sandstorm` project (you will need to join the project first). When asked,
-   allocate two machines for the experiment.
-2. Once the experiment has begun, clone this repository on both the allocated
-   machines.
-3. Next, run `scripts/setup.py --full` from the root directory on both machines.
-   This script installs Rust, DPDK.
-   It saves the PCI and MAC addresses of the bound NIC to a file called `nic_info`.
-   Run - `source $HOME/.cargo/env` once the script is done.
-4. Create a toml file (`db/server.toml`) for the server on one machine, and a
-   toml file (`splinter/client.toml`) for the client on the other machine. There are
-   example files under `db`.
-5. Update the toml files with the correct MAC and PCI addresses (generated
-   during Step 3).
-6. To run the server, run `make`, followed by `sudo scripts/run-server` from the
-   root directory.
-7. To run the ycsb client, run `make`, followed by `sudo scripts/run-ycsb` from
-   the root directory.
+    `sandstorm` project (you will need to join the project first). When asked,
+    allocate two machines for the experiment.
+2. Next, run
+    `python3 scripts/everything/main.py --setup --build <cloudlab-username> <any-host-in-cluster> <command/extension>`
+    From the root directory of the project on any machine outside or inside the cluster.
+    This script is capable of: 
+      - Installing Rust
+      - Installing DPDK
+      - Setting up NIC and MAC addresses
+      - Compiling Server and Client Rust
+      - Pushing and recompiling local commits
+      - Running extensions/clients
+      - logging output to `logs/latest/`
+    If you want to know more about the features of this script,
+    use `python3 scripts/everything/main.py -h`
+  
+## How to run server and client for each extension
+What are the parameters for each client, What is the key and value sizes, etc.
+### Aggregate
+
+### Analysis
+
+### Auth
+
+### Pushback
+
+### TAO

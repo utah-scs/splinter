@@ -20,6 +20,7 @@ db/server.toml
 splinter/client.toml
 nic_info
 client_nic_info
+clients.txt
 
 # Ignore NetBricks objects
 net/native/*
