@@ -26,14 +26,11 @@ following
 ## How to run server and client for each extension
 To update the configuration parameters, change `db/server.toml` on the server side and `splinter/client.toml` on the client side.
 
-To run on the client-side, use `use_invoke = false` and to run on the server-side use `use_invoke=true`.
+To run the extension on the client-side, use `use_invoke = false` and for the server-side use `use_invoke=true`. And to run the extension on both on the server-side and client-side, keep `use_invoke = true` and add `pushback` feature in `db/Cargo.toml` on the server-side.
 
-To run the extension on both on the server-side and client side, keep `use_invoke = true` and add `pushback` feature in `db/Cargo.toml` on the server-side.
+Change `num_tenants` and `num_keys` on both the sides. The server uses these parameters to populate the tables and extension for different number of extensions and the client uses these parameters to generate the load.
 
-Change `num_tenants` and `num_keys` on both the sides. The server uses these parameters to populate the tables and extension for different number of extensions
-and the client uses these parameters to generate the load.
-
-### Aggregate
+### Aggregate Extension
 `key_size = 8`
 
 `value_size = 30`
@@ -42,19 +39,19 @@ and the client uses these parameters to generate the load.
 
 `order = X`	// The amound of computation(multiplication) for per aggregate operation.
 
-### Analysis
+### Analysis Extension
 `key_size = 30`
 
 `value_size = 108`
 
 Also add the feature `ml_model` in `db/Cargo.toml`.
 
-### Auth
+### Auth Extension
 `key_size = 30`
 
 `value_size = 72`
 
-### Pushback
+### Pushback Extension
 `key_size = 30`
 
 `value_size = 100`
