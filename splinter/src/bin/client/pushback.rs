@@ -513,7 +513,7 @@ where
                                         .borrow_mut()
                                         .remove(&p.get_header().common_header.stamp);
                                     if let Some(mut manager) = manager {
-                                        manager.update_rwset(p.get_payload());
+                                        manager.update_rwset(p.get_payload(), RECORD_SIZE, 30);
                                         self.waiting.push_back(manager);
                                     }
                                 }
