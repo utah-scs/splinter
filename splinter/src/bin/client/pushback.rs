@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
-
 extern crate db;
 extern crate rand;
 extern crate sandstorm;
@@ -513,7 +511,7 @@ where
                                         .borrow_mut()
                                         .remove(&p.get_header().common_header.stamp);
                                     if let Some(mut manager) = manager {
-                                        manager.update_rwset(p.get_payload());
+                                        manager.update_rwset(p.get_payload(), RECORD_SIZE, 30);
                                         self.waiting.push_back(manager);
                                     }
                                 }

@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
-
 extern crate bincode;
 extern crate db;
 extern crate rand;

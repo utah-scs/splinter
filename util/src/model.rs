@@ -84,8 +84,10 @@ pub fn insert_model(name: String, serialized: Vec<u8>) {
     });
 }
 
-/// Thread local Hash table which stores the mapping between extension and ml model.
-thread_local!(pub static GLOBAL_MODEL: RefCell<HashMap<String, Arc<Model>>> = RefCell::new(HashMap::new()));
+thread_local!(
+    /// Thread local Hash table which stores the mapping between extension and ml model.
+    pub static GLOBAL_MODEL: RefCell<HashMap<String, Arc<Model>>> = RefCell::new(HashMap::new())
+);
 
 /// This method is used to add an entry to the static global `MODEL`.
 ///
@@ -98,8 +100,8 @@ pub fn insert_global_model(name: String, serialized: Vec<u8>) {
     MODEL.lock().unwrap().insert(name, Arc::new(model));
 }
 
-/// Global static Hash table which stores the mapping between extension and ml model.
 lazy_static! {
+    /// Global static Hash table which stores the mapping between extension and ml model.
     pub static ref MODEL: Mutex<HashMap<String, Arc<Model>>> = Mutex::new(HashMap::new());
 }
 

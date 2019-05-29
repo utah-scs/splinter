@@ -36,7 +36,7 @@ def printColor(color, string):
 def setupCargo():
     printColor("bold", "=============== Fixing Deps ==========================")
     fix = "cargo generate-lockfile; " + \
-          "cargo update -p spin:0.4.10 --precise 0.4.7; " + \
+          "cargo update -p spin:0.4.10 --precise 0.4.9; " + \
           "cargo update -p serde:1.0.90 --precise 1.0.37; " + \
           "cargo update -p serde_derive:1.0.90 --precise 1.0.37; " + \
           "cargo update -p env_logger:0.5.13 --precise 0.5.3; " + \
@@ -102,7 +102,7 @@ def setupDevEnvt():
 def installRust():
     printColor("bold", "=============== Installing Rust ======================")
     subprocess.check_call("curl -s https://sh.rustup.rs -sSf | " +\
-                          "sh -s -- --default-toolchain nightly-2018-08-02 -y",
+                          "sh -s -- --default-toolchain nightly-2019-01-01 -y",
                           shell=True)
     os.environ["PATH"] += ":" + os.environ["HOME"] + "/.cargo/bin"
     return

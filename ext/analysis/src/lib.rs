@@ -14,7 +14,7 @@
  */
 
 #![crate_type = "dylib"]
-#![feature(no_unsafe)]
+#![forbid(unsafe_code)]
 #![feature(generators, generator_trait)]
 
 extern crate bincode;

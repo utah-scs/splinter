@@ -6,8 +6,8 @@
 #![feature(slice_concat_ext)]
 #![feature(fnbox)]
 #![feature(alloc)]
-#![feature(heap_api)]
-#![feature(unique)]
+//#![feature(heap_api)]
+//#![feature(unique)]
 #![feature(const_fn)]
 // Used for cache alignment.
 #![feature(allocator_api)]
