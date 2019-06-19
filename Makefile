@@ -24,7 +24,7 @@ so-test: netbricks
 	(cd ext/test; cargo clean)
 
 bench: netbricks
-	(cd db; cargo run --release --bin table_bench)
+	(cd db; LD_LIBRARY_PATH=../net/target/native cargo run --release --bin table_bench)
 
 run:
 	(cd db; RUST_LOG=db cargo run -- --nocapture)

@@ -1,7 +1,5 @@
 #![feature(generators)]
 #![feature(generator_trait)]
-#![feature(try_from)]
-#![no_std]
 #![forbid(unsafe_code)]
 
 extern crate sandstorm;
@@ -17,7 +15,9 @@ use sandstorm::result::Result;
 use sandstorm::size_of;
 use sandstorm::time::{SystemTime, UNIX_EPOCH};
 use sandstorm::vec::*;
-use sandstorm::Generator;
+
+use std::ops::Generator;
+use std::pin::Pin;
 
 type Id = u64;
 type ObjectType = u16;
@@ -55,8 +55,8 @@ type AssocResponseHandler = fn(db: Rc<DB>, assoc: Association);
 #[no_mangle]
 #[allow(unreachable_code)]
 #[allow(unused_assignments)]
-pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
-    Box::new(move || {
+pub fn init(db: Rc<DB>) -> Pin<Box<Generator<Yield = u64, Return = u64>>> {
+    Box::pin(move || {
         {
             return dispatch(db);
         }

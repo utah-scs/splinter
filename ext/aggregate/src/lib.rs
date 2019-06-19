@@ -15,7 +15,6 @@
 #![forbid(unsafe_code)]
 #![feature(generators)]
 #![feature(generator_trait)]
-#![no_std]
 
 extern crate sandstorm;
 
@@ -26,7 +25,8 @@ use sandstorm::pack::pack;
 use sandstorm::rc::Rc;
 use sandstorm::size_of;
 use sandstorm::vec::*;
-use sandstorm::Generator;
+use std::ops::Generator;
+use std::pin::Pin;
 
 /// Status codes for the response to the tenant.
 const SUCCESSFUL: u8 = 0x01;
@@ -70,8 +70,8 @@ macro_rules! MULTIGET1 {
 #[no_mangle]
 #[allow(unreachable_code)]
 #[allow(unused_assignments)]
-pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
-    Box::new(move || {
+pub fn init(db: Rc<DB>) -> Pin<Box<Generator<Yield = u64, Return = u64>>>    {
+    Box::pin(move || {
         // Error code and response defined upfront so that results are written only
         // at the end of this function.
         let mut err = INVALIDARG;

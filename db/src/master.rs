@@ -751,7 +751,7 @@ impl Master {
         let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
-        let gen = Box::new(move || {
+        let gen = Box::pin(move || {
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
             let optype: u8 = 0x1; // OpType::SandstormRead
 
@@ -1029,7 +1029,7 @@ impl Master {
         let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
-        let gen = Box::new(move || {
+        let gen = Box::pin(move || {
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
 
             // If the tenant exists, check if it has a table with the given id,
@@ -1246,7 +1246,7 @@ impl Master {
         let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
-        let gen = Box::new(move || {
+        let gen = Box::pin(move || {
             let mut n_recs: u32 = 0;
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
 

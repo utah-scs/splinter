@@ -13,6 +13,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+/// The macro for get() operation. This macro calls db.get() on the server side and checks
+/// the local cache for the data on the client side. If the data is not present in the cache
+/// then it requests the data using the RPC call.
 #[macro_export]
 macro_rules! GET {
     ($db:ident, $table:ident, $key:ident, $obj:ident) => {

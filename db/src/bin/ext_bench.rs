@@ -20,7 +20,7 @@ extern crate time;
 extern crate sandstorm;
 
 use std::rc::Rc;
-use std::ops::{Generator, GeneratorState};
+use std::ops::GeneratorState;
 
 use db::cycles::*;
 
@@ -64,7 +64,7 @@ fn main() {
         let mut ext = ext_manager.get(0, p.to_string())
                                     .unwrap()
                                     .get(Rc::clone(&db) as Rc<DB>);
-        unsafe { ext.resume() };
+        ext.as_mut().resume();
     }
 
     db.assert_messages(expected.as_slice());
@@ -89,7 +89,7 @@ fn main() {
             load.push(r - l);
 
             let l = rdtsc();
-            unsafe { ext.resume() };
+            ext.as_mut().resume();
             let r = rdtsc();
             enter.push(r - l);
         }
@@ -105,7 +105,7 @@ fn main() {
 
     let mut ext = ext_manager.get(0, String::from("test")).unwrap().get(Rc::clone(&db) as Rc<DB>);
 
-    unsafe { while ext.resume() != GeneratorState::Complete(0) {} };
+    while ext.as_mut().resume() != GeneratorState::Complete(0) {};
 
     load.sort();
     enter.sort();

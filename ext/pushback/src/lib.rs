@@ -22,6 +22,7 @@ extern crate db;
 extern crate sandstorm;
 
 use std::ops::Generator;
+use std::pin::Pin;
 use std::rc::Rc;
 
 use db::cycles;
@@ -42,8 +43,8 @@ use sandstorm::pack::pack;
 #[no_mangle]
 #[allow(unreachable_code)]
 #[allow(unused_assignments)]
-pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
-    Box::new(move || {
+pub fn init(db: Rc<DB>) -> Pin<Box<Generator<Yield = u64, Return = u64>>> {
+    Box::pin(move || {
         let mut obj = None;
         let mut t_table: u64 = 0;
         let mut num: u32 = 0;

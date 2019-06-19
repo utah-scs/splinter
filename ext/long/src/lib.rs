@@ -20,6 +20,7 @@
 extern crate sandstorm;
 
 use std::ops::Generator;
+use std::pin::Pin;
 use std::rc::Rc;
 
 use sandstorm::db::DB;
@@ -37,8 +38,8 @@ use sandstorm::db::DB;
 #[no_mangle]
 #[allow(unreachable_code)]
 #[allow(unused_assignments)]
-pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
-    Box::new(move || {
+pub fn init(db: Rc<DB>) -> Pin<Box<Generator<Yield = u64, Return = u64>>> {
+    Box::pin(move || {
         // Basically a get() extension times 32.
         for i in 0u16..128u16 {
             let mut y_n = 0;

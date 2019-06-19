@@ -16,6 +16,7 @@
 use std::cell::Cell;
 use std::ops::{Generator, GeneratorState};
 use std::panic::*;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -63,7 +64,7 @@ pub struct Container {
 
     // The actual generator/coroutine containing the extension's code to be
     // executed inside the database.
-    gen: Box<Generator<Yield = u64, Return = u64>>,
+    gen: Pin<Box<Generator<Yield = u64, Return = u64>>>,
 }
 
 // Implementation of methods on Container.
@@ -93,7 +94,7 @@ impl Container {
             db_time: 0,
             db: Cell::new(Some(context)),
             ext: ext,
-            gen: Box::new(|| {
+            gen: Box::pin(|| {
                 yield 0;
                 return 0;
             }),
@@ -121,10 +122,8 @@ impl Task for Container {
         if self.state == INITIALIZED || self.state == YIELDED || self.state == WAITING {
             self.state = RUNNING;
 
-            // As of 04/02/2018, calling resume() on a generator requires an unsafe block.
-            unsafe {
                 // Catch any panics thrown from within the extension.
-                let res = catch_unwind(AssertUnwindSafe(|| match self.gen.resume() {
+                let res = catch_unwind(AssertUnwindSafe(|| match self.gen.as_mut().resume() {
                     GeneratorState::Yielded(_) => {
                         self.state = YIELDED;
                         if let Some(proxydb) = self.db.get_mut() {
@@ -148,7 +147,6 @@ impl Task for Container {
                 if let Err(_) = res {
                     self.state = COMPLETED;
                 }
-            }
         }
 
         // Calculate the amount of time the task executed for in cycles.
@@ -190,7 +188,7 @@ impl Task for Container {
     )> {
         // First, drop the generator. Doing so ensures that self.db is the
         // only reference to the extension's execution context.
-        self.gen = Box::new(|| {
+        self.gen = Box::pin(|| {
             yield 0;
             return 0;
         });
