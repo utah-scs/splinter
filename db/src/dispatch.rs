@@ -43,8 +43,8 @@ use sandstorm::common;
 /// Later, it will be set from the server.toml file probably.
 pub const FAST_PATH: bool = false;
 
-/// This is a thread local variable to count the number of occurrences
-/// of cycle counting to average for 1 M events.
+// This is a thread local variable to count the number of occurrences
+// of cycle counting to average for 1 M events.
 #[cfg(feature = "dispatch")]
 thread_local!(static COUNTER: RefCell<u64> = RefCell::new(0));
 

@@ -40,7 +40,7 @@ def setupCargo():
           "cargo update -p serde:1.0.90 --precise 1.0.37; " + \
           "cargo update -p serde_derive:1.0.90 --precise 1.0.37; " + \
           "cargo update -p env_logger:0.5.13 --precise 0.5.3; " + \
-          "cargo update -p rustc-demangle:0.1.14 --precise 0.1.13; "
+          "cargo update -p rustc-demangle:0.1.15 --precise 0.1.13; "
 
     # Fix dependencies inside db.
     cmd = "cd db; " + fix + "cd ../"
@@ -102,7 +102,7 @@ def setupDevEnvt():
 def installRust():
     printColor("bold", "=============== Installing Rust ======================")
     subprocess.check_call("curl -s https://sh.rustup.rs -sSf | " +\
-                          "sh -s -- --default-toolchain nightly-2019-01-01 -y",
+                          "sh -s -- --default-toolchain nightly-2019-03-31 -y",
                           shell=True)
     os.environ["PATH"] += ":" + os.environ["HOME"] + "/.cargo/bin"
     return
