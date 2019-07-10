@@ -453,7 +453,6 @@ where
                                             info!("No manager with {} timestamp", timestamp);
                                         }
                                     }
-                                    self.latencies.push(cycles::rdtsc() - timestamp);
                                     self.outstanding -= 1;
                                 }
 
@@ -574,6 +573,7 @@ where
             } else if taskstate == WAITING {
                 self.manager.borrow_mut().insert(manager.get_id(), manager);
             } else if taskstate == COMPLETED {
+                self.latencies.push(cycle::rdtsc() - manager.get_id());
                 self.recvd += 1;
                 if cfg!(feature = "execution") {
                     self.cycle_counter.total_cycles(_time, 1);
