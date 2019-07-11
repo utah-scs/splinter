@@ -113,10 +113,10 @@ def setupVScode():
     subprocess.check_call("sudo apt -y install libnotify4 libnspr4 libnss3 libnss3-nssdb", shell=True)
     subprocess.check_call("sudo apt -y install libsecret-1-0 libsecret-common libxkbfile1", shell=True)
     subprocess.check_call("sudo apt -y install notification-daemon gitk git-gui", shell=True)
-    subprocess.check_call("wget https://az764295.vo.msecnd.net/stable/61122f88f0bf01e2ac16bdb9e1bc4571755f5bd8/code_1.30.2-1546901646_amd64.deb",
+    subprocess.check_call("wget https://az764295.vo.msecnd.net/stable/2213894ea0415ee8c85c5eea0d0ff81ecc191529/code_1.36.1-1562627527_amd64.deb",
                            shell=True)
-    subprocess.check_call("sudo dpkg -i code_1.30.2-1546901646_amd64.deb", shell=True)
-    subprocess.check_call("rm  code_1.30.2-1546901646_amd64.deb", shell=True)
+    subprocess.check_call("sudo dpkg -i code_1.36.1-1562627527_amd64.deb", shell=True)
+    subprocess.check_call("rm  code_1.36.1-1562627527_amd64.deb", shell=True)
     return
 
 if __name__ == "__main__":
@@ -148,8 +148,8 @@ if __name__ == "__main__":
     if args.full or args.installDpdk:
         setupDpdk()
 
-    # Finally, fix dependencies.
-    if args.full or args.fixCargoDep:
+    # Fix dependencies.
+    if args.fixCargoDep:
         setupCargo()
 
     if args.full or args.installIDE:
