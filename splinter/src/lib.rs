@@ -16,6 +16,7 @@
 //! This crate is useful in writing a new client and handling pushback
 //! extension on the client side.
 #![feature(generators, generator_trait, asm)]
+#![allow(bare_trait_objects)]
 #![warn(missing_docs)]
 
 extern crate db;

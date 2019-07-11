@@ -15,6 +15,7 @@
 
 //! This crate contains the functionality needed to implement the server.
 #![feature(generators, generator_trait, asm)]
+#![allow(bare_trait_objects)]
 #![warn(missing_docs)]
 
 extern crate libloading;

@@ -18,6 +18,7 @@
 #![feature(type_ascription)]
 #![feature(generator_trait)]
 #![feature(rustc_private)]
+#![allow(bare_trait_objects)]
 #![warn(missing_docs)]
 
 /// Allocator/deallocator of heap memory for the table.

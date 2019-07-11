@@ -148,9 +148,9 @@ where
 
     pub fn recv(&mut self) {
         if let Some(packets) = self.try_receive_packets() {
-            let mut packets = self.parse_mac_headers(packets);
-            let mut packets = self.parse_ip_headers(packets);
-            let mut packets = self.parse_udp_headers(packets);
+            let packets = self.parse_mac_headers(packets);
+            let packets = self.parse_ip_headers(packets);
+            let packets = self.parse_udp_headers(packets);
             self.dispatch_requests(packets);
         }
     }

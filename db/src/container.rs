@@ -191,7 +191,7 @@ impl<'a> Task for Container<'a> {
                     db.prepare_for_pushback();
                 }
 
-                let (req, mut res) = db.commit();
+                let (req, res) = db.commit();
 
                 let req = req.deparse_header(PACKET_UDP_LEN as usize);
                 let res = res.deparse_header(PACKET_UDP_LEN as usize);

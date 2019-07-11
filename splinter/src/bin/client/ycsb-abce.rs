@@ -57,7 +57,7 @@ static mut FINISHED: bool = false;
 // The tests below give an example of how to use it and how to aggregate the results.
 pub struct Ycsb {
     put_pct: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,

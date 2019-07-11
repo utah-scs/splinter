@@ -1,6 +1,7 @@
 #![feature(generators)]
 #![feature(generator_trait)]
 #![forbid(unsafe_code)]
+#![allow(bare_trait_objects)]
 
 extern crate sandstorm;
 

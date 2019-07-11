@@ -70,7 +70,7 @@ const RECORD_SIZE: usize = 131;
 // The tests below give an example of how to use it and how to aggregate the results.
 pub struct Pushback {
     put_pct: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     order_rng: Box<Normal>,

@@ -14,6 +14,7 @@
  */
 
 #![feature(generator_trait)]
+#![allow(bare_trait_objects)]
 
 extern crate db;
 extern crate time;

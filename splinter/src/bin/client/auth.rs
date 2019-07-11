@@ -71,7 +71,7 @@ const RECORD_SIZE: usize = 71;
 // The tests below give an example of how to use it and how to aggregate the results.
 pub struct Auth {
     put_pct: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,
@@ -476,7 +476,7 @@ where
                                         .manager
                                         .borrow_mut()
                                         .remove(&p.get_header().common_header.stamp);
-                                    if let Some(mut manager) = manager {
+                                    if let Some(manager) = manager {
                                         self.waiting.push_back(manager);
                                     }
                                 }
@@ -522,7 +522,7 @@ where
                                         bcrypt(1, salt, &password, output);
 
                                         // Compare the calculated hash and DB stored hash.
-                                        let mut status: u64;
+                                        let status: u64;
                                         if output == hash {
                                             status = 1;
                                         } else {
