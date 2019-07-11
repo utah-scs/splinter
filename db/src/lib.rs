@@ -13,13 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-<<<<<<< HEAD
-//! This crate contains the functionality needed to implement the server.
-#![feature(generators, generator_trait, asm)]
-#![warn(missing_docs)]
-=======
 #![feature(generators, generator_trait, asm, integer_atomics, atomic_min_max)]
->>>>>>> f3f5612... Add Version metadata to every Table entry.
+#![warn(missing_docs)]
 
 extern crate libloading;
 extern crate sandstorm;
