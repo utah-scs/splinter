@@ -13,8 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-//! This crate contains the functionality needed to implement the server.
-#![feature(generators, generator_trait, asm)]
+#![feature(generators, generator_trait, asm, integer_atomics, atomic_min_max)]
 #![warn(missing_docs)]
 
 extern crate libloading;
