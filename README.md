@@ -24,13 +24,39 @@ following
     use `python3 scripts/everything/main.py -h`
   
 ## How to run server and client for each extension
-What are the parameters for each client, What is the key and value sizes, etc.
-### Aggregate
+To update the configuration parameters, change `db/server.toml` on the server side and `splinter/client.toml` on the client side.
 
-### Analysis
+To run the extension on the client-side, use `use_invoke = false` and for the server-side use `use_invoke=true`. And to run the extension on both on the server-side and client-side, keep `use_invoke = true` and add `pushback` feature in `db/Cargo.toml` on the server-side.
 
-### Auth
+Change `num_tenants` and `num_keys` on both the sides. The server uses these parameters to populate the tables and extension for different number of extensions and the client uses these parameters to generate the load.
 
-### Pushback
+### Aggregate Extension
+`key_size = 8`
 
-### TAO
+`value_size = 30`
+
+`num_aggr = X`	// The number of record accessed for per aggregate operation.
+
+`order = X`	// The amound of computation(multiplication) for per aggregate operation.
+
+### Analysis Extension
+`key_size = 30`
+
+`value_size = 108`
+
+Also add the feature `ml_model` in `db/Cargo.toml`.
+
+### Auth Extension
+`key_size = 30`
+
+`value_size = 72`
+
+### Pushback Extension
+`key_size = 30`
+
+`value_size = 100`
+
+`num_aggr = X` // The number of records accessed per operation.
+
+`order = X` // The amount of compute per operation in terms of CPU cycles.
+

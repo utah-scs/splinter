@@ -487,7 +487,6 @@ where
                                             info!("No manager with {} timestamp", timestamp);
                                         }
                                     }
-                                    self.latencies.push(cycles::rdtsc() - timestamp);
                                     self.outstanding -= 1;
                                 }
 
@@ -500,8 +499,6 @@ where
                         // The opcode on the response identifies the RPC type.
                         OpCode::SandstormGetRpc => {
                             let p = packet.parse_header::<GetResponse>();
-                            self.latencies
-                                .push(curr - p.get_header().common_header.stamp);
                             unsafe {
                                 if self
                                     .manager
@@ -523,8 +520,6 @@ where
 
                         OpCode::SandstormPutRpc => {
                             let p = packet.parse_header::<PutResponse>();
-                            self.latencies
-                                .push(curr - p.get_header().common_header.stamp);
                             p.free_packet();
                         }
 
@@ -587,6 +582,7 @@ where
             } else if taskstate == WAITING {
                 self.manager.borrow_mut().insert(manager.get_id(), manager);
             } else if taskstate == COMPLETED {
+                self.latencies.push(cycles::rdtsc() - manager.get_id());
                 self.recvd += 1;
                 if cfg!(feature = "execution") {
                     self.cycle_counter.total_cycles(_time, 1);
