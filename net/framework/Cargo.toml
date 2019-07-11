@@ -14,7 +14,7 @@ getopts = "*"
 byteorder = "*"
 clippy = { version = "*", optional = true }
 fnv = "*"
-twox-hash = "*"
+twox-hash = "1.1.1"
 regex = "0.2.10"
 lazy_static = "*"
 net2 = "*"
@@ -22,10 +22,10 @@ net2 = "*"
 nix = "*"
 # Figure out if we want this permanently or just for now.
 rust-sctp = { git="https://github.com/netsys/rust-sctp", optional = true}
-toml = "*"
+toml = "0.4.5"
 # Hack for SHM
 uuid= { version = "*", features=["v4"] }
-error-chain = "*"
+error-chain = "0.11.0"
 # etcdv3-rs={ git="https://github.com/apanda/etcdv3-rs" }
 tokio-core=">=0.1.8"
 futures=">=0.1.14"
