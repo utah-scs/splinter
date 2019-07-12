@@ -43,7 +43,8 @@ def setupCargo():
           "cargo update -p rustc-demangle:0.1.15 --precise 0.1.13; " + \
           "cargo update -p twox-hash:1.4.2 --precise 1.1.1; " + \
           "cargo update -p backtrace:0.3.32 --precise 0.3.20; " + \
-          "cargo update -p backtrace-sys:0.1.30 --precise 0.1.28; "
+          "cargo update -p backtrace-sys:0.1.30 --precise 0.1.28; " + \
+          "cargo update -p atty:0.2.12 --precise 0.2.11; "
 
     # Fix dependencies inside db.
     cmd = "cd db; " + fix + "cd ../"
