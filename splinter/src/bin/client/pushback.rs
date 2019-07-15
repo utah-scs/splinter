@@ -61,6 +61,9 @@ static STD_DEV: f64 = 500.0;
 // Type: 1, KeySize: 30, ValueSize:100
 const RECORD_SIZE: usize = 131;
 
+// The maximum outstanding requests a client can generate; and maximum number of push-back tasks.
+const MAX_CREDIT: usize = 32;
+
 // PUSHBACK benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
 // share the same benchmark instance. Each thread can call `abc()` which
@@ -374,7 +377,7 @@ where
             return;
         }
 
-        while self.outstanding < 32 {
+        while self.outstanding < MAX_CREDIT as u64 && self.waiting.len() < MAX_CREDIT {
             // Get the current time stamp so that we can determine if it is time to issue the next RPC.
             let curr = cycles::rdtsc();
 
@@ -425,18 +428,6 @@ where
             // Update the time stamp at which the next request should be generated, assuming that
             // the first request was sent out at self.start.
             self.sent += 1;
-
-            // When packets are sent in batches, server pushes back quickly. Restrict the number
-            // of pushed-back task to .1M and after that send 1 packet each iteration, which will
-            // execute on the server side as it stop triggering the pushback mechanism.
-            if self.waiting.len() >= 100000 {
-                let mut batch = 4;
-                while batch > 0 {
-                    self.execute_task();
-                    batch -= 1;
-                }
-                break;
-            }
         }
     }
 
@@ -816,7 +807,10 @@ mod test {
                 let mut n_puts = 0u64;
                 let start = Instant::now();
                 while !done.load(Ordering::Relaxed) {
-                    b.abc(|_t, _key, _ord| n_gets += 1, |_t, _key, _value, _ord| n_puts += 1);
+                    b.abc(
+                        |_t, _key, _ord| n_gets += 1,
+                        |_t, _key, _value, _ord| n_puts += 1,
+                    );
                 }
                 (start.elapsed(), n_gets, n_puts)
             }));

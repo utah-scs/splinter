@@ -823,7 +823,9 @@ where
         #[cfg(feature = "dispatch")]
         COUNTER.with(|count_a| {
             let mut count = count_a.borrow_mut();
-            *count += 1;
+            if _count > 0 {
+                *count += 1;
+            }
             let every = 1000000;
             if *count >= every {
                 info!(
