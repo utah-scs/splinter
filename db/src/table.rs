@@ -30,19 +30,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 //    128 buckets: 18.5 Million ops/s (read-only), 12.3 Million ops/s (50-50)
 const N_BUCKETS : usize = 128;
 
-// Each Entry in a Table has an associated Version that is per-key monotonic.
-// This is used for concurrency control to identify when the value associated
-// with a key has changed.
-struct Version(u64);
+#[derive(Clone)]
+/// Each Entry in a Table has an associated Version that is per-key monotonic.
+/// This is used for concurrency control to identify when the value associated
+/// with a key has changed.
+pub struct Version(u64);
 
-// An Entry in a Table which stores metadata about the stored value and a smart
-// pointer to the value itself.
-struct Entry {
-  // A unique, per-table-key monotonic id for the value associated with this
-  // verison.
-  version: Version,
-  // A ref-counted smart pointer to a stored value.
-  value: Bytes,
+#[derive(Clone)]
+/// An Entry in a Table which stores metadata about the stored value and a smart
+/// pointer to the value itself.
+pub struct Entry {
+  /// A unique, per-table-key monotonic id for the value associated with this
+  /// verison.
+  pub version: Version,
+  /// A ref-counted smart pointer to a stored value.
+  pub value: Bytes,
 }
 
 /// This struct represents a single table in Sandstorm. A table is indexed using
@@ -165,13 +167,13 @@ impl Table {
     /// object is returned wrapped up in a Bytes type. The underlying object
     /// is guaranteed to exist atleast until the returned Bytes is dropped.
     /// If the object does not exist in the Table, this method returns None.
-    pub fn get(&self, key: &[u8]) -> Option<Bytes> {
+    pub fn get(&self, key: &[u8]) -> Option<Entry> {
         // First, identify the bucket the key falls into.
         let bucket: usize = key[0] as usize & (N_BUCKETS - 1);
         let map = self.maps[bucket].read();
 
         // Perform the lookup, and return.
-        return map.get(key).and_then(| entry | { Some(entry.value.clone()) });
+        return map.get(key).and_then(| entry | { Some((*entry).clone()) });
     }
 
     /// This function writes an object into a table.

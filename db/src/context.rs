@@ -208,7 +208,7 @@ impl<'a> DB for Context<'a> {
                     .and_then(| table | { table.get(key) })
                     // The object exists in the database. Get a handle to it's
                     // key and value.
-                    .and_then(| object | { self.heap.resolve(object) })
+                    .and_then(| entry | { self.heap.resolve(entry.value) })
                     // Return the value wrapped up inside a safe type.
                     .and_then(| (k, v) | {
                         self.populate_read_write_set(Record::new(OpType::SandstormRead, k.clone(), v.clone()));
@@ -233,7 +233,7 @@ impl<'a> DB for Context<'a> {
 
                 let r = table
                     .get(key)
-                    .and_then(|obj| self.heap.resolve(obj))
+                    .and_then(|obj| self.heap.resolve(obj.value))
                     .and_then(|(k, v)| {
                         self.populate_read_write_set(Record::new(
                             OpType::SandstormRead,
@@ -287,7 +287,7 @@ impl<'a> DB for Context<'a> {
         if let Some(table) = self.tenant.get_table(table_id) {
             return self.heap.resolve(buf.clone()).map_or(false, |(k, _v)| {
                 self.populate_read_write_set(Record::new(
-                    OpType::SandstormRead,
+                    OpType::SandstormWrite,
                     k.clone(),
                     buf.clone(),
                 ));

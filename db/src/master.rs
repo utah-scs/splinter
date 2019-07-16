@@ -30,6 +30,7 @@ use super::container::Container;
 use super::context::Context;
 use super::native::Native;
 use super::service::Service;
+use super::table::Version;
 use super::task::{Task, TaskPriority};
 use super::tenant::Tenant;
 use super::wireformat::*;
@@ -737,18 +738,21 @@ impl Master {
                             })
                 // If the lookup succeeded, obtain the value, and update the
                 // status of the rpc.
-                .and_then(| object | {
+                .and_then(| entry | {
                                 status = RpcStatus::StatusInternalError;
                                 let alloc: &Allocator = accessor(alloc);
-                                alloc.resolve(object)
+                                Some((alloc.resolve(entry.value), entry.version))
                             })
                 // If the value was obtained, then write to the response packet
                 // and update the status of the rpc.
-                .and_then(| (k, value) | {
+                .and_then(| (opt, version) | {
+                    if let Some(opt) = opt {
+                                let (k, value) = &opt;
                                 let mut result = Ok(());
                                 status = RpcStatus::StatusInternalError;
                                 if req_generator == GetGenerator::SandstormExtension {
                                     let _result = res.add_to_payload_tail(1, pack(&optype));
+                                    let _ = res.add_to_payload_tail(size_of::<Version>(), &unsafe { transmute::<Version, [u8; 8]>(version) });
                                     result = res.add_to_payload_tail(k.len(), &k[..]);
                                 }
                                 match result {
@@ -760,6 +764,9 @@ impl Master {
                                         Some(())
                                     }
                                 }
+                            } else {
+                                None
+                            }
                             })
                 // If the value was written to the response payload,
                 // update the status of the rpc.
@@ -878,7 +885,7 @@ impl Master {
                 // status of the rpc.
                 .and_then(| object | {
                                 status = RpcStatus::StatusInternalError;
-                                self.heap.resolve(object)
+                                self.heap.resolve(object.value)
                             })
                 // If the value was obtained, then write to the response packet
                 // and update the status of the rpc.
@@ -1243,7 +1250,7 @@ impl Master {
                     let alloc: &Allocator = accessor(alloc);
                     let res = table
                         .get(key)
-                        .and_then(|object| alloc.resolve(object))
+                        .and_then(|entry| alloc.resolve(entry.value))
                         .and_then(|(_k, value)| {
                             res.add_to_payload_tail(value.len(), &value[..]).ok()
                         });
@@ -1373,7 +1380,7 @@ impl Master {
                 // Lookup the key, and add it to the response payload.
                 let res = table
                     .get(key)
-                    .and_then(|object| self.heap.resolve(object))
+                    .and_then(|object| self.heap.resolve(object.value))
                     .and_then(|(_k, value)| res.add_to_payload_tail(value.len(), &value[..]).ok());
 
                 // If the current lookup failed, then stop all lookups.
