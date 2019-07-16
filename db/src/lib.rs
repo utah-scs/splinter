@@ -13,10 +13,15 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-
 //! This crate is useful in writing a new client and handling pushback
 //! extension on the client side.
-#![feature(generators, generator_trait, asm, integer_atomics, atomic_min_max)]
+#![feature(
+    generators,
+    generator_trait,
+    asm,
+    integer_atomics,
+    atomic_min_max
+)]
 #![warn(missing_docs)]
 
 extern crate libloading;
@@ -68,5 +73,7 @@ pub mod sched;
 pub mod table;
 /// This modules has a trait which should be implemented by each task instance.
 pub mod task;
+/// This module contains the transaction related code.
+pub mod tx;
 /// This module contains the wireformat realted to the various functionalities.
 pub mod wireformat;

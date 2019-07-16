@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use db::cycles::*;
 
-use sandstorm::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
+use sandstorm::buf::{MultiReadBuf, ReadBuf, WriteBuf};
 use sandstorm::db::DB;
 
 use super::dispatch::*;
@@ -246,9 +246,6 @@ impl DB for ProxyDB {
 
     /// Lookup the `DB` trait for documentation on this method.
     fn debug_log(&self, _message: &str) {}
-
-    /// Lookup the `DB` trait for documentation on this method.
-    fn populate_read_write_set(&self, _record: Record) {}
 
     /// Lookup the `DB` trait for documentation on this method.
     fn search_get_in_cache(&self, table: u64, key: &[u8]) -> (bool, bool, Option<ReadBuf>) {

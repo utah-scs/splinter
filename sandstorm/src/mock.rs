@@ -15,7 +15,7 @@
 
 use std::fmt::Debug;
 
-use super::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
+use super::buf::{MultiReadBuf, ReadBuf, WriteBuf};
 use super::db::DB;
 
 extern crate bytes;
@@ -112,10 +112,6 @@ impl DB for MockDB {
     fn debug_log(&self, message: &str) {
         let mut messages = self.messages.borrow_mut();
         messages.push(String::from(message));
-    }
-
-    fn populate_read_write_set(&self, _record: Record) {
-        self.debug_log(&format!("Added a record to read/write set"));
     }
 
     fn search_get_in_cache(&self, table: u64, key: &[u8]) -> (bool, bool, Option<ReadBuf>) {

@@ -17,7 +17,7 @@ use super::db::DB;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use super::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
+use super::buf::{MultiReadBuf, ReadBuf, WriteBuf};
 use util::model::Model;
 
 /// A null database of testing and benchmarking purposes.
@@ -66,8 +66,6 @@ impl DB for NullDB {
     fn resp(&self, _data: &[u8]) {}
 
     fn debug_log(&self, _message: &str) {}
-
-    fn populate_read_write_set(&self, _record: Record) {}
 
     fn search_get_in_cache(&self, _table: u64, _key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
         (false, false, None)

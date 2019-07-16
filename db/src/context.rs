@@ -20,6 +20,7 @@ use std::{mem, slice, str};
 use super::alloc::Allocator;
 use super::cycles::*;
 use super::tenant::Tenant;
+use super::tx::TX;
 use super::wireformat::{InvokeRequest, InvokeResponse, RpcStatus};
 use util::model::Model;
 
@@ -75,7 +76,7 @@ pub struct Context<'a> {
     allocs: Cell<usize>,
 
     // The buffer which maintains the read/write set per extension.
-    readwriteset: RefCell<Vec<Record>>,
+    tx: RefCell<TX>,
 
     // The credit which the extension has earned by making the db calls.
     db_credit: RefCell<u64>,
@@ -121,7 +122,7 @@ impl<'a> Context<'a> {
             tenant: tenant,
             heap: alloc,
             allocs: Cell::new(0),
-            readwriteset: RefCell::new(Vec::new()),
+            tx: RefCell::new(TX::new()),
             db_credit: RefCell::new(0),
             model: model,
         }
@@ -173,8 +174,17 @@ impl<'a> Context<'a> {
                 }
             }
 
-            let rwset = &self.readwriteset.borrow_mut();
-            for record in rwset.iter() {
+            // Add the read-set to the pushback response.
+            for record in self.tx.borrow_mut().reads().iter() {
+                let ptr = &record.get_optype() as *const _ as *const u8;
+                let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+                self.resp(slice);
+                self.resp(record.get_key().as_ref());
+                self.resp(record.get_object().as_ref());
+            }
+
+            // Add the write-set to the pushback response.
+            for record in self.tx.borrow_mut().writes().iter() {
                 let ptr = &record.get_optype() as *const _ as *const u8;
                 let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
                 self.resp(slice);
@@ -211,7 +221,7 @@ impl<'a> DB for Context<'a> {
                     .and_then(| entry | { self.heap.resolve(entry.value) })
                     // Return the value wrapped up inside a safe type.
                     .and_then(| (k, v) | {
-                        self.populate_read_write_set(Record::new(OpType::SandstormRead, k.clone(), v.clone()));
+                        self.tx.borrow_mut().record_get(Record::new(OpType::SandstormRead, k.clone(), v.clone()));
                         *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
                         unsafe { Some(ReadBuf::new(v)) }
                         })
@@ -235,7 +245,7 @@ impl<'a> DB for Context<'a> {
                     .get(key)
                     .and_then(|obj| self.heap.resolve(obj.value))
                     .and_then(|(k, v)| {
-                        self.populate_read_write_set(Record::new(
+                        self.tx.borrow_mut().record_get(Record::new(
                             OpType::SandstormRead,
                             k.clone(),
                             v.clone(),
@@ -286,7 +296,7 @@ impl<'a> DB for Context<'a> {
         // If the table exists, write to the database.
         if let Some(table) = self.tenant.get_table(table_id) {
             return self.heap.resolve(buf.clone()).map_or(false, |(k, _v)| {
-                self.populate_read_write_set(Record::new(
+                self.tx.borrow_mut().record_put(Record::new(
                     OpType::SandstormWrite,
                     k.clone(),
                     buf.clone(),
@@ -332,11 +342,6 @@ impl<'a> DB for Context<'a> {
 
     /// Lookup the `DB` trait for documentation on this method.
     fn debug_log(&self, _msg: &str) {}
-
-    /// Lookup the `DB` trait for documentation on this method.
-    fn populate_read_write_set(&self, record: Record) {
-        self.readwriteset.borrow_mut().push(record);
-    }
 
     /// Lookup the `DB` trait for documentation on this method.
     fn search_get_in_cache(&self, _table: u64, _key: &[u8]) -> (bool, bool, Option<ReadBuf>) {
