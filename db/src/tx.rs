@@ -48,7 +48,7 @@ impl TX {
     /// This method sorts the read and write set based on the key.
     pub fn sort(&mut self) {
         self.reads.sort_by_key(|record| record.get_key());
-        self.writes.sort_by_key(|record| record.get_object());
+        self.writes.sort_by_key(|record| record.get_key());
     }
 
     /// This method adds new record to the read-set.
