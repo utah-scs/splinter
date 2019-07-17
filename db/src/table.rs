@@ -15,9 +15,14 @@
 
 use hashbrown::HashMap;
 
-use spin::{RwLock};
+use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use bytes::{Bytes};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::ops::Deref;
+
+use super::tx::{TX};
+use super::wireformat::{Record};
+use super::cycles;
 
 // The number of buckets in the hash table. Must be a power of two.
 // If you want to change this number, then you will also have to modify
@@ -30,7 +35,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 //    128 buckets: 18.5 Million ops/s (read-only), 12.3 Million ops/s (50-50)
 const N_BUCKETS : usize = 128;
 
-#[derive(Clone)]
+#[derive(Copy,Clone,PartialEq)]
 /// Each Entry in a Table has an associated Version that is per-key monotonic.
 /// This is used for concurrency control to identify when the value associated
 /// with a key has changed.
@@ -46,6 +51,13 @@ pub struct Entry {
   /// A ref-counted smart pointer to a stored value.
   pub value: Bytes,
 }
+
+
+type Decision = Result<(), ()>;
+const COMMIT: Decision = Result::Ok(());
+const ABORT: Decision = Result::Err(());
+
+type Map = HashMap<Bytes, Entry>;
 
 /// This struct represents a single table in Sandstorm. A table is indexed using
 /// an unordered map, which hashes an object's key to it's value. Tables can be
@@ -66,7 +78,7 @@ pub struct Table {
     //        allowing for multiple threads/procedures to hold references to an
     //        object, without worrying about concurrent updates. An object will
     //        be dropped only when this ref-count goes to zero.
-    maps: [RwLock<HashMap<Bytes, Entry>>; N_BUCKETS],
+    maps: [RwLock<Map>; N_BUCKETS],
 
     // Represents the highest version number of any entry that was removed from
     // map. This is used to ensure all future entries associated with that key
@@ -169,8 +181,7 @@ impl Table {
     /// If the object does not exist in the Table, this method returns None.
     pub fn get(&self, key: &[u8]) -> Option<Entry> {
         // First, identify the bucket the key falls into.
-        let bucket: usize = key[0] as usize & (N_BUCKETS - 1);
-        let map = self.maps[bucket].read();
+        let map = self.maps[Self::bucket(key)].read();
 
         // Perform the lookup, and return.
         return map.get(key).and_then(| entry | { Some((*entry).clone()) });
@@ -185,8 +196,7 @@ impl Table {
     ///             the table.
     pub fn put(&self, key: Bytes, value: Bytes) -> Option<Entry> {
         // First, identify the bucket the key falls into.
-        let bucket: usize = key.slice(0, 1)[0] as usize & (N_BUCKETS - 1);
-        let mut map = self.maps[bucket].write();
+        let mut map = self.maps[Self::bucket(&key[..])].write();
 
         if let Some(entry) = map.get_mut(&key) {
             // If an entry already exists, then update it (we are holding a
@@ -210,8 +220,7 @@ impl Table {
     /// * `key`: The key of the object to be deleted, passed in as a slice of bytes.
     pub fn delete(&self, key: &[u8]) {
         // First, identify the bucket the key falls into.
-        let bucket: usize = key[0] as usize & (N_BUCKETS - 1);
-        let mut map = self.maps[bucket].write();
+        let mut map = self.maps[Self::bucket(&key[..])].write();
 
         // Next, remove the key from the hash map if it already exists.
         if let Some(entry) = map.remove(key) {
@@ -226,6 +235,107 @@ impl Table {
 
             self.max_deleted_version.fetch_max(entry.version.0, Ordering::Relaxed);
         }
+    }
+
+    fn bucket(key: &[u8]) -> usize {
+        key[0] as usize & (N_BUCKETS - 1)
+    }
+
+    pub fn validate(&self, tx: &mut TX) -> Decision {
+        tx.sort();
+
+        enum Lock<'a> {
+            Unlocked,
+            ReadLocked(RwLockReadGuard<'a, Map>),
+            WriteLocked(RwLockWriteGuard<'a, Map>)
+        }
+        
+        impl<'a> Default for Lock<'a> {
+            fn default() -> Self { Lock::Unlocked }
+        }
+        
+        let mut locks: Vec<Lock> = Vec::with_capacity(N_BUCKETS); 
+
+        // Acquire write locks.
+        tx.writes().iter().for_each(| record | {
+            let bucket = Self::bucket(&record.get_key()[..]);
+            let mut lock = unsafe{ locks.get_unchecked_mut(bucket) };
+            match lock {
+                Lock::Unlocked => {
+                    let guard = self.maps[bucket].write();
+                    *lock = Lock::WriteLocked(guard);
+                },
+                Lock::WriteLocked(_guard) => {
+                    // Nothing to do; already locked.
+                },
+                Lock::ReadLocked(_guard) => {
+                    assert!(false); // Impossible; acquired further down.
+                }
+            }
+        });
+
+        fn record_version_ok<Guard>(guard: &Guard, record: &Record) -> Decision
+            where Guard: Deref<Target = Map>
+        {
+            let map: &Map = &**guard;
+            if let Some(entry) = map.get(&record.get_key()[..]) {
+                if record.get_version() == entry.version {
+                    COMMIT
+                } else {
+                    ABORT
+                }
+            } else {
+                ABORT
+            }
+        }
+
+        // Acquire read locks and validate each version as we go.
+        let result = tx.reads().iter().map(| record | {
+            let bucket = Self::bucket(&record.get_key()[..]);
+            let mut lock = unsafe{ locks.get_unchecked_mut(bucket) };
+            match lock {
+                Lock::Unlocked => {
+                    let guard = self.maps[bucket].read();
+                    let result = record_version_ok(&guard, record);
+                    *lock = Lock::ReadLocked(guard);
+                    result
+                },
+                Lock::WriteLocked(guard) => {
+                    // Already locked; just validate.
+                    record_version_ok(guard, record)
+                },
+                Lock::ReadLocked(guard) => {
+                    // Already locked; just validate.
+                    record_version_ok(guard, record)
+                }
+            }
+        }).collect();
+
+        // Allocate a version number/timestamp.
+        // Note: the current approach depends A) on the monotonicity of rdtsc().
+        // Currently, we don't handle non-monotonicity that might happen e.g. due to reboots/restarts.
+        let version: Version = Version(cycles::rdtsc());
+
+        // Install write set.
+        tx.writes().iter().for_each(| record | {
+            let key = &record.get_key()[..];
+            let bucket = Self::bucket(key);
+
+            let lock : &mut Lock = unsafe{ locks.get_unchecked_mut(bucket) };
+            if let Lock::WriteLocked(ref mut guard) = lock {
+                let map: &mut Map = &mut*guard;
+                if let Some(mut entry) = map.get_mut(key) {
+                    entry.version = version;
+                    entry.value = record.get_object();
+                } else {
+                    assert!(false); // Bucket was locked, but value disappeared! Impossible.
+                }
+            } else {
+                assert!(false); // Unlocked or only ReadLocked; should be impossible.
+            }
+        });
+
+        result
     }
 }
 
