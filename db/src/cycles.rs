@@ -106,6 +106,6 @@ mod test {
         let start = rdtsc();
         thread::sleep(Duration::from_secs(1));
         let stop = rdtsc();
-        assert!(to_seconds(stop - start) - 1.0 < 0.0001);
+        assert!(to_seconds(stop - start) - 1.0 < 0.001);
     }
 }
