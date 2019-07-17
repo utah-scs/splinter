@@ -31,6 +31,9 @@ use util::model::Model;
 /// be of this type.
 #[derive(Clone)]
 pub struct KV {
+    /// This variable stores the Version for the record.
+    pub version: Bytes,
+
     /// This variable stores the Key for the record.
     pub key: Bytes,
 
@@ -42,14 +45,16 @@ impl KV {
     /// This method creates and returns a record consists of key and value.
     ///
     /// # Arguments
+    /// * `rversion`: The version in the record.
     /// * `rkey`: The key in the record.
     /// * `rvalue`: The value in the record.
     ///
     /// # Return
     ///
     /// A record with a key and a value.
-    fn new(rkey: Bytes, rvalue: Bytes) -> KV {
+    fn new(rversion: Bytes, rkey: Bytes, rvalue: Bytes) -> KV {
         KV {
+            version: rversion,
             key: rkey,
             value: rvalue,
         }
@@ -155,10 +160,13 @@ impl ProxyDB {
     /// # Arguments
     /// * `record`: A reference to a record with a key and a value.
     pub fn set_read_record(&self, record: &[u8], keylen: usize) {
-        let (key, value) = record.split_at(keylen);
-        self.readset
-            .borrow_mut()
-            .push(KV::new(Bytes::from(key), Bytes::from(value)));
+        let (version, entry) = record.split_at(8);
+        let (key, value) = entry.split_at(keylen);
+        self.readset.borrow_mut().push(KV::new(
+            Bytes::from(version),
+            Bytes::from(key),
+            Bytes::from(value),
+        ));
     }
 
     /// This method is used to add a record to the write set. The return value of put()
@@ -167,10 +175,13 @@ impl ProxyDB {
     /// # Arguments
     /// * `record`: A reference to a record with a key and a value.
     pub fn set_write_record(&self, record: &[u8], keylen: usize) {
-        let (key, value) = record.split_at(keylen);
-        self.writeset
-            .borrow_mut()
-            .push(KV::new(Bytes::from(key), Bytes::from(value)));
+        let (version, entry) = record.split_at(8);
+        let (key, value) = entry.split_at(keylen);
+        self.writeset.borrow_mut().push(KV::new(
+            Bytes::from(version),
+            Bytes::from(key),
+            Bytes::from(value),
+        ));
     }
 
     /// This method search the a list of records to find if a record with the given key

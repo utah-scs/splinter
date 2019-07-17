@@ -56,9 +56,6 @@ use zipf::ZipfDistribution;
 // Flag to indicate that the client has finished sending and receiving the packets.
 static mut FINISHED: bool = false;
 
-pub const KEY_LENGTH: usize = 30;
-pub const VAL_LENGTH: usize = 72;
-
 // Type: 1, KeySize: 30, ValueSize:40
 const RECORD_SIZE: usize = 71;
 
@@ -241,6 +238,9 @@ where
     // four get operations before performing aggregation and all these get operations are dependent
     // on the previous value.
     native_state: RefCell<HashMap<u64, Vec<u8>>>,
+
+    // The length of the key.
+    key_len: usize,
 }
 
 // Implementation of methods on AuthRecv.
@@ -273,7 +273,8 @@ where
     ) -> AuthRecvSend<T> {
         // The payload on an invoke() based get request consists of the extensions name ("auth"),
         // the table id to perform the lookup on, key to lookup and value to compare the password.
-        let payload_len = "auth".as_bytes().len() + mem::size_of::<u64>() + KEY_LENGTH + VAL_LENGTH;
+        let payload_len =
+            "auth".as_bytes().len() + mem::size_of::<u64>() + config.key_len + config.value_len;
         let mut payload_auth = Vec::with_capacity(payload_len);
         payload_auth.extend_from_slice("auth".as_bytes());
         payload_auth.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
@@ -283,8 +284,8 @@ where
         let payload_len = "auth".as_bytes().len()
             + mem::size_of::<u64>()
             + mem::size_of::<u16>()
-            + KEY_LENGTH
-            + VAL_LENGTH;
+            + config.key_len
+            + config.value_len;
         let mut payload_put = Vec::with_capacity(payload_len);
         payload_put.resize(payload_len, 0);
 
@@ -297,8 +298,8 @@ where
             master: master,
             stop: 0,
             workload: RefCell::new(Auth::new(
-                KEY_LENGTH,
-                VAL_LENGTH,
+                config.key_len,
+                config.value_len,
                 config.n_keys,
                 0, //config.put_pct,
                 config.skew,
@@ -319,6 +320,7 @@ where
             pushback_completed: 0,
             cycle_counter: CycleCounter::new(),
             native_state: RefCell::new(HashMap::with_capacity(32)),
+            key_len: config.key_len,
         }
     }
 
@@ -445,7 +447,11 @@ where
                                     match self.manager.borrow_mut().remove(&timestamp) {
                                         Some(mut manager) => {
                                             manager.create_generator(Arc::clone(&self.sender));
-                                            manager.update_rwset(records, RECORD_SIZE, 30);
+                                            manager.update_rwset(
+                                                records,
+                                                RECORD_SIZE,
+                                                self.key_len,
+                                            );
                                             self.waiting.push_back(manager);
                                         }
 
@@ -708,10 +714,6 @@ fn main() {
     let masterservice = Arc::new(Master::new());
 
     // Create tenants with extensions.
-    info!(
-        "Overridden key-length {}, Value length {}",
-        KEY_LENGTH, VAL_LENGTH
-    );
     info!("Populating extension for {} tenants", config.num_tenants);
     for tenant in 1..(config.num_tenants + 1) {
         masterservice.load_test(tenant);

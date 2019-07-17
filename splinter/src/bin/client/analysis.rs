@@ -63,9 +63,6 @@ static mut FINISHED: bool = false;
 static ORDER: f64 = 2500.0;
 static STD_DEV: f64 = 500.0;
 
-// Type: 1, KeySize: 30, ValueSize:108
-const RECORD_SIZE: usize = 139;
-
 // Analysis benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
 // share the same benchmark instance. Each thread can call `abc()` which
@@ -255,6 +252,12 @@ where
 
     // The batch size for number of records used in the prediction function.
     number: u32,
+
+    // The length of the key.
+    key_len: usize,
+
+    // The length of the record.
+    record_len: usize,
 }
 
 // Implementation of methods on AnalysisRecv.
@@ -346,6 +349,8 @@ where
             native_state: RefCell::new(HashMap::with_capacity(32)),
             extname: String::from("analysis"),
             number: num,
+            key_len: config.key_len,
+            record_len: 1 + 8 + config.key_len + config.value_len,
         }
     }
 
@@ -469,7 +474,7 @@ where
                                     match self.manager.borrow_mut().remove(&timestamp) {
                                         Some(mut manager) => {
                                             manager.create_generator(Arc::clone(&self.sender));
-                                            manager.update_rwset(records, RECORD_SIZE, 30);
+                                            manager.update_rwset(records, self.record_len, self.key_len);
                                             self.waiting.push_back(manager);
                                         }
 

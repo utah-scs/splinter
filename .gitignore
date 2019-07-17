@@ -21,6 +21,7 @@ splinter/client.toml
 nic_info
 client_nic_info
 clients.txt
+*.temp
 
 # Ignore NetBricks objects
 net/native/*

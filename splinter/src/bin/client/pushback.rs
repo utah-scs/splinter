@@ -58,9 +58,6 @@ static mut ORD_DIST: bool = false;
 static ORDER: f64 = 2500.0;
 static STD_DEV: f64 = 500.0;
 
-// Type: 1, KeySize: 30, ValueSize:100
-const RECORD_SIZE: usize = 131;
-
 // The maximum outstanding requests a client can generate; and maximum number of push-back tasks.
 const MAX_CREDIT: usize = 32;
 
@@ -253,6 +250,12 @@ where
 
     /// Order of the final polynomial to be computed.
     ord: u32,
+
+    // The length of the key.
+    key_len: usize,
+
+    // The length of the record.
+    record_len: usize,
 }
 
 // Implementation of methods on PushbackRecv.
@@ -347,6 +350,8 @@ where
             native_state: RefCell::new(HashMap::with_capacity(32)),
             num: number,
             ord: order,
+            key_len: config.key_len,
+            record_len: 1 + 8 + config.key_len + config.value_len,
         }
     }
 
@@ -470,7 +475,7 @@ where
                                     match self.manager.borrow_mut().remove(&timestamp) {
                                         Some(mut manager) => {
                                             manager.create_generator(Arc::clone(&self.sender));
-                                            manager.update_rwset(records, RECORD_SIZE, 30);
+                                            manager.update_rwset(records, self.record_len, self.key_len);
                                             self.waiting.push_back(manager);
                                         }
 
@@ -501,7 +506,7 @@ where
                                         .borrow_mut()
                                         .remove(&p.get_header().common_header.stamp);
                                     if let Some(mut manager) = manager {
-                                        manager.update_rwset(p.get_payload(), RECORD_SIZE, 30);
+                                        manager.update_rwset(p.get_payload(), self.record_len, self.key_len);
                                         self.waiting.push_back(manager);
                                     }
                                 }
