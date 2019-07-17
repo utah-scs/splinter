@@ -370,8 +370,8 @@ mod tests {
         // Perform a lookup on the key, and assert that it's value is
         // the same as that populated above.
         match table.get(key) {
-            Some(value) => {
-                assert_eq!(val, &value[..]);
+            Some(entry) => {
+                assert_eq!(val, &entry.value[..]);
             }
 
             // Indicate failure if the key wasn't found in the table.
@@ -389,7 +389,9 @@ mod tests {
 
         // Lookup a key that does not exist in the table. Assert that
         // the method returns None.
-        assert_eq!(None, table.get(&[0; 30]));
+        if let Some(entry) = table.get(&[0; 30]) {
+            panic!("There shouldn't be anything in the table.");
+        }
     }
 
     // This test populates a table with one object and performs a read on
@@ -414,7 +416,7 @@ mod tests {
 
         // Perform a lookup on the object.
         match table.get(key) {
-            Some(value) => {
+            Some(entry) => {
                 let new_val: &[u8] = &[2; 30];
 
                 // Create an object with the same key, but new value.
@@ -429,7 +431,7 @@ mod tests {
                 table.put(key_ref, obj);
 
                 // Check if the result of the get is still accessible.
-                assert_eq!(val, &value[..]);
+                assert_eq!(val, &entry.value[..]);
             }
 
             // Indicate failure if the key wasn't found in the table.
@@ -461,6 +463,8 @@ mod tests {
         table.delete(key);
 
         // Assert that the key was deleted.
-        assert_eq!(None, table.get(key));
+        if let Some(_entry) = table.get(key) {
+            panic!("Key should not exist.");
+        }
     }
 }
