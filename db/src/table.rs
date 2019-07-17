@@ -254,7 +254,13 @@ impl Table {
             fn default() -> Self { Lock::Unlocked }
         }
         
-        let mut locks: Vec<Lock> = Vec::with_capacity(N_BUCKETS); 
+        let mut locks: [Lock; N_BUCKETS] = unsafe {
+            let mut a: [Lock; N_BUCKETS] = ::std::mem::uninitialized();
+            for i in &mut a[..] {
+                ::std::ptr::write(i, Lock::default());
+            }
+            a
+        };
 
         // Acquire write locks.
         tx.writes().iter().for_each(| record | {
@@ -344,7 +350,8 @@ impl Table {
 // test basic functionality like reference counting etc.
 #[cfg(test)]
 mod tests {
-    use super::Table;
+    use super::{Table, Version, TX, Record, COMMIT, ABORT};
+    use super::super::wireformat::{OpType};
     use bytes::{BufMut, Bytes, BytesMut};
 
     // This unit test inserts a key-value pair into a table, performs a read
@@ -466,5 +473,100 @@ mod tests {
         if let Some(_entry) = table.get(key) {
             panic!("Key should not exist.");
         }
+    }
+
+    fn mkval(n: u8) -> Bytes {
+        let mut value = [0; 30];
+        value[0] = n;
+        Bytes::from(&value[..])
+    }
+
+    fn create_tx(setup: Vec<(bool, u8, u64)>) -> TX {
+        let mut tx = TX::new();
+        setup.into_iter().for_each(| (read, key, version) | {
+            let r = Record::new(
+                if read { OpType::SandstormRead } else { OpType::SandstormWrite },
+                Version(version),
+                mkval(key),
+                mkval(key)
+            );
+            if read {
+                tx.record_get(r);
+            } else {
+                tx.record_put(r);
+            }
+        });
+        tx
+    }
+
+    fn filled_table() -> Table {
+        let table = Table::default();
+        for i in 0..10 {
+            table.put(mkval(i), mkval(i)); // Will have Version 1 to 10
+        }
+        table
+    }
+
+    #[test]
+    fn test_validate_rotx_ok() {
+        let table = filled_table();
+        let mut tx = create_tx(
+            vec![(true, 0, 1)] // Read k0 v1.
+        );
+        // Unchanged, so commit.
+        assert_eq!(COMMIT, table.validate(&mut tx));
+    }
+
+    #[test]
+    fn test_validate_rotx_rwconflict() {
+        let table = filled_table();
+        let mut tx = create_tx(vec![
+            (true, 0, 1) // Read k0 v1.
+        ]);
+        table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
+        assert_eq!(ABORT, table.validate(&mut tx));
+    }
+
+    #[test]
+    fn test_validate_rotx_wwconflict() {
+        let table = filled_table();
+        let mut tx = create_tx(vec![
+            (false, 0, 1) // Wrote k0, version becomes tsc.
+        ]);
+        table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
+        // WW is blind, so commit ok.
+        assert_eq!(COMMIT, table.validate(&mut tx));
+    }
+
+    #[test]
+    fn test_validate_rotx_rw_and_wwconflict() {
+        let table = filled_table();
+        let mut tx = create_tx(vec![
+            (true, 0, 1),  // Read k0 v1.
+            (false, 0, 1), // Wrote k0, version becomes tsc.
+        ]);
+        table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
+        // Abort due to RW conflict.
+        assert_eq!(ABORT, table.validate(&mut tx));
+    }
+
+    #[test]
+    fn test_validate_double_read_lock_no_deadlock() {
+        let table = filled_table();
+        let mut tx = create_tx(vec![
+            (true, 0, 1),  // Read k0 v1.
+            (true, 0, 1),  // Read k0 v1.
+        ]);
+        assert_eq!(COMMIT, table.validate(&mut tx));
+    }
+
+    #[test]
+    fn test_validate_double_write_lock_no_deadlock() {
+        let table = filled_table();
+        let mut tx = create_tx(vec![
+            (false, 0, 1),  // Write k0.
+            (false, 0, 1),  // Write k0.
+        ]);
+        assert_eq!(COMMIT, table.validate(&mut tx));
     }
 }
