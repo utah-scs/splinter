@@ -35,7 +35,7 @@ use super::cycles;
 //    128 buckets: 18.5 Million ops/s (read-only), 12.3 Million ops/s (50-50)
 const N_BUCKETS : usize = 128;
 
-#[derive(Copy,Clone,PartialEq)]
+#[derive(Copy,Clone,PartialEq,Debug)]
 /// Each Entry in a Table has an associated Version that is per-key monotonic.
 /// This is used for concurrency control to identify when the value associated
 /// with a key has changed.
@@ -52,11 +52,15 @@ pub struct Entry {
   pub value: Bytes,
 }
 
-
+/// Indicates commit (Ok(())) or abort (Err(())) decision from validate().
 type Decision = Result<(), ()>;
+/// Returned by validate() to indicate the tx has been applied.
 const COMMIT: Decision = Result::Ok(());
+/// Returned by validate() to indicate the tx was not applied.
 const ABORT: Decision = Result::Err(());
 
+/// Type alias for each map that occupies a Table's bucket array.
+/// Simplifies several types in validation.
 type Map = HashMap<Bytes, Entry>;
 
 /// This struct represents a single table in Sandstorm. A table is indexed using
@@ -237,27 +241,45 @@ impl Table {
         }
     }
 
+    /// Return which bucket in a Table maps field this key should be housed within.
     fn bucket(key: &[u8]) -> usize {
         key[0] as usize & (N_BUCKETS - 1)
     }
 
+    /// Atomically apply a transaction to this table or indicate abort if
+    /// this transaction is non-serializable with previously validated
+    /// transactions and puts.
+    ///
+    /// # Arguments
+    ///
+    /// * `tx`: The transaction to atomically apply to the table.
+    ///         Contains the set of keys read and written along with
+    ///         version numbers for records that were read.
+    ///         validate() is non-destructive to `tx`.
+    /// 
+    /// # Return
+    /// * `COMMIT`: if `tx` was serializable and its writes were applied to `self`.
+    /// * `ABORT`: if a record version `tx` has changed.
     pub fn validate(&self, tx: &mut TX) -> Decision {
+        // Sorting RW set will avoid deadlock later when we
+        // validate in parallel.
         tx.sort();
 
+        // Used to track lock guards for each bucket in the table
+        // for this transaction.
         enum Lock<'a> {
-            Unlocked,
-            ReadLocked(RwLockReadGuard<'a, Map>),
-            WriteLocked(RwLockWriteGuard<'a, Map>)
+            Unlocked, // Bucket not yet locked by this tx.
+            ReadLocked(RwLockReadGuard<'a, Map>), // Bucket read-locked by tx.
+            WriteLocked(RwLockWriteGuard<'a, Map>) // Bucket write-locked by tx.
         }
         
-        impl<'a> Default for Lock<'a> {
-            fn default() -> Self { Lock::Unlocked }
-        }
-        
+        // Create an array of N_BUCKETS lock guards; the unsafe code here is to get
+        // around the fact that there isn't a way to initialize with Unlocked for each
+        // element since Lock is non-Copy.
         let mut locks: [Lock; N_BUCKETS] = unsafe {
             let mut a: [Lock; N_BUCKETS] = ::std::mem::uninitialized();
             for i in &mut a[..] {
-                ::std::ptr::write(i, Lock::default());
+                ::std::ptr::write(i, Lock::Unlocked);
             }
             a
         };
@@ -265,7 +287,7 @@ impl Table {
         // Acquire write locks.
         tx.writes().iter().for_each(| record | {
             let bucket = Self::bucket(&record.get_key()[..]);
-            let mut lock = unsafe{ locks.get_unchecked_mut(bucket) };
+            let lock = unsafe{ locks.get_unchecked_mut(bucket) };
             match lock {
                 Lock::Unlocked => {
                     let guard = self.maps[bucket].write();
@@ -283,7 +305,7 @@ impl Table {
         fn record_version_ok<Guard>(guard: &Guard, record: &Record) -> Decision
             where Guard: Deref<Target = Map>
         {
-            let map: &Map = &**guard;
+            let map: &Map = &*guard; // Convert from guard ref-like to actual Map ref.
             if let Some(entry) = map.get(&record.get_key()[..]) {
                 if record.get_version() == entry.version {
                     COMMIT
@@ -296,9 +318,9 @@ impl Table {
         }
 
         // Acquire read locks and validate each version as we go.
-        let result = tx.reads().iter().map(| record | {
+        tx.reads().iter().map(| record | {
             let bucket = Self::bucket(&record.get_key()[..]);
-            let mut lock = unsafe{ locks.get_unchecked_mut(bucket) };
+            let lock = unsafe{ locks.get_unchecked_mut(bucket) };
             match lock {
                 Lock::Unlocked => {
                     let guard = self.maps[bucket].read();
@@ -315,7 +337,7 @@ impl Table {
                     record_version_ok(guard, record)
                 }
             }
-        }).collect();
+        }).collect::<Decision>()?;
 
         // Allocate a version number/timestamp.
         // Note: the current approach depends A) on the monotonicity of rdtsc().
@@ -327,10 +349,10 @@ impl Table {
             let key = &record.get_key()[..];
             let bucket = Self::bucket(key);
 
-            let lock : &mut Lock = unsafe{ locks.get_unchecked_mut(bucket) };
+            let lock = unsafe{ locks.get_unchecked_mut(bucket) };
             if let Lock::WriteLocked(ref mut guard) = lock {
                 let map: &mut Map = &mut*guard;
-                if let Some(mut entry) = map.get_mut(key) {
+                if let Some(entry) = map.get_mut(key) {
                     entry.version = version;
                     entry.value = record.get_object();
                 } else {
@@ -341,7 +363,7 @@ impl Table {
             }
         });
 
-        result
+        COMMIT
     }
 }
 
@@ -396,7 +418,7 @@ mod tests {
 
         // Lookup a key that does not exist in the table. Assert that
         // the method returns None.
-        if let Some(entry) = table.get(&[0; 30]) {
+        if let Some(_entry) = table.get(&[0; 30]) {
             panic!("There shouldn't be anything in the table.");
         }
     }
@@ -568,5 +590,17 @@ mod tests {
             (false, 0, 1),  // Write k0.
         ]);
         assert_eq!(COMMIT, table.validate(&mut tx));
+    }
+
+    #[test]
+    fn test_validate_aborted_discards_writes() {
+        let table = filled_table();
+        let mut tx = create_tx(vec![
+            (true, 0, 1),  // Read k0 v1.
+            (false, 1, 99),  // Write k1 = 99 (initially version 1).
+        ]);
+        table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
+        assert_eq!(ABORT, table.validate(&mut tx));
+        assert_eq!(Version(1), table.get(&mkval(1)[..]).unwrap().version);
     }
 }
