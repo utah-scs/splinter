@@ -111,6 +111,9 @@ pub enum RpcStatus {
     /// The RPC was spending too much time on CPU, so the server pushed-back
     /// the extension without completing it.
     StatusPushback = 0x09,
+
+    /// This indicates that the invocation fails at transaction commit time.
+    StatusTxAbort = 0x10,
 }
 
 /// This enum represents the Generator value in the GetRequest header type.

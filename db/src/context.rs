@@ -143,6 +143,39 @@ impl<'a> Context<'a> {
         Packet<InvokeRequest, EmptyMetadata>,
         Packet<InvokeResponse, EmptyMetadata>,
     ) {
+        let mut table_id: u64 = 1;
+        {
+            let args = self.args();
+            let (table, _) = args.split_at(8);
+            for (idx, e) in table.iter().enumerate() {
+                table_id |= (*e as u64) << (idx << 3);
+            }
+        }
+
+        if let Some(table) = self.tenant.get_table(table_id) {
+            match table.validate(&mut *self.tx.borrow_mut()) {
+                Ok(()) => {
+                    return (self.request, self.response.into_inner());
+                }
+
+                Err(()) => {
+                    let payload_len = self.response.borrow().get_payload().len();
+                    // Remove the already added payload.
+                    let _ = self
+                        .response
+                        .borrow_mut()
+                        .remove_from_payload_tail(payload_len);
+
+                    // Modify status to Transaction Abort.
+                    self.response
+                        .borrow_mut()
+                        .get_mut_header()
+                        .common_header
+                        .status = RpcStatus::StatusTxAbort;
+                    return (self.request, self.response.into_inner());
+                }
+            }
+        }
         return (self.request, self.response.into_inner());
     }
 
