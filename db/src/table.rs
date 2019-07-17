@@ -183,7 +183,7 @@ impl Table {
     /// * `key`:    A Bytes wrapping the key for the object.
     /// * `object`: A Bytes wrapping the entire object to be written to
     ///             the table.
-    pub fn put(&self, key: Bytes, value: Bytes) {
+    pub fn put(&self, key: Bytes, value: Bytes) -> Option<Entry> {
         // First, identify the bucket the key falls into.
         let bucket: usize = key.slice(0, 1)[0] as usize & (N_BUCKETS - 1);
         let mut map = self.maps[bucket].write();
@@ -193,14 +193,14 @@ impl Table {
             // bucket lock).
             entry.value = value;
             entry.version.0 += 1;
-            return;
+            return Some(entry.clone());
         }
 
         // If an entry does not exist we need to insert it while making
         // sure that its version number is higher than any version that
         // could have previously been associated with this key.
         let version = Version(self.max_deleted_version.load(Ordering::Relaxed) + 1);
-        let _entry = map.insert(key, Entry{version, value});
+        return map.insert(key, Entry{version, value});
     }
 
     /// This function deletes an object from a table.

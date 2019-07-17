@@ -30,7 +30,8 @@ use db::e2d2::common::EmptyMetadata;
 use db::e2d2::headers::UdpHeader;
 use db::e2d2::interface::Packet;
 
-use sandstorm::buf::OpType;
+use db::wireformat::OpType;
+
 use sandstorm::db::DB;
 use sandstorm::ext::Extension;
 

@@ -13,7 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use sandstorm::buf::Record;
+use super::wireformat::Record;
 
 /// This type is used by the extension invocation to record the read-write set.
 /// And the read-write set is transferred back to the client on Pushback. Also,

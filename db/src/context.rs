@@ -19,12 +19,13 @@ use std::{mem, slice, str};
 
 use super::alloc::Allocator;
 use super::cycles::*;
+use super::table::Version;
 use super::tenant::Tenant;
 use super::tx::TX;
-use super::wireformat::{InvokeRequest, InvokeResponse, RpcStatus};
+use super::wireformat::{InvokeRequest, InvokeResponse, OpType, Record, RpcStatus};
 use util::model::Model;
 
-use sandstorm::buf::{MultiReadBuf, OpType, ReadBuf, Record, WriteBuf};
+use sandstorm::buf::{MultiReadBuf, ReadBuf, WriteBuf};
 use sandstorm::common::*;
 use sandstorm::db::DB;
 
@@ -177,8 +178,11 @@ impl<'a> Context<'a> {
             // Add the read-set to the pushback response.
             for record in self.tx.borrow_mut().reads().iter() {
                 let ptr = &record.get_optype() as *const _ as *const u8;
-                let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
-                self.resp(slice);
+                let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+                self.resp(optype);
+                let ptr = &record.get_version() as *const _ as *const u8;
+                let version = unsafe { slice::from_raw_parts(ptr, mem::size_of::<Version>()) };
+                self.resp(version);
                 self.resp(record.get_key().as_ref());
                 self.resp(record.get_object().as_ref());
             }
@@ -186,8 +190,11 @@ impl<'a> Context<'a> {
             // Add the write-set to the pushback response.
             for record in self.tx.borrow_mut().writes().iter() {
                 let ptr = &record.get_optype() as *const _ as *const u8;
-                let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
-                self.resp(slice);
+                let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+                self.resp(optype);
+                let ptr = &record.get_version() as *const _ as *const u8;
+                let version = unsafe { slice::from_raw_parts(ptr, mem::size_of::<Version>()) };
+                self.resp(version);
                 self.resp(record.get_key().as_ref());
                 self.resp(record.get_object().as_ref());
             }
@@ -218,13 +225,19 @@ impl<'a> DB for Context<'a> {
                     .and_then(| table | { table.get(key) })
                     // The object exists in the database. Get a handle to it's
                     // key and value.
-                    .and_then(| entry | { self.heap.resolve(entry.value) })
+                    .and_then(| entry | { Some((self.heap.resolve(entry.value), entry.version)) })
                     // Return the value wrapped up inside a safe type.
-                    .and_then(| (k, v) | {
-                        self.tx.borrow_mut().record_get(Record::new(OpType::SandstormRead, k.clone(), v.clone()));
-                        *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
-                        unsafe { Some(ReadBuf::new(v)) }
-                        })
+                    .and_then(| (opt, version) | {
+                        if let Some(opt) = opt {
+                            let (k, v) = opt;
+                            self.tx.borrow_mut().record_get(Record::new(OpType::SandstormRead, version, k.clone(), v.clone()));
+                            *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
+                            unsafe { Some(ReadBuf::new(v)) }
+                        } else{
+                            *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
+                            None
+                        }
+                    })
     }
 
     /// Lookup the `DB` trait for documentation on this method.
@@ -243,15 +256,21 @@ impl<'a> DB for Context<'a> {
 
                 let r = table
                     .get(key)
-                    .and_then(|obj| self.heap.resolve(obj.value))
-                    .and_then(|(k, v)| {
-                        self.tx.borrow_mut().record_get(Record::new(
-                            OpType::SandstormRead,
-                            k.clone(),
-                            v.clone(),
-                        ));
-                        objs.push(v);
-                        Some(())
+                    .and_then(|entry| Some((self.heap.resolve(entry.value), entry.version)))
+                    .and_then(|(opt, version)| {
+                        if let Some(opt) = opt {
+                            let (k, v) = opt;
+                            self.tx.borrow_mut().record_get(Record::new(
+                                OpType::SandstormRead,
+                                version,
+                                k.clone(),
+                                v.clone(),
+                            ));
+                            objs.push(v);
+                            Some(())
+                        } else {
+                            None
+                        }
                     });
 
                 if r.is_none() {
@@ -296,14 +315,19 @@ impl<'a> DB for Context<'a> {
         // If the table exists, write to the database.
         if let Some(table) = self.tenant.get_table(table_id) {
             return self.heap.resolve(buf.clone()).map_or(false, |(k, _v)| {
-                self.tx.borrow_mut().record_put(Record::new(
-                    OpType::SandstormWrite,
-                    k.clone(),
-                    buf.clone(),
-                ));
-                table.put(k, buf);
-                *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
-                true
+                if let Some(entry) = table.put(k.clone(), buf.clone()) {
+                    self.tx.borrow_mut().record_put(Record::new(
+                        OpType::SandstormWrite,
+                        entry.version,
+                        k.clone(),
+                        buf.clone(),
+                    ));
+                    *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
+                    true
+                } else {
+                    *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
+                    false
+                }
             });
         }
 

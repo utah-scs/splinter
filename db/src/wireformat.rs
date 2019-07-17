@@ -13,9 +13,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::mem::size_of;
-
+use super::bytes::Bytes;
+use super::table::Version;
 use e2d2::headers::{EndOffset, UdpHeader};
+use std::mem::size_of;
 
 /// This enum represents the different sets of services that a Sandstorm server
 /// can provide, and helps identify the service an incoming remote procedure
@@ -858,5 +859,81 @@ impl EndOffset for MultiGetResponse {
 
     fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
         true
+    }
+}
+
+/// This enum represents the type of a completed database operation. A value 'SandstormRead'
+/// means that the operation was a get() operation  and a value 'SandstormWrite' means that the
+/// operation was a put() operation. The value is used in the response to represent if the record
+/// belongs to read set or the write set.
+#[repr(u8)]
+#[derive(PartialEq, Clone, Debug)]
+pub enum OpType {
+    /// When the value if SandstormRead, the record encapsulated in the response will be added to
+    /// the read set corresponding to that extension.
+    SandstormRead = 0x1,
+
+    /// When the value if SandstormWrite, the record encapsulated in the response will be added to
+    /// the write set corresponding to that extension.
+    SandstormWrite = 0x2,
+
+    /// Any value beyond this represents an invalid record.
+    InvalidRecord = 0x3,
+}
+
+/// This struct represents a record for a read/write set. Each record in the read/write set will
+/// be of this type.
+pub struct Record {
+    /// This variable shows the type of operation for the record, Read or Write.
+    optype: OpType,
+
+    /// The version number for the record.
+    version: Version,
+
+    /// This variable stores the Key for the record.
+    key: Bytes,
+
+    /// This variable stores the Value for the record.
+    object: Bytes,
+}
+
+impl Record {
+    /// This method returns a new record which can be transferred to the client as a read/write set
+    /// which server decides to pushback the extension to the client.
+    ///
+    /// # Arguments
+    /// * `r_optype`: The type of the record, either a Read or a Write.
+    /// * `r_key`: The key for the record.
+    /// * `r_object`: The value for the record.
+    ///
+    /// # Return
+    /// A read-write set record with the operation type, a key and a value.
+    pub fn new(r_optype: OpType, version: Version, r_key: Bytes, r_object: Bytes) -> Record {
+        Record {
+            optype: r_optype,
+            version: version,
+            key: r_key,
+            object: r_object,
+        }
+    }
+
+    /// Return the optype(Read/Write) for the operation.
+    pub fn get_optype(&self) -> OpType {
+        self.optype.clone()
+    }
+
+    /// Return the version for the performed operation.
+    pub fn get_version(&self) -> Version {
+        self.version.clone()
+    }
+
+    /// Return the key for the performed operation.
+    pub fn get_key(&self) -> Bytes {
+        self.key.clone()
+    }
+
+    /// Return the object for the performed operation.
+    pub fn get_object(&self) -> Bytes {
+        self.object.clone()
     }
 }

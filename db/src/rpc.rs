@@ -16,7 +16,6 @@
 use std::mem::{size_of, transmute};
 
 use super::wireformat::*;
-use sandstorm::buf::OpType;
 
 use e2d2::common::EmptyMetadata;
 use e2d2::headers::{IpHeader, MacHeader, UdpHeader};
