@@ -1559,16 +1559,20 @@ impl Master {
 
         // Read fields off the request header.
         let mut tenant_id: TenantId = 0;
-        let mut table_id: TableId = 0;
-        let mut name_length = 0;
         let mut rpc_stamp = 0;
+        let mut table_id: TableId = 0;
+        let mut key_len = 0;
+        let mut val_len = 0;
+        let mut record_len = 0;
 
         {
             let hdr = req.get_header();
             tenant_id = hdr.common_header.tenant as TenantId;
-            table_id = hdr.table_id as TableId;
-            name_length = hdr.name_length;
             rpc_stamp = hdr.common_header.stamp;
+            table_id = hdr.table_id as TableId;
+            key_len = hdr.key_length as usize;
+            val_len = hdr.value_length as usize;
+            record_len = 1 + 8 + key_len + val_len;
         }
 
         // Next, add a header to the response packet.
@@ -1579,15 +1583,6 @@ impl Master {
                 tenant_id,
             )).expect("Failed to setup GetResponse");
 
-        // If the payload size is less than the name length, return an error.
-        if req.get_payload().len() < name_length as usize {
-            res.get_mut_header().common_header.status = RpcStatus::StatusMalformedRequest;
-            return Err((
-                req.deparse_header(PACKET_UDP_LEN as usize),
-                res.deparse_header(PACKET_UDP_LEN as usize),
-            ));
-        }
-
         // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
         // reference to Master in the generator below.
         let tenant = self.get_tenant(tenant_id);
@@ -1596,65 +1591,58 @@ impl Master {
         let gen = Box::new(move || {
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
 
-            let outcome =
+            let _outcome =
                 // Check if the tenant exists. If it does, then check if the
                 // table exists, and update the status of the rpc.
                 tenant.and_then(| tenant | {
                                 status = RpcStatus::StatusTableDoesNotExist;
                                 tenant.get_table(table_id)
                             })
-                // If the table exists, lookup the provided key, and update
-                // the status of the rpc.
+                // If the table exists, validate the transaction, and update the status of the rpc.
                 .and_then(| table | {
-                    //TODO: Update the logic later.
-                    let mut tx = TX::new();
-                    let records = req.get_payload();
-                    for record in records.chunks(139) {
-                        let (optype, rem) = record.split_at(1);
-                        let (mut version, rem) = rem.split_at(8);
-                        let (key, value) = rem.split_at(30);
-                        let version: Version = unsafe { transmute(version.read_u64::<BigEndian>().unwrap()) };
-                        match parse_record_optype(optype) {
-                            OpType::SandstormRead => {
-                                tx.record_get(Record::new(OpType::SandstormRead, version, Bytes::from(key), Bytes::from(value)));
-                            },
+                     // If the payload size is less than the name length, return an error.
+                    if req.get_payload().len() < record_len {
+                        status = RpcStatus::StatusMalformedRequest;
+                        None
+                    } else {
+                        // TODO: Improve the code to avoid so much of deserialization.
+                        let mut tx = TX::new();
+                        let records = req.get_payload();
+                        for record in records.chunks(record_len) {
+                            let (optype, rem) = record.split_at(1);
+                            let (mut version, rem) = rem.split_at(8);
+                            let (key, value) = rem.split_at(key_len);
+                            let version: Version = unsafe { transmute(version.read_u64::<BigEndian>().unwrap()) };
+                            match parse_record_optype(optype) {
+                                OpType::SandstormRead => {
+                                    tx.record_get(Record::new(OpType::SandstormRead, version, Bytes::from(key), Bytes::from(value)));
+                                },
 
-                            OpType::SandstormWrite => {
-                                tx.record_put(Record::new(OpType::SandstormWrite, version, Bytes::from(key), Bytes::from(value)));
-                            }
+                                OpType::SandstormWrite => {
+                                    tx.record_put(Record::new(OpType::SandstormWrite, version, Bytes::from(key), Bytes::from(value)));
+                                }
 
-                            _ => {
-                                info!("The type of a record can only be read or write");
+                                _ => {
+                                    info!("Commit: The type of a record can only be read or write");
+                                }
                             }
                         }
-                    }
 
-                    match table.validate(&mut tx) {
-                        Ok(()) => {
-                            status = RpcStatus::StatusOk;
-                            Some(())
-                        }
+                        match table.validate(&mut tx) {
+                            Ok(()) => {
+                                status = RpcStatus::StatusOk;
+                                Some(())
+                            }
 
-                        Err(()) => {
-                            status = RpcStatus::StatusTxAbort;
-                            None
+                            Err(()) => {
+                                status = RpcStatus::StatusTxAbort;
+                                None
+                            }
                         }
                     }
                 });
 
-            match outcome {
-                // The RPC completed successfully. Update the response header with
-                // the status and value length.
-                Some(()) => {
-                    let hdr: &mut CommitResponse = res.get_mut_header();
-                    hdr.common_header.status = status;
-                }
-
-                // The RPC failed. Update the response header with the status.
-                None => {
-                    res.get_mut_header().common_header.status = status;
-                }
-            }
+            res.get_mut_header().common_header.status = status;
 
             // Deparse request and response packets down to UDP, and return from the generator.
             return Some((

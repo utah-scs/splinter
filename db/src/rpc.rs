@@ -378,3 +378,56 @@ pub fn create_invoke_rpc(
 
     fixup_header_length_fields(request.deparse_header(size_of::<UdpHeader>()))
 }
+
+/// Allocate and populate a packet that requests a server "commit" operation.
+///
+/// # Panic
+///
+/// May panic if there is a problem allocating the packet or constructing
+/// headers.
+///
+/// # Arguments
+///
+/// * `mac`:      Reference to the MAC header to be added to the request.
+/// * `ip` :      Reference to the IP header to be added to the request.
+/// * `udp`:      Reference to the UDP header to be added to the request.
+/// * `tenant`:   Id of the tenant requesting the item.
+/// * `table_id`: Id of the table from which the key is looked up.
+/// * `payload`:  Byte string of read-write set whose value is used for transaction validation.
+/// * `id`:       RPC identifier.
+/// * `dst`:      The UDP port on the server the RPC is destined for.
+/// * `key_len`:  The length of the key for each record.
+/// * `val_len`:  The length of the value for each record.
+/// # Return
+///
+/// Packet populated with the request parameters.
+#[inline]
+pub fn create_commit_rpc(
+    mac: &MacHeader,
+    ip: &IpHeader,
+    udp: &UdpHeader,
+    tenant: u32,
+    table_id: u64,
+    payload: &[u8],
+    id: u64,
+    dst: u16,
+    key_len: u16,
+    val_len: u16,
+) -> Packet<IpHeader, EmptyMetadata> {
+    // Key length cannot be more than 16 bits. Required to construct the RPC header.
+    if key_len > u16::max_value() && val_len > u16::max_value() {
+        panic!("Key or Value too long ({} key {} value).", key_len, val_len);
+    }
+
+    // Allocate a packet, write the header and payload into it, and set fields on it's UDP and IP
+    // header.
+    let mut request = create_request(mac, ip, udp, dst)
+        .push_header(&CommitRequest::new(tenant, id, table_id, key_len, val_len))
+        .expect("Failed to push RPC header into request!");
+
+    request
+        .add_to_payload_tail(payload.len(), &payload)
+        .expect("Failed to write payload into commit() request!");
+
+    fixup_header_length_fields(request.deparse_header(size_of::<UdpHeader>()))
+}

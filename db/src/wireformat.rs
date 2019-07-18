@@ -874,12 +874,14 @@ pub struct CommitRequest {
     /// The common RPC header identifying the opcode, service, and tenant.
     pub common_header: RpcRequestHeader,
 
-    /// The length of the name of the procedure to be invoked. Required to
-    /// deserialize the procedure's name from the request packet at the server.
-    pub name_length: u32,
-
     /// An identifier for the table to commit the transaction to.
-    pub table_id: u32,
+    pub table_id: u64,
+
+    /// The length of the key; needed to parse the payload.
+    pub key_length: u16,
+
+    /// The length of the value; needed to parse the payload.
+    pub value_length: u16,
 }
 
 impl CommitRequest {
@@ -898,16 +900,23 @@ impl CommitRequest {
     /// # Return
     ///
     /// An RPC request header of type `CommitRequest`.
-    pub fn new(tenant: u32, name_length: u32, table_id: u32, req_stamp: u64) -> CommitRequest {
+    pub fn new(
+        tenant: u32,
+        req_stamp: u64,
+        table_id: u64,
+        key_len: u16,
+        val_len: u16,
+    ) -> CommitRequest {
         CommitRequest {
             common_header: RpcRequestHeader::new(
                 Service::MasterService,
-                OpCode::SandstormInvokeRpc,
+                OpCode::SandstormCommitRpc,
                 tenant,
                 req_stamp,
             ),
-            name_length: name_length,
             table_id: table_id,
+            key_length: key_len,
+            value_length: val_len,
         }
     }
 }

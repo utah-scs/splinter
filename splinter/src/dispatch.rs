@@ -286,6 +286,42 @@ impl Sender {
         }
         self.requests_sent.set(r + 1);
     }
+
+    /// Creates and sends out a commit() RPC request. Network headers are populated based on
+    /// arguments passed into new() above.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant`:   Id of the tenant requesting the invocation.
+    /// * `table_id`: The number of bytes at the head of the payload corresponding to the
+    ///               extensions name.
+    /// * `payload`:  The RPC payload to be written into the packet. Must contain the name of the
+    ///               extension followed by it's arguments.
+    /// * `id`:       RPC identifier.
+    pub fn send_commit(
+        &self,
+        tenant: u32,
+        table_id: u64,
+        payload: &[u8],
+        id: u64,
+        key_len: u16,
+        val_len: u16,
+    ) {
+        let request = rpc::create_commit_rpc(
+            &self.req_mac_header,
+            &self.req_ip_header,
+            &self.req_udp_header,
+            tenant,
+            table_id,
+            payload,
+            id,
+            self.get_dst_port(tenant),
+            key_len,
+            val_len,
+        );
+
+        self.send_req(request);
+    }
 }
 
 /// A Receiver of responses to RPC requests.
