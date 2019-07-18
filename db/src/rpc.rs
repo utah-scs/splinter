@@ -208,8 +208,13 @@ pub fn create_get_rpc(
     // Allocate a packet, write the header and payload into it, and set fields on it's UDP and IP
     // header.
     let mut request = create_request(mac, ip, udp, dst)
-        .push_header(&GetRequest::new(tenant, table_id, key.len() as u16, id, generator))
-        .expect("Failed to push RPC header into request!");
+        .push_header(&GetRequest::new(
+            tenant,
+            table_id,
+            key.len() as u16,
+            id,
+            generator,
+        )).expect("Failed to push RPC header into request!");
 
     request
         .add_to_payload_tail(key.len(), &key)
@@ -309,8 +314,9 @@ pub fn create_multiget_rpc(
     // Allocate a packet, write the header and payload into it, and set fields on it's UDP and IP
     // header.
     let mut request = create_request(mac, ip, udp, dst)
-        .push_header(&MultiGetRequest::new(tenant, table_id, key_len, num_keys, id))
-        .expect("Failed to push RPC header into request!");
+        .push_header(&MultiGetRequest::new(
+            tenant, table_id, key_len, num_keys, id,
+        )).expect("Failed to push RPC header into request!");
 
     request
         .add_to_payload_tail(keys.len(), &keys)
@@ -369,8 +375,7 @@ pub fn create_invoke_rpc(
             name_len,
             (payload.len() - name_len as usize) as u32,
             id,
-        ))
-        .expect("Failed to push RPC header into request!");
+        )).expect("Failed to push RPC header into request!");
 
     request
         .add_to_payload_tail(payload.len(), &payload)
@@ -417,6 +422,10 @@ pub fn create_commit_rpc(
     // Key length cannot be more than 16 bits. Required to construct the RPC header.
     if key_len > u16::max_value() && val_len > u16::max_value() {
         panic!("Key or Value too long ({} key {} value).", key_len, val_len);
+    }
+
+    if payload.len() > 1436 {
+        panic!("Network support doesn't support > 1500B packets");
     }
 
     // Allocate a packet, write the header and payload into it, and set fields on it's UDP and IP

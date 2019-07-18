@@ -66,11 +66,11 @@ pub enum OpCode {
     /// This operation fetches multiple records in a single round trip.
     SandstormMultiGetRpc = 0x05,
 
-    /// Any value beyond this represents an invalid rpc.
-    InvalidOperation = 0x06,
-
     /// This operation commits an invoke procedure run on the client-side.
-    SandstormCommitRpc = 0x7,
+    SandstormCommitRpc = 0x6,
+
+    /// Any value beyond this represents an invalid rpc.
+    InvalidOperation = 0x07,
 }
 
 /// This enum represents the status of a completed RPC. A status of 'StatusOk'

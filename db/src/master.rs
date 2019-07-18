@@ -50,7 +50,7 @@ use sandstorm::common::{TableId, TenantId, PACKET_UDP_LEN};
 use sandstorm::db::DB;
 use sandstorm::ext::*;
 use sandstorm::pack::pack;
-use sandstorm::{BigEndian, ReadBytesExt};
+use sandstorm::{LittleEndian, ReadBytesExt};
 
 /// Convert a raw pointer for Allocator into a Allocator reference. This can be used to pass
 /// the allocator reference across closures without cloning the allocator object.
@@ -1612,7 +1612,7 @@ impl Master {
                             let (optype, rem) = record.split_at(1);
                             let (mut version, rem) = rem.split_at(8);
                             let (key, value) = rem.split_at(key_len);
-                            let version: Version = unsafe { transmute(version.read_u64::<BigEndian>().unwrap()) };
+                            let version: Version = unsafe { transmute(version.read_u64::<LittleEndian>().unwrap()) };
                             match parse_record_optype(optype) {
                                 OpType::SandstormRead => {
                                     tx.record_get(Record::new(OpType::SandstormRead, version, Bytes::from(key), Bytes::from(value)));

@@ -28,8 +28,8 @@ use util::model::GLOBAL_MODEL;
 
 /// TaskManager handles the information for a pushed-back extension on the client side.
 pub struct TaskManager {
-    // This is used for RPC requests and extensions lookup in tables.
-    tenant: u32,
+    /// This is used for RPC requests and extensions lookup in tables.
+    pub tenant: u32,
 
     // This is used to parse the request for the arguments. The request is `name+arguments`, so
     // this length can be used to split the payload in name and arguments.
@@ -51,6 +51,10 @@ pub struct TaskManager {
     // A ref counted pointer to a master service. The master service
     // implements the primary interface to the database.
     master: Arc<Master>,
+
+    /// This variable stores the read-write set in serialized version,
+    /// which is used at the commit time.
+    pub commit_payload: Vec<u8>,
 }
 
 impl TaskManager {
@@ -84,6 +88,7 @@ impl TaskManager {
             id: timestamp,
             task: Vec::with_capacity(1),
             master: master_service,
+            commit_payload: Vec::new(),
         }
     }
 
@@ -144,6 +149,7 @@ impl TaskManager {
     /// * `records`: A reference to the RWset sent back by the server when the extension is
     ///             pushed back.
     pub fn update_rwset(&mut self, records: &[u8], recordlen: usize, keylen: usize) {
+        self.commit_payload.extend_from_slice(records);
         for record in records.chunks(recordlen) {
             self.task[0].update_cache(record, keylen);
         }
