@@ -68,6 +68,9 @@ pub enum OpCode {
 
     /// Any value beyond this represents an invalid rpc.
     InvalidOperation = 0x06,
+
+    /// This operation commits an invoke procedure run on the client-side.
+    SandstormCommitRpc = 0x7,
 }
 
 /// This enum represents the status of a completed RPC. A status of 'StatusOk'
@@ -854,6 +857,119 @@ impl EndOffset for MultiGetResponse {
 
     fn size() -> usize {
         size_of::<MultiGetResponse>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This type represents the request header corresponding to an invoke() RPC.
+#[repr(C, packed)]
+pub struct CommitRequest {
+    /// The common RPC header identifying the opcode, service, and tenant.
+    pub common_header: RpcRequestHeader,
+
+    /// The length of the name of the procedure to be invoked. Required to
+    /// deserialize the procedure's name from the request packet at the server.
+    pub name_length: u32,
+
+    /// An identifier for the table to commit the transaction to.
+    pub table_id: u32,
+}
+
+impl CommitRequest {
+    /// This method returns a header corresponding to an invoke() RPC request.
+    /// The returned header can be appended onto a request packet.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant`:      An identifier for the tenant issuing this RPC.
+    /// * `name_length`: The length of the name of the procedure to be invoked.
+    ///                  Required so that the name can be read from the request
+    ///                  packet by the server.
+    /// * `table_id`: An identifier for the table to commit the transaction to.
+    /// * `req_stamp`:   RPC identifier.
+    ///
+    /// # Return
+    ///
+    /// An RPC request header of type `CommitRequest`.
+    pub fn new(tenant: u32, name_length: u32, table_id: u32, req_stamp: u64) -> CommitRequest {
+        CommitRequest {
+            common_header: RpcRequestHeader::new(
+                Service::MasterService,
+                OpCode::SandstormInvokeRpc,
+                tenant,
+                req_stamp,
+            ),
+            name_length: name_length,
+            table_id: table_id,
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for CommitRequest. Refer to
+// GetRequest's implementation of this trait to understand what the methods
+// and types mean.
+impl EndOffset for CommitRequest {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<CommitRequest>()
+    }
+
+    fn size() -> usize {
+        size_of::<CommitRequest>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This type represents the response header for an invoke() RPC request.
+#[repr(C, packed)]
+pub struct CommitResponse {
+    /// A common RPC response header containing the status of the RPC.
+    pub common_header: RpcResponseHeader,
+}
+
+impl CommitResponse {
+    /// This method returns a header that can be appended to the response
+    /// packet for an invoke() RPC request.
+    ///
+    /// # Arguments
+    ///
+    /// * `req_stamp`: RPC identifier.
+    /// * `opcode`:    The opcode on the original RPC request.
+    /// * `tenant`:    The tenant this response should be sent to.
+    pub fn new(req_stamp: u64, opcode: OpCode, tenant: u32) -> CommitResponse {
+        CommitResponse {
+            common_header: RpcResponseHeader::new(req_stamp, opcode, tenant),
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for CommitResponse. Refer to
+// GetRequest's implementation of this trait to understand what the methods
+// and types mean.
+impl EndOffset for CommitResponse {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<CommitResponse>()
+    }
+
+    fn size() -> usize {
+        size_of::<CommitResponse>()
     }
 
     fn payload_size(&self, hint: usize) -> usize {

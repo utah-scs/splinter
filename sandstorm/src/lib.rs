@@ -54,4 +54,4 @@ extern crate hashbrown;
 extern crate libloading;
 extern crate spin;
 extern crate util;
-pub use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+pub use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
