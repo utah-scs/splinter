@@ -163,4 +163,9 @@ impl Task for Native {
 
     /// Refer to the `Task` trait for Documentation.
     fn update_cache(&mut self, _record: &[u8], _keylen: usize) {}
+
+    /// Refer to the `Task` trait for Documentation.
+    fn get_id(&self) -> u64 {
+        0
+    }
 }

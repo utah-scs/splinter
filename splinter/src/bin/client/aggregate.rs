@@ -23,12 +23,10 @@ extern crate zipf;
 mod setup;
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
 use std::mem::{size_of, transmute};
 use std::sync::Arc;
 
 use db::config;
-use db::cyclecounter::CycleCounter;
 use db::cycles;
 use db::e2d2::allocators::CacheAligned;
 use db::e2d2::interface::PortQueue;
@@ -36,7 +34,6 @@ use db::e2d2::scheduler::*;
 use db::log::*;
 use db::master::Master;
 use db::rpc::parse_rpc_opcode;
-use db::task::TaskState::*;
 use db::wireformat::*;
 
 use rand::distributions::Sample;
@@ -44,7 +41,7 @@ use rand::{SeedableRng, XorShiftRng};
 
 use zipf::ZipfDistribution;
 
-use splinter::manager::TaskManager;
+use splinter::sched::TaskManager;
 use splinter::*;
 
 // Type: 1, KeySize: 30, ValueSize:100
@@ -106,25 +103,9 @@ struct AggregateSendRecv {
     // more than 32(XXX) outstanding packets.
     outstanding: u64,
 
-    /// A ref counted pointer to a master service. The master service
-    /// implements the primary interface to the database.
-    master_service: Arc<Master>,
-
     // To keep a mapping between each packet and request parameters. This information will be used
     // when the server pushes back the extension.
-    manager: RefCell<HashMap<u64, TaskManager>>,
-
-    // Run-queue of tasks waiting to execute. Tasks on this queue have either yielded, or have been
-    // recently enqueued and never run before.
-    waiting: VecDeque<TaskManager>,
-
-    // Number of tasks completed on the client, after server pushback. Wraps around
-    // after each 1L such tasks.
-    pushback_completed: u64,
-
-    // Counts the number of CPU cycle spent on the task execution when client executes the
-    // extensions on its end.
-    cycle_counter: CycleCounter,
+    manager: RefCell<TaskManager>,
 }
 
 // Implementation of methods on AggregateSend.
@@ -193,11 +174,7 @@ impl AggregateSendRecv {
             num: num,
             ord: ord,
             outstanding: 0,
-            master_service: Arc::clone(&masterservice),
-            manager: RefCell::new(HashMap::new()),
-            waiting: VecDeque::new(),
-            pushback_completed: 0,
-            cycle_counter: CycleCounter::new(),
+            manager: RefCell::new(TaskManager::new(Arc::clone(&masterservice))),
         }
     }
 
@@ -234,7 +211,13 @@ impl AggregateSendRecv {
             // Invoke request. Add the key to the pre-populated payload.
             false => {
                 self.i_buff[25..29].copy_from_slice(&k);
-                self.add_request(&self.i_buff, t, 9, curr);
+                self.manager.borrow_mut().create_task(
+                    curr,
+                    &self.i_buff,
+                    t,
+                    9,
+                    Arc::clone(&self.sender),
+                );
                 self.sender.send_invoke(t, 9, &self.i_buff, curr);
             }
         }
@@ -247,19 +230,11 @@ impl AggregateSendRecv {
         }
 
         // Send out a request at the configured request rate.
-        while self.outstanding < 32 {
+        while self.outstanding < 32 && self.manager.borrow().get_queue_len() < 32 {
             let curr = cycles::rdtsc();
             self.generate(curr);
             self.sent += 1;
             self.outstanding += 1;
-            if self.waiting.len() >= 100000 {
-                let mut batch = 4;
-                while batch > 0 {
-                    self.execute_task();
-                    batch -= 1;
-                }
-                break;
-            }
         }
     }
 
@@ -350,44 +325,70 @@ impl AggregateSendRecv {
                         }
                     }
                 } else {
-                    let p = packet.parse_header::<InvokeResponse>();
-                    match p.get_header().common_header.status {
-                        RpcStatus::StatusOk => {
+                    match parse_rpc_opcode(&packet) {
+                        OpCode::SandstormCommitRpc => {
+                            let p = packet.parse_header::<CommitResponse>();
+                            match p.get_header().common_header.status {
+                                RpcStatus::StatusTxAbort => {
+                                    info!("Abort");
+                                }
+
+                                RpcStatus::StatusOk => {
+                                    self.latencies
+                                        .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                                }
+
+                                _ => {}
+                            }
                             self.recvd += 1;
-                            self.outstanding -= 1;
-                            if self.recvd & 0xf == 0 {
-                                self.latencies
-                                    .push(cycles::rdtsc() - p.get_header().common_header.stamp);
-                            }
-                            self.remove_request(p.get_header().common_header.stamp);
+                            p.free_packet();
                         }
 
-                        RpcStatus::StatusPushback => {
-                            let records = p.get_payload();
-                            let (key, record) = records.split_at(369); // 1B for type, 8B for key, and 12 * 30B for value
-                            let hdr = &p.get_header();
-                            let timestamp = hdr.common_header.stamp;
-
-                            // Create task and run the generator.
-                            match self.manager.borrow_mut().remove(&timestamp) {
-                                Some(mut manager) => {
-                                    manager.create_generator(Arc::clone(&self.sender));
-                                    manager.update_rwset(key, 369, 8);
-                                    manager.update_rwset(record, RECORD_SIZE, 30);
-                                    self.waiting.push_back(manager);
+                        OpCode::SandstormInvokeRpc => {
+                            let p = packet.parse_header::<InvokeResponse>();
+                            match p.get_header().common_header.status {
+                                RpcStatus::StatusOk => {
+                                    self.recvd += 1;
+                                    self.outstanding -= 1;
+                                    if self.recvd & 0xf == 0 {
+                                        self.latencies.push(
+                                            cycles::rdtsc() - p.get_header().common_header.stamp,
+                                        );
+                                    }
+                                    self.manager
+                                        .borrow_mut()
+                                        .delete_task(p.get_header().common_header.stamp);
                                 }
 
-                                None => {
-                                    info!("No manager with {} timestamp", timestamp);
+                                RpcStatus::StatusPushback => {
+                                    let records = p.get_payload();
+                                    let (key, record) = records.split_at(369); // 1B for type, 8B for key, and 12 * 30B for value
+                                    let hdr = &p.get_header();
+                                    let timestamp = hdr.common_header.stamp;
+
+                                    // Unblock the task by updating the read-write set.
+                                    self.manager
+                                        .borrow_mut()
+                                        .update_rwset(timestamp, key, 369, 8);
+                                    self.manager.borrow_mut().update_rwset(
+                                        timestamp,
+                                        record,
+                                        RECORD_SIZE,
+                                        30,
+                                    );
+                                    self.outstanding -= 1;
                                 }
+
+                                _ => {}
                             }
-                            self.outstanding -= 1;
+
+                            p.free_packet();
                         }
 
-                        _ => {}
+                        _ => {
+                            packet.free_packet();
+                        }
                     }
-
-                    p.free_packet();
                 }
             }
         }
@@ -395,58 +396,6 @@ impl AggregateSendRecv {
         // Print out measurements after all responses have been received.
         if self.responses <= self.recvd {
             self.measurements();
-        }
-    }
-
-    fn add_request(&self, req: &[u8], tenant: u32, name_length: u32, id: u64) {
-        let req = TaskManager::new(
-            Arc::clone(&self.master_service),
-            &req,
-            tenant,
-            name_length,
-            id,
-        );
-        match self.manager.borrow_mut().insert(id, req) {
-            Some(_) => {
-                info!("Already present in the Hashmap");
-            }
-
-            None => {}
-        }
-    }
-
-    fn remove_request(&self, id: u64) {
-        self.manager.borrow_mut().remove(&id);
-    }
-
-    fn execute_task(&mut self) {
-        // Don't do anything after all responses have been received.
-        if self.waiting.len() == 0 {
-            return;
-        }
-
-        //Execute the pushed-back task.
-        let manager = self.waiting.pop_front();
-        if let Some(mut manager) = manager {
-            let (taskstate, _time) = manager.execute_task();
-            if taskstate == YIELDED {
-                self.waiting.push_back(manager);
-            } else if taskstate == WAITING {
-                self.manager.borrow_mut().insert(manager.get_id(), manager);
-            } else if taskstate == COMPLETED {
-                self.recvd += 1;
-                if cfg!(feature = "execution") {
-                    self.cycle_counter.total_cycles(_time, 1);
-                    self.pushback_completed += 1;
-                    if self.pushback_completed == 1000000 {
-                        info!(
-                            "Completion time per extension {}",
-                            self.cycle_counter.get_average()
-                        );
-                        self.pushback_completed = 0;
-                    }
-                }
-            }
         }
     }
 }
@@ -457,7 +406,7 @@ impl Executable for AggregateSendRecv {
     fn execute(&mut self) {
         self.send();
         self.recv();
-        self.execute_task();
+        self.manager.borrow_mut().execute_task();
     }
 
     fn dependencies(&mut self) -> Vec<usize> {

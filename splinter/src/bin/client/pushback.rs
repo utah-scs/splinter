@@ -26,14 +26,13 @@ extern crate zipf;
 mod setup;
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::mem;
 use std::mem::transmute;
 use std::sync::Arc;
 
 use db::config;
-use db::cyclecounter::CycleCounter;
 use db::cycles;
 use db::e2d2::allocators::*;
 use db::e2d2::interface::*;
@@ -41,12 +40,11 @@ use db::e2d2::scheduler::*;
 use db::log::*;
 use db::master::Master;
 use db::rpc::*;
-use db::task::TaskState::*;
 use db::wireformat::*;
 
 use rand::distributions::{Normal, Sample};
 use rand::{Rng, SeedableRng, XorShiftRng};
-use splinter::manager::TaskManager;
+use splinter::sched::TaskManager;
 use splinter::*;
 use zipf::ZipfDistribution;
 
@@ -220,25 +218,9 @@ where
     // more than 32(XXX) outstanding packets.
     outstanding: u64,
 
-    /// A ref counted pointer to a master service. The master service
-    /// implements the primary interface to the database.
-    master_service: Arc<Master>,
-
     // To keep a mapping between each packet and request parameters. This information will be used
     // when the server pushes back the extension.
-    manager: RefCell<HashMap<u64, TaskManager>>,
-
-    // Run-queue of tasks waiting to execute. Tasks on this queue have either yielded, or have been
-    // recently enqueued and never run before.
-    waiting: VecDeque<TaskManager>,
-
-    // Number of tasks completed on the client, after server pushback. Wraps around
-    // after each 1L such tasks.
-    pushback_completed: u64,
-
-    // Counts the number of CPU cycle spent on the task execution when client executes the
-    // extensions on its end.
-    cycle_counter: CycleCounter,
+    manager: RefCell<TaskManager>,
 
     // Keeps track of the state of a multi-operation request. For example, an extension performs
     // four get operations before performing aggregation and all these get operations are dependent
@@ -342,11 +324,7 @@ where
             payload_put: RefCell::new(payload_put),
             finished: false,
             outstanding: 0,
-            master_service: Arc::clone(&masterservice),
-            manager: RefCell::new(HashMap::new()),
-            waiting: VecDeque::new(),
-            pushback_completed: 0,
-            cycle_counter: CycleCounter::new(),
+            manager: RefCell::new(TaskManager::new(Arc::clone(&masterservice))),
             native_state: RefCell::new(HashMap::with_capacity(32)),
             num: number,
             ord: order,
@@ -355,34 +333,15 @@ where
         }
     }
 
-    fn add_request(&self, req: &[u8], tenant: u32, name_length: u32, id: u64) {
-        let req = TaskManager::new(
-            Arc::clone(&self.master_service),
-            &req,
-            tenant,
-            name_length,
-            id,
-        );
-        match self.manager.borrow_mut().insert(id, req) {
-            Some(_) => {
-                info!("Already present in the Hashmap");
-            }
-
-            None => {}
-        }
-    }
-
-    fn remove_request(&self, id: u64) {
-        self.manager.borrow_mut().remove(&id);
-    }
-
     fn send(&mut self) {
         // Return if there are no more requests to generate.
         if self.requests <= self.sent {
             return;
         }
 
-        while self.outstanding < MAX_CREDIT as u64 && self.waiting.len() < MAX_CREDIT {
+        while self.outstanding < MAX_CREDIT as u64
+            && self.manager.borrow().get_queue_len() < MAX_CREDIT
+        {
             // Get the current time stamp so that we can determine if it is time to issue the next RPC.
             let curr = cycles::rdtsc();
 
@@ -414,7 +373,13 @@ where
                         // (4 bytes), and number of CPU cycles compute(4 bytes). Just write
                         // in the first 4 bytes of the key.
                         p_get[24..28].copy_from_slice(&key[0..4]);
-                        self.add_request(&p_get, tenant, 8, curr);
+                        self.manager.borrow_mut().create_task(
+                            curr,
+                            &p_get,
+                            tenant,
+                            8,
+                            Arc::clone(&self.sender),
+                        );
                         self.sender.send_invoke(tenant, 8, &p_get, curr)
                     },
                     |tenant, key, _val, _ord| {
@@ -423,7 +388,13 @@ where
                         // bytes). Just write in the first 4 bytes of the key. The value is anyway
                         // always zero.
                         p_put[18..22].copy_from_slice(&key[0..4]);
-                        self.add_request(&p_put, tenant, 8, curr);
+                        self.manager.borrow_mut().create_task(
+                            curr,
+                            &p_put,
+                            tenant,
+                            8,
+                            Arc::clone(&self.sender),
+                        );
                         self.sender.send_invoke(tenant, 8, &p_put, curr)
                     },
                 );
@@ -438,18 +409,35 @@ where
 
     fn recv(&mut self) {
         // Don't do anything after all responses have been received.
-        if self.finished == true {
+        if self.finished == true && self.stop > 0 {
             return;
         }
 
         // Try to receive packets from the network port.
         // If there are packets, sample the latency of the server.
         if let Some(mut packets) = self.receiver.recv_res() {
+            let curr = cycles::rdtsc();
             while let Some(packet) = packets.pop() {
                 if self.native == false {
-                    let curr = cycles::rdtsc();
-
                     match parse_rpc_opcode(&packet) {
+                        OpCode::SandstormCommitRpc => {
+                            let p = packet.parse_header::<CommitResponse>();
+                            match p.get_header().common_header.status {
+                                RpcStatus::StatusTxAbort => {
+                                    info!("Abort");
+                                }
+
+                                RpcStatus::StatusOk => {
+                                    self.latencies
+                                        .push(curr - p.get_header().common_header.stamp);
+                                }
+
+                                _ => {}
+                            }
+                            self.recvd += 1;
+                            p.free_packet();
+                        }
+
                         // The response corresponds to an invoke() RPC.
                         OpCode::SandstormInvokeRpc => {
                             let p = packet.parse_header::<InvokeResponse>();
@@ -461,7 +449,9 @@ where
                                     self.latencies
                                         .push(curr - p.get_header().common_header.stamp);
                                     self.outstanding -= 1;
-                                    self.remove_request(p.get_header().common_header.stamp);
+                                    self.manager
+                                        .borrow_mut()
+                                        .delete_task(p.get_header().common_header.stamp);
                                 }
 
                                 // If the status is StatusPushback then compelete the task, add the
@@ -471,18 +461,13 @@ where
                                     let hdr = &p.get_header();
                                     let timestamp = hdr.common_header.stamp;
 
-                                    // Create task and run the generator.
-                                    match self.manager.borrow_mut().remove(&timestamp) {
-                                        Some(mut manager) => {
-                                            manager.create_generator(Arc::clone(&self.sender));
-                                            manager.update_rwset(records, self.record_len, self.key_len);
-                                            self.waiting.push_back(manager);
-                                        }
-
-                                        None => {
-                                            info!("No manager with {} timestamp", timestamp);
-                                        }
-                                    }
+                                    // Unblock the task and put it in the ready queue.
+                                    self.manager.borrow_mut().update_rwset(
+                                        timestamp,
+                                        records,
+                                        self.record_len,
+                                        self.key_len,
+                                    );
                                     self.outstanding -= 1;
                                 }
 
@@ -495,27 +480,12 @@ where
                         // The opcode on the response identifies the RPC type.
                         OpCode::SandstormGetRpc => {
                             let p = packet.parse_header::<GetResponse>();
-                            unsafe {
-                                if self
-                                    .manager
-                                    .borrow()
-                                    .contains_key(&p.get_header().common_header.stamp)
-                                {
-                                    let manager = self
-                                        .manager
-                                        .borrow_mut()
-                                        .remove(&p.get_header().common_header.stamp);
-                                    if let Some(mut manager) = manager {
-                                        manager.update_rwset(p.get_payload(), self.record_len, self.key_len);
-                                        self.waiting.push_back(manager);
-                                    }
-                                }
-                            }
-                            p.free_packet();
-                        }
-
-                        OpCode::SandstormPutRpc => {
-                            let p = packet.parse_header::<PutResponse>();
+                            self.manager.borrow_mut().update_rwset(
+                                p.get_header().common_header.stamp,
+                                p.get_payload(),
+                                self.record_len,
+                                self.key_len,
+                            );
                             p.free_packet();
                         }
 
@@ -558,45 +528,6 @@ where
         // The moment all response packets have been received, set the value of the
         // stop timestamp so that throughput can be estimated later.
         if self.responses <= self.recvd {
-            self.stop = cycles::rdtsc();
-            self.finished = true;
-        }
-    }
-
-    fn execute_task(&mut self) {
-        // Don't do anything after all responses have been received.
-        if self.finished == true && self.waiting.len() == 0 {
-            return;
-        }
-
-        //Execute the pushed-back task.
-        let manager = self.waiting.pop_front();
-        if let Some(mut manager) = manager {
-            let (taskstate, _time) = manager.execute_task();
-            if taskstate == YIELDED {
-                self.waiting.push_back(manager);
-            } else if taskstate == WAITING {
-                self.manager.borrow_mut().insert(manager.get_id(), manager);
-            } else if taskstate == COMPLETED {
-                self.latencies.push(cycles::rdtsc() - manager.get_id());
-                self.recvd += 1;
-                if cfg!(feature = "execution") {
-                    self.cycle_counter.total_cycles(_time, 1);
-                    self.pushback_completed += 1;
-                    if self.pushback_completed == 1000000 {
-                        info!(
-                            "Completion time per extension {}",
-                            self.cycle_counter.get_average()
-                        );
-                        self.pushback_completed = 0;
-                    }
-                }
-            }
-        }
-
-        // The moment all response packets have been received, set the value of the
-        // stop timestamp so that throughput can be estimated later.
-        if self.responses <= self.recvd && self.waiting.len() == 0 {
             self.stop = cycles::rdtsc();
             self.finished = true;
         }
@@ -652,7 +583,7 @@ where
     fn execute(&mut self) {
         self.send();
         self.recv();
-        self.execute_task();
+        self.manager.borrow_mut().execute_task();
         if self.finished == true {
             unsafe { FINISHED = true }
             return;

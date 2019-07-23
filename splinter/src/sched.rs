@@ -13,6 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -28,33 +29,15 @@ use util::model::GLOBAL_MODEL;
 
 /// TaskManager handles the information for a pushed-back extension on the client side.
 pub struct TaskManager {
-    /// This is used for RPC requests and extensions lookup in tables.
-    pub tenant: u32,
-
-    // This is used to parse the request for the arguments. The request is `name+arguments`, so
-    // this length can be used to split the payload in name and arguments.
-    name_length: u32,
-
-    // The packet/buffer consisting of the RPC request header and payload
-    // that invoked the extension. This is required to potentially pass in
-    // arguments to an extension. For example, a get() extension might require
-    // a key and table identifier to be passed in.
-    payload: Arc<Vec<u8>>,
-
-    // Identifier for each request, which is the timestamp for the packet generation.
-    // This is used to identify native requests associated with an extension.
-    id: u64,
-
-    // The reference to the task generator, which is used to suspend/resume the generator.
-    task: Vec<Box<Task>>,
-
     // A ref counted pointer to a master service. The master service
     // implements the primary interface to the database.
     master: Arc<Master>,
 
-    /// This variable stores the read-write set in serialized version,
-    /// which is used at the commit time.
-    pub commit_payload: Vec<u8>,
+    // The reference to the task generator, which is used to suspend/resume the generator.
+    ready: VecDeque<Box<Task>>,
+
+    ///  The HashMap containing the waiting tasks.
+    pub waiting: HashMap<u64, Box<Task>>,
 }
 
 impl TaskManager {
@@ -74,32 +57,12 @@ impl TaskManager {
     /// # Return
     ///
     /// A TaskManager for generator creation and task execution on the client.
-    pub fn new(
-        master_service: Arc<Master>,
-        req: &[u8],
-        tenant_id: u32,
-        name_len: u32,
-        timestamp: u64,
-    ) -> TaskManager {
+    pub fn new(master_service: Arc<Master>) -> TaskManager {
         TaskManager {
-            tenant: tenant_id,
-            name_length: name_len,
-            payload: Arc::new(req.to_vec()),
-            id: timestamp,
-            task: Vec::with_capacity(1),
             master: master_service,
-            commit_payload: Vec::new(),
+            ready: VecDeque::with_capacity(32),
+            waiting: HashMap::with_capacity(32),
         }
-    }
-
-    /// This method returns the unique id, which was used for the request.
-    pub fn get_id(&self) -> u64 {
-        self.id.clone()
-    }
-
-    /// This method returns the payload used in the request.
-    fn get_payload(&self) -> &[u8] {
-        &self.payload
     }
 
     /// This method creates a task for the extension on the client-side and add
@@ -107,13 +70,20 @@ impl TaskManager {
     ///
     /// # Arguments
     /// * `sender_service`: A reference to the service which helps in the RPC request generation.
-    pub fn create_generator(&mut self, sender_service: Arc<Sender>) {
-        let tenant_id: TenantId = self.tenant as TenantId;
-        let name_length: usize = self.name_length as usize;
+    pub fn create_task(
+        &mut self,
+        id: u64,
+        req: &[u8],
+        tenant: u32,
+        name_length: usize,
+        sender_service: Arc<Sender>,
+    ) {
+        let tenant_id: TenantId = tenant as TenantId;
+        let name_length: usize = name_length as usize;
 
         // Read the extension's name from the request payload.
         let mut name = Vec::new();
-        name.extend_from_slice(self.get_payload().split_at(name_length).0);
+        name.extend_from_slice(req.split_at(name_length).0);
         let name: String = String::from_utf8(name).expect("ERROR: Failed to get ext name.");
 
         // Get the model for the given extension.
@@ -129,18 +99,37 @@ impl TaskManager {
 
         if let Some(ext) = self.master.extensions.get(tenant_id, name) {
             let db = Rc::new(ProxyDB::new(
-                self.tenant,
-                self.id,
-                Arc::clone(&self.payload),
-                self.name_length as usize,
+                tenant,
+                id,
+                req.to_vec(),
+                name_length as usize,
                 sender_service,
                 model,
             ));
-            self.task
-                .push(Box::new(Container::new(TaskPriority::REQUEST, db, ext)));
+            self.waiting.insert(
+                id,
+                Box::new(Container::new(TaskPriority::REQUEST, db, ext, id)),
+            );
         } else {
             info!("Unable to create a generator for this request");
         }
+    }
+
+    /// Delete a waiting task from the scheduler.
+    ///
+    /// # Arguments
+    /// *`id`: The unique identifier for the task.
+    pub fn delete_task(&mut self, id: u64) {
+        self.waiting.remove(&id);
+    }
+
+    /// Find the number of tasks waiting in the ready queue.
+    ///
+    /// # Return
+    ///
+    /// The current length of the task queue.
+    pub fn get_queue_len(&self) -> usize {
+        self.ready.len()
     }
 
     /// This method updates the RW set for the extension.
@@ -148,10 +137,14 @@ impl TaskManager {
     /// # Arguments
     /// * `records`: A reference to the RWset sent back by the server when the extension is
     ///             pushed back.
-    pub fn update_rwset(&mut self, records: &[u8], recordlen: usize, keylen: usize) {
-        self.commit_payload.extend_from_slice(records);
-        for record in records.chunks(recordlen) {
-            self.task[0].update_cache(record, keylen);
+    pub fn update_rwset(&mut self, id: u64, records: &[u8], recordlen: usize, keylen: usize) {
+        if let Some(mut task) = self.waiting.remove(&id) {
+            for record in records.chunks(recordlen) {
+                task.update_cache(record, keylen);
+            }
+            self.ready.push_back(task);
+        } else {
+            info!("No waiting task with id {}", id);
         }
     }
 
@@ -162,7 +155,7 @@ impl TaskManager {
     ///
     /// The taskstate on the completion, yielding, or waiting of the task.
     pub fn execute_task(&mut self) -> (TaskState, u64) {
-        let task = self.task.pop();
+        let task = self.ready.pop_front();
         let mut taskstate: TaskState = INITIALIZED;
         let mut time: u64 = 0;
         if let Some(mut task) = task {
@@ -171,12 +164,16 @@ impl TaskManager {
                 time = task.time();
                 unsafe {
                     task.tear();
+                    // Do something for commit(Transaction commit?)
                 }
-            // Do something for commit(Transaction commit?)
             } else {
                 taskstate = task.state();
                 time = task.time();
-                self.task.push(task);
+                if taskstate == YIELDED {
+                    self.ready.push_back(task);
+                } else if taskstate == WAITING {
+                    self.waiting.insert(task.get_id(), task);
+                }
             }
         }
         (taskstate, time)

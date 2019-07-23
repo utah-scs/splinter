@@ -32,7 +32,7 @@ mod container;
 /// Needed to send and receive the packets on the client side.
 pub mod dispatch;
 /// Needed to handle and resume the pushback extension on the client side.
-pub mod manager;
+pub mod sched;
 /// Proxy to the database on the client side, searches the local cache for
 /// data and if not present on the cache then issues a request to the server.
 pub mod proxy;

@@ -15,8 +15,10 @@
 
 use std::cell::RefCell;
 use std::sync::Arc;
+use std::{mem, slice};
 
 use db::cycles::*;
+use db::wireformat::*;
 
 use sandstorm::buf::{MultiReadBuf, ReadBuf, WriteBuf};
 use sandstorm::db::DB;
@@ -74,7 +76,7 @@ pub struct ProxyDB {
     // The buffer consisting of the RPC payload that invoked the extension. This is required
     // to potentially pass in arguments to an extension. For example, a get() extension might
     // require a key and table identifier to be passed in.
-    req: Arc<Vec<u8>>,
+    req: Vec<u8>,
 
     // The offset inside the request packet/buffer's payload at which the
     // arguments to the extension begin.
@@ -98,6 +100,9 @@ pub struct ProxyDB {
 
     // The model for a given extension which is stored based on the name of the extension.
     model: Option<Arc<Model>>,
+
+    // This maintains the read-write records accessed by the extension.
+    commit_payload: RefCell<Vec<u8>>,
 }
 
 impl ProxyDB {
@@ -119,7 +124,7 @@ impl ProxyDB {
     pub fn new(
         tenant_id: u32,
         id: u64,
-        request: Arc<Vec<u8>>,
+        request: Vec<u8>,
         name_length: usize,
         sender_service: Arc<Sender>,
         model: Option<Arc<Model>>,
@@ -135,6 +140,7 @@ impl ProxyDB {
             writeset: RefCell::new(Vec::with_capacity(4)),
             db_credit: RefCell::new(0),
             model: model,
+            commit_payload: RefCell::new(Vec::new()),
         }
     }
 
@@ -160,6 +166,10 @@ impl ProxyDB {
     /// # Arguments
     /// * `record`: A reference to a record with a key and a value.
     pub fn set_read_record(&self, record: &[u8], keylen: usize) {
+        let ptr = &OpType::SandstormRead as *const _ as *const u8;
+        let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+        self.commit_payload.borrow_mut().extend_from_slice(optype);
+        self.commit_payload.borrow_mut().extend_from_slice(record);
         let (version, entry) = record.split_at(8);
         let (key, value) = entry.split_at(keylen);
         self.readset.borrow_mut().push(KV::new(
@@ -175,6 +185,10 @@ impl ProxyDB {
     /// # Arguments
     /// * `record`: A reference to a record with a key and a value.
     pub fn set_write_record(&self, record: &[u8], keylen: usize) {
+        let ptr = &OpType::SandstormWrite as *const _ as *const u8;
+        let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+        self.commit_payload.borrow_mut().extend_from_slice(optype);
+        self.commit_payload.borrow_mut().extend_from_slice(record);
         let (version, entry) = record.split_at(8);
         let (key, value) = entry.split_at(keylen);
         self.writeset.borrow_mut().push(KV::new(
@@ -215,6 +229,42 @@ impl ProxyDB {
     /// The current value of the credit for the extension.
     pub fn db_credit(&self) -> u64 {
         self.db_credit.borrow().clone()
+    }
+
+    /// This method send a request to the server to commit the transaction.
+    pub fn commit(&self) {
+        if self.readset.borrow().len() > 0 || self.writeset.borrow().len() > 0 {
+            let mut table_id = 0;
+            let mut key_len = 0;
+            let mut val_len = 0;
+
+            // find the table_id for the transaction.
+            let args = self.args();
+            let (table, _) = args.split_at(8);
+            for (idx, e) in table.iter().enumerate() {
+                table_id |= (*e as u64) << (idx << 3);
+            }
+
+            // Find the key length and value length for records in RWset.
+            if self.readset.borrow().len() > 1 {
+                key_len = self.readset.borrow()[0].key.len();
+                val_len = self.readset.borrow()[0].value.len();
+            }
+
+            if key_len == 0 {
+                key_len = self.writeset.borrow()[0].key.len();
+                val_len = self.writeset.borrow()[0].value.len();
+            }
+
+            self.sender.send_commit(
+                self.tenant,
+                table_id,
+                &self.commit_payload.borrow(),
+                self.parent_id,
+                key_len as u16,
+                val_len as u16,
+            );
+        }
     }
 }
 

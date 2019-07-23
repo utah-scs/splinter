@@ -65,6 +65,9 @@ pub struct Container {
     // The actual generator/coroutine containing the extension's code to be
     // executed inside the database.
     gen: Box<Generator<Yield = u64, Return = u64>>,
+
+    // The identifier to uniquely identify a task.
+    id: u64,
 }
 
 // Implementation of methods on Container.
@@ -84,7 +87,12 @@ impl Container {
     /// # Return
     ///
     /// A container that when scheduled, runs the extension.
-    pub fn new(prio: TaskPriority, context: Rc<ProxyDB>, ext: Arc<Extension>) -> Container {
+    pub fn new(
+        prio: TaskPriority,
+        context: Rc<ProxyDB>,
+        ext: Arc<Extension>,
+        id: u64,
+    ) -> Container {
         // The generator is initialized to a dummy. The first call to run() will
         // retrieve the actual generator from the extension.
         Container {
@@ -98,6 +106,7 @@ impl Container {
                 yield 0;
                 return 0;
             }),
+            id: id,
         }
     }
 }
@@ -189,6 +198,9 @@ impl Task for Container {
         Packet<UdpHeader, EmptyMetadata>,
         Packet<UdpHeader, EmptyMetadata>,
     )> {
+        if let Some(proxydb) = self.db.get_mut() {
+            proxydb.commit();
+        }
         // First, drop the generator. Doing so ensures that self.db is the
         // only reference to the extension's execution context.
         self.gen = Box::new(|| {
@@ -216,5 +228,10 @@ impl Task for Container {
                 _ => {}
             }
         }
+    }
+
+    /// Refer to the `Task` trait for Documentation.
+    fn get_id(&self) -> u64 {
+        self.id.clone()
     }
 }
