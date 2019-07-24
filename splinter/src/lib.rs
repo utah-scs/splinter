@@ -19,9 +19,9 @@
 #![warn(missing_docs)]
 
 extern crate db;
+pub extern crate env_logger;
 extern crate sandstorm;
 extern crate util;
-pub extern crate env_logger;
 #[macro_use]
 pub extern crate log;
 
@@ -31,8 +31,10 @@ mod container;
 #[allow(unused_imports)]
 /// Needed to send and receive the packets on the client side.
 pub mod dispatch;
-/// Needed to handle and resume the pushback extension on the client side.
-pub mod sched;
+/// This module maintains the state for client side execution.
+pub mod nativestate;
 /// Proxy to the database on the client side, searches the local cache for
 /// data and if not present on the cache then issues a request to the server.
 pub mod proxy;
+/// Needed to handle and resume the pushback extension on the client side.
+pub mod sched;

@@ -49,6 +49,7 @@ use rand::distributions::{Normal, Sample};
 use rand::{Rng, SeedableRng, XorShiftRng};
 use rustlearn::prelude::*;
 use rustlearn::traits::SupervisedModel;
+use splinter::nativestate::PushbackState;
 use splinter::sched::TaskManager;
 use splinter::*;
 use util::model::{insert_global_model, insert_model, run_ml_application, GLOBAL_MODEL, MODEL};
@@ -227,7 +228,7 @@ where
     // Keeps track of the state of a multi-operation request. For example, an extension performs
     // four get operations before performing aggregation and all these get operations are dependent
     // on the previous value.
-    native_state: RefCell<HashMap<u64, u8>>,
+    native_state: RefCell<HashMap<u64, PushbackState>>,
 
     //Name of the extension for which the client is generating the requests.
     extname: String,
@@ -348,7 +349,9 @@ where
                     |tenant, key, _ord| self.sender.send_get(tenant, 1, key, curr),
                     |tenant, key, val, _ord| self.sender.send_put(tenant, 1, key, val, curr),
                 );
-                self.native_state.borrow_mut().entry(curr).or_insert(1);
+                self.native_state
+                    .borrow_mut()
+                    .insert(curr, PushbackState::new(2 * self.record_len));
                 self.outstanding += 1;
             } else {
                 // Configured to issue invoke() RPCs.
@@ -407,28 +410,35 @@ where
         // If there are packets, sample the latency of the server.
         if let Some(mut packets) = self.receiver.recv_res() {
             while let Some(packet) = packets.pop() {
-                if self.native == false {
-                    let curr = cycles::rdtsc();
-
-                    match parse_rpc_opcode(&packet) {
-                        OpCode::SandstormCommitRpc => {
-                            let p = packet.parse_header::<CommitResponse>();
-                            match p.get_header().common_header.status {
-                                RpcStatus::StatusTxAbort => {
-                                    info!("Abort");
-                                }
-
-                                RpcStatus::StatusOk => {
-                                    self.latencies
-                                        .push(curr - p.get_header().common_header.stamp);
-                                }
-
-                                _ => {}
+                let curr = cycles::rdtsc();
+                match parse_rpc_opcode(&packet) {
+                    OpCode::SandstormCommitRpc => {
+                        let p = packet.parse_header::<CommitResponse>();
+                        let timestamp = p.get_header().common_header.stamp;
+                        match p.get_header().common_header.status {
+                            RpcStatus::StatusTxAbort => {
+                                info!("Abort");
                             }
-                            self.recvd += 1;
-                            p.free_packet();
-                        }
 
+                            RpcStatus::StatusOk => {
+                                self.latencies.push(curr - timestamp);
+                            }
+
+                            _ => {}
+                        }
+                        self.recvd += 1;
+                        p.free_packet();
+                        if self.native == true {
+                            self.native_state.borrow_mut().remove(&timestamp);
+                        }
+                        continue;
+                    }
+
+                    _ => {}
+                }
+
+                if self.native == false {
+                    match parse_rpc_opcode(&packet) {
                         // The response corresponds to an invoke() RPC.
                         OpCode::SandstormInvokeRpc => {
                             let p = packet.parse_header::<InvokeResponse>();
@@ -469,21 +479,12 @@ where
                         // The opcode on the response identifies the RPC type.
                         OpCode::SandstormGetRpc => {
                             let p = packet.parse_header::<GetResponse>();
-                            unsafe {
-                                if self
-                                    .manager
-                                    .borrow()
-                                    .waiting
-                                    .contains_key(&p.get_header().common_header.stamp)
-                                {
-                                    self.manager.borrow_mut().update_rwset(
-                                        p.get_header().common_header.stamp,
-                                        p.get_payload(),
-                                        self.record_len,
-                                        self.key_len,
-                                    );
-                                }
-                            }
+                            self.manager.borrow_mut().update_rwset(
+                                p.get_header().common_header.stamp,
+                                p.get_payload(),
+                                self.record_len,
+                                self.key_len,
+                            );
                             p.free_packet();
                         }
 
@@ -495,24 +496,40 @@ where
                         OpCode::SandstormGetRpc => {
                             let p = packet.parse_header::<GetResponse>();
                             let timestamp = p.get_header().common_header.stamp;
-                            let count = *self.native_state.borrow().get(&timestamp).unwrap();
-                            if count == self.number as u8 {
-                                self.recvd += 1;
-                                self.outstanding -= 1;
-                                self.native_state.borrow_mut().remove(&timestamp);
-                            } else {
-                                self.workload.borrow_mut().abc(
-                                    |tenant, key, _ord| {
-                                        self.sender.send_get(tenant, 1, key, timestamp)
-                                    },
-                                    |tenant, key, val, _ord| {
-                                        self.sender.send_put(tenant, 1, key, val, timestamp)
-                                    },
-                                );
-                                if let Some(count) =
-                                    self.native_state.borrow_mut().get_mut(&timestamp)
-                                {
-                                    *count += 1;
+                            let tenant = p.get_header().common_header.tenant;
+                            let val_len = self.record_len - self.key_len - 9;
+                            if let Some(ref mut state) =
+                                self.native_state.borrow_mut().get_mut(&timestamp)
+                            {
+                                match p.get_header().common_header.status {
+                                    RpcStatus::StatusOk => {
+                                        let record = p.get_payload();
+                                        state.update_rwset(&record);
+                                        if state.op_num == self.number as u8 {
+                                            self.recvd += 1;
+                                            self.outstanding -= 1;
+                                            self.sender.send_commit(
+                                                tenant,
+                                                1,
+                                                &state.commit_payload,
+                                                timestamp,
+                                                self.key_len as u16,
+                                                val_len as u16,
+                                            );
+                                        } else {
+                                            self.workload.borrow_mut().abc(
+                                                |tenant, key, _ord| {
+                                                    self.sender.send_get(tenant, 1, key, timestamp)
+                                                },
+                                                |tenant, key, val, _ord| {
+                                                    self.sender
+                                                        .send_put(tenant, 1, key, val, timestamp)
+                                                },
+                                            );
+                                            state.op_num += 1;
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
 
@@ -521,7 +538,7 @@ where
                                 // free the packet.
                                 RpcStatus::StatusOk => {
                                     let mut response: f32 = 0.0;
-                                    let value = p.get_payload();
+                                    let value = p.get_payload().split_at(self.key_len + 9).1;
                                     let predict: Vec<f32> = bincode::deserialize(value).unwrap();
                                     GLOBAL_MODEL.with(|a_model| {
                                         if let Some(model) = (*a_model).borrow().get(&self.extname)

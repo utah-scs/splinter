@@ -438,37 +438,6 @@ where
                             p.free_packet();
                         }
 
-                        // The response corresponds to a get() or put() RPC.
-                        // The opcode on the response identifies the RPC type.
-                        OpCode::SandstormGetRpc => {
-                            let p = packet.parse_header::<GetResponse>();
-                            self.latencies
-                                .push(curr - p.get_header().common_header.stamp);
-                            unsafe {
-                                if self
-                                    .manager
-                                    .borrow()
-                                    .waiting
-                                    .contains_key(&p.get_header().common_header.stamp)
-                                {
-                                    self.manager.borrow_mut().update_rwset(
-                                        p.get_header().common_header.stamp,
-                                        p.get_payload(),
-                                        RECORD_SIZE,
-                                        self.key_len,
-                                    );
-                                }
-                            }
-                            p.free_packet();
-                        }
-
-                        OpCode::SandstormPutRpc => {
-                            let p = packet.parse_header::<PutResponse>();
-                            self.latencies
-                                .push(curr - p.get_header().common_header.stamp);
-                            p.free_packet();
-                        }
-
                         _ => packet.free_packet(),
                     }
                 } else {
@@ -481,7 +450,7 @@ where
                                 // free the packet.
                                 RpcStatus::StatusOk => {
                                     let timestamp = p.get_header().common_header.stamp;
-                                    let value = p.get_payload();
+                                    let value = p.get_payload().split_at(self.key_len + 9).1;;
                                     if value.len() != 40 {
                                         info!("Something is wrong with the size of the response");
                                     } else {

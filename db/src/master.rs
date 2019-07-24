@@ -689,7 +689,6 @@ impl Master {
         let mut table_id: TableId = 0;
         let mut key_length = 0;
         let mut rpc_stamp = 0;
-        let mut req_generator = GetGenerator::InvalidGenerator;
 
         {
             let hdr = req.get_header();
@@ -697,7 +696,6 @@ impl Master {
             table_id = hdr.table_id as TableId;
             key_length = hdr.key_length;
             rpc_stamp = hdr.common_header.stamp;
-            req_generator = hdr.generator.clone();
         }
 
         // Next, add a header to the response packet.
@@ -753,13 +751,10 @@ impl Master {
                 .and_then(| (opt, version) | {
                     if let Some(opt) = opt {
                                 let (k, value) = &opt;
-                                let mut result = Ok(());
                                 status = RpcStatus::StatusInternalError;
-                                if req_generator == GetGenerator::SandstormExtension {
-                                    let _result = res.add_to_payload_tail(1, pack(&optype));
-                                    let _ = res.add_to_payload_tail(size_of::<Version>(), &unsafe { transmute::<Version, [u8; 8]>(version) });
-                                    result = res.add_to_payload_tail(k.len(), &k[..]);
-                                }
+                                let _result = res.add_to_payload_tail(1, pack(&optype));
+                                let _ = res.add_to_payload_tail(size_of::<Version>(), &unsafe { transmute::<Version, [u8; 8]>(version) });
+                                let result = res.add_to_payload_tail(k.len(), &k[..]);
                                 match result {
                                     Ok(()) => {
                                         res.add_to_payload_tail(value.len(), &value[..]).ok()
