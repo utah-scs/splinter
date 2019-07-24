@@ -522,6 +522,19 @@ impl Master {
         }
     }
 
+    /// Adds a tenant and a table full of objects.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant_id`: Identifier of the tenant to be added. Any existing tenant with the same
+    ///                identifier will be overwritten.
+    /// * `table_id`:  Identifier of the table to be added to the tenant. This table will contain
+    ///                all the objects.
+    /// * `num`:       The number of objects to be added to the data table.
+    pub fn fill_ycsb(&self, _tenant_id: TenantId, _table_id: TableId, _num: u32) {
+        //TODO: Add the content
+    }
+
     /// Loads the get(), put(), tao(), and bad() extensions.
     ///
     /// # Arguments
@@ -582,10 +595,16 @@ impl Master {
             panic!("Failed to load analysis() extension.");
         }
 
-        // Load the pushback() extension.
+        // Load the auth() extension.
         let name = "../ext/auth/target/release/libauth.so";
         if self.extensions.load(name, tenant, "auth") == false {
             panic!("Failed to load auth() extension.");
+        }
+
+        // Load the ycsbt() extension.
+        let name = "../ext/auth/target/release/libycsbt.so";
+        if self.extensions.load(name, tenant, "ycsbt") == false {
+            panic!("Failed to load ycsbt() extension.");
         }
     }
 
