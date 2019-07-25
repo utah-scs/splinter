@@ -48,6 +48,10 @@ path = "src/bin/client/analysis.rs"
 name = "auth"
 path = "src/bin/client/auth.rs"
 
+[[bin]]
+name = "client"
+path = "src/bin/client/client.rs"
+
 [dependencies]
 bincode      = "1.0"
 rust-crypto  = "0.2.36"

@@ -602,7 +602,7 @@ impl Master {
         }
 
         // Load the ycsbt() extension.
-        let name = "../ext/auth/target/release/libycsbt.so";
+        let name = "../ext/ycsbt/target/release/libycsbt.so";
         if self.extensions.load(name, tenant, "ycsbt") == false {
             panic!("Failed to load ycsbt() extension.");
         }
