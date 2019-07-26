@@ -25,5 +25,20 @@ if [[ ! -f client.toml ]]; then
     exit -1
 fi
 
-# Run client.
-RUST_LOG=debug ./target/release/client
+# Remove any preexisting temp files.
+rm -f ../samples.temp
+
+# Run AUTH.
+RUST_LOG=debug ./target/release/client >> ../samples.temp
+
+# Calculate the total throughput.
+cat ../samples.temp | grep "AUTH"
+thrpt=$(cat ../samples.temp | grep "Client Throughput" | \
+        awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+
+# Print out final numbers.
+m=$(cat ../samples.temp | grep ">>>" | awk '{ print $2 }')
+t=$(cat ../samples.temp | grep ">>>" | awk '{ print $3 }')
+echo ""
+echo "Median(ns): $m, Tail(ns): $t, Throughput(op/s): $thrpt"
+rm -f ../samples.temp
