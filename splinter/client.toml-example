@@ -28,6 +28,13 @@ install_addr = "127.0.0.1:7700"
 
 ############################### GENERIC CLIENT CONFIG ##########################
 
+# The workload to setup the client for. Supported workloads: YCSBT.
+workload = "YCSBT"
+
+# If true, client generates open loop-load, otherwise the client generates
+# closed-loop load.
+open_load = false
+
 # If true, client's send invoke() based RPC requests to the server. If false,
 # regular get() and put() operations are used.
 use_invoke = true

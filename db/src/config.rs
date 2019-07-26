@@ -156,6 +156,10 @@ pub struct ClientConfig {
     /// Server network endpoint to install new extensions.
     pub install_addr: String,
 
+    /// Type of workload; YCSBT etc.
+    pub workload: String,
+    /// This parameter decides the load type; open-loop load or closed-loop load.
+    pub open_load: bool,
     /// This parameter decides the requests type; native or extension.
     pub use_invoke: bool,
 
