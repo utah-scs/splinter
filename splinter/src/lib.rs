@@ -39,4 +39,4 @@ pub mod proxy;
 /// Needed to handle and resume the pushback extension on the client side.
 pub mod sched;
 ///
-pub mod sendrecv;
+pub mod workload;

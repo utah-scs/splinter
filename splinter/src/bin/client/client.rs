@@ -43,30 +43,41 @@ use db::rpc::parse_rpc_opcode;
 use db::wireformat::*;
 
 use splinter::sched::TaskManager;
-use splinter::sendrecv::SendRecv;
+use splinter::workload::Workload;
 use splinter::*;
 
 // Flag to indicate that the client has finished sending and receiving the packets.
 static mut FINISHED: bool = false;
 
 ///
-struct Client<T, C>
+struct Client<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
-    C: SendRecv,
 {
     // The network stack required to receives RPC response packets from a network port.
     receiver: dispatch::Receiver<T>,
 
     // Network stack required to actually send RPC requests out the network.
     sender: Arc<dispatch::Sender>,
+
     //
-    sendrecv: C,
+    workload: Box<Workload>,
+
+    // This parameter decides the type of load the client generates; closed loop or open loop load.
+    open_load: bool,
 
     // If true, RPC requests corresponding to native get() and put() operations are sent out. If
     // false, invoke() based RPC requests are sent out.
     native: bool,
 
+    // The inverse of the rate at which requests are to be generated. Basically, the time interval
+    // between two request generations in cycles.
+    rate_inv: u64,
+
+    // The time stamp at which the next request must be issued in cycles.
+    next: u64,
+
+    //
     table_id: u64,
 
     // The number of response packets to wait for before printing out statistics.
@@ -110,27 +121,28 @@ where
     record_len: usize,
 }
 
-impl<T, C> Client<T, C>
+impl<T> Client<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
-    C: SendRecv,
 {
     ///
     fn new(
         rx_port: T,
         config: &config::ClientConfig,
-        tx_port: CacheAligned<PortQueue>,
-        dst_ports: u16,
-        sendrecv: C,
+        sender: Arc<dispatch::Sender>,
+        workload: Box<Workload>,
         master: bool,
         masterservice: Arc<Master>,
-    ) -> Client<T, C> {
+    ) -> Client<T> {
         let resps = 34 * 1000 * 1000;
         Client {
             receiver: dispatch::Receiver::new(rx_port),
-            sender: Arc::new(dispatch::Sender::new(config, tx_port, dst_ports)),
-            sendrecv: sendrecv,
+            sender: Arc::clone(&sender),
+            workload: workload,
+            open_load: config.open_load,
             native: !config.use_invoke,
+            rate_inv: cycles::cycles_per_second() / config.req_rate as u64,
+            next: 0,
             table_id: 1,
             responses: resps,
             start: cycles::rdtsc(),
@@ -150,23 +162,33 @@ where
     #[inline]
     fn send_native(&mut self) {
         let curr = cycles::rdtsc();
-        match self.sendrecv.next_optype() {
+        match self.workload.next_optype() {
             OpCode::SandstormGetRpc => {
-                let (tenant, key) = self.sendrecv.get_get_request();
+                let (tenant, key) = self.workload.get_get_request();
                 self.sender.send_get(tenant, self.table_id, &key, curr);
                 self.outstanding += 1;
                 self.sent += 1;
             }
 
             OpCode::SandstormPutRpc => {
-                let (tenant, key, val) = self.sendrecv.get_put_request();
+                let (tenant, key, val) = self.workload.get_put_request();
                 self.sender
                     .send_put(tenant, self.table_id, &key, &val, curr);
                 self.outstanding += 1;
                 self.sent += 1;
             }
 
-            OpCode::SandstormMultiGetRpc => {}
+            OpCode::SandstormMultiGetRpc => {
+                let (tenant, n_keys, keys) = self.workload.get_multiget_request();
+                self.sender.send_multiget(
+                    tenant,
+                    self.table_id,
+                    self.key_len as u16,
+                    n_keys,
+                    &keys,
+                    curr,
+                );
+            }
 
             _ => {
                 info!("Invalid RPC request");
@@ -177,7 +199,7 @@ where
     #[inline]
     fn send_invoke(&mut self) {
         let curr = cycles::rdtsc();
-        let (tenant, request) = self.sendrecv.get_invoke_request();
+        let (tenant, request) = self.workload.get_invoke_request();
         let name_length = 8;
         self.sender.send_invoke(tenant, name_length, &request, curr);
         self.manager.borrow_mut().create_task(
@@ -187,6 +209,42 @@ where
             name_length as usize,
             Arc::clone(&self.sender),
         );
+        self.outstanding += 1;
+        self.sent += 1;
+    }
+
+    fn send(&mut self) {
+        if self.requests <= self.sent {
+            return;
+        }
+
+        if self.open_load == true {
+            let curr = cycles::rdtsc();
+            if curr >= self.next || self.next == 0 {
+                if self.native == true {
+                    self.send_native();
+                } else {
+                    // For invoke() mode, limit the pushback task-queue length to 32 to avoid
+                    // sharp increase in latency.
+                    if self.manager.borrow().get_queue_len() < 32 {
+                        self.send_invoke();
+                    }
+                }
+                self.next = self.start + self.sent * self.rate_inv;
+            }
+        } else {
+            while self.outstanding < 32 {
+                if self.native == true {
+                    self.send_native();
+                } else {
+                    // For invoke() mode, limit the pushback task-queue length to 32 to avoid
+                    // sharp increase in latency.
+                    if self.manager.borrow().get_queue_len() < 32 {
+                        self.send_invoke();
+                    }
+                }
+            }
+        }
     }
 
     #[inline]
@@ -197,13 +255,32 @@ where
             OpCode::SandstormGetRpc => {
                 let p = packet.parse_header::<GetResponse>();
                 let timestamp = p.get_header().common_header.stamp;
-                self.latencies.push(curr - timestamp);
+                match p.get_header().common_header.status {
+                    RpcStatus::StatusOk => {
+                        self.latencies.push(curr - timestamp);
+                        self.workload.process_get_response(&p);
+                    }
+
+                    _ => {
+                        info!("Invalid native get() response");
+                    }
+                }
                 p.free_packet();
             }
+
             OpCode::SandstormPutRpc => {
                 let p = packet.parse_header::<PutResponse>();
                 let timestamp = p.get_header().common_header.stamp;
-                self.latencies.push(curr - timestamp);
+                match p.get_header().common_header.status {
+                    RpcStatus::StatusOk => {
+                        self.latencies.push(curr - timestamp);
+                        self.workload.process_put_response(&p);
+                    }
+
+                    _ => {
+                        info!("Invalid native put() response");
+                    }
+                }
                 p.free_packet();
             }
 
@@ -267,20 +344,6 @@ where
         }
     }
 
-    fn send(&mut self) {
-        if self.requests <= self.sent {
-            return;
-        }
-
-        while self.outstanding < 32 {
-            if self.native == true {
-                self.send_native();
-            } else {
-                self.send_invoke();
-            }
-        }
-    }
-
     fn recv(&mut self) {
         if self.stop > 0 {
             return;
@@ -330,10 +393,9 @@ where
 }
 
 // Implementation of the `Drop` trait on PushbackRecv.
-impl<T, C> Drop for Client<T, C>
+impl<T> Drop for Client<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
-    C: SendRecv,
 {
     fn drop(&mut self) {
         // Calculate & print the throughput for all client threads.
@@ -341,6 +403,8 @@ where
             "Client Throughput {}",
             self.recvd as f64 / cycles::to_seconds(self.stop - self.start)
         );
+
+        info!("{}", self.recvd);
 
         if self.stop == 0 {
             panic!("The client thread received only {} packets", self.recvd);
@@ -370,10 +434,9 @@ where
     }
 }
 
-impl<T, C> Executable for Client<T, C>
+impl<T> Executable for Client<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
-    C: SendRecv,
 {
     // Called internally by Netbricks.
     fn execute(&mut self) {
@@ -388,6 +451,13 @@ where
 
     fn dependencies(&mut self) -> Vec<usize> {
         vec![]
+    }
+}
+
+fn pick_client(config: &config::ClientConfig, sender: Arc<dispatch::Sender>) -> Box<Workload> {
+    match config.workload.as_str() {
+        "YCSBT" => Box::new(ycsbt::YCSBT::new(config, Arc::clone(&sender))),
+        _ => Box::new(ycsbt::YCSBT::new(config, Arc::clone(&sender))),
     }
 }
 
@@ -406,13 +476,20 @@ fn setup_send_recv<S>(
         std::process::exit(1);
     }
 
+    let sender = Arc::new(dispatch::Sender::new(
+        config,
+        ports[0].clone(),
+        config.server_udp_ports,
+    ));
+
+    let workload = pick_client(config, Arc::clone(&sender));
+
     // Add the receiver to a netbricks pipeline.
     match scheduler.add_task(Client::new(
         ports[0].clone(),
         config,
-        ports[0].clone(),
-        config.server_udp_ports as u16,
-        ycsbt::YCSBT::new(config),
+        sender,
+        workload,
         master,
         masterservice,
     )) {

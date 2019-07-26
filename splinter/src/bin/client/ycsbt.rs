@@ -19,15 +19,20 @@ extern crate splinter;
 
 use std::mem;
 use std::mem::transmute;
+use std::sync::Arc;
 
 use db::config::ClientConfig;
-use db::wireformat::OpCode;
+use db::e2d2::common::EmptyMetadata;
+use db::e2d2::interface::*;
+use db::log::*;
+use db::wireformat::{GetResponse, MultiGetResponse, OpCode, PutResponse};
 
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
 use zipf::ZipfDistribution;
 
-use self::splinter::sendrecv::SendRecv;
+use self::splinter::dispatch::Sender;
+use self::splinter::workload::Workload;
 
 pub struct YCSBT {
     put_pct: usize,
@@ -37,10 +42,11 @@ pub struct YCSBT {
     key_buf: Vec<u8>,
     value_buf: Vec<u8>,
     invoke_buf: Vec<u8>,
+    _sender: Arc<Sender>,
 }
 
 impl YCSBT {
-    pub fn new(config: &ClientConfig) -> YCSBT {
+    pub fn new(config: &ClientConfig, sender: Arc<Sender>) -> YCSBT {
         let seed: [u32; 4] = rand::random::<[u32; 4]>();
 
         let mut key_buf: Vec<u8> = Vec::with_capacity(config.key_len);
@@ -74,16 +80,29 @@ impl YCSBT {
             key_buf: key_buf,
             value_buf: value_buf,
             invoke_buf: invoke_buf,
+            _sender: sender,
         }
     }
 }
 
-impl SendRecv for YCSBT {
+impl Workload for YCSBT {
+    /// Lookup the `Workload` trait for documentation on this method.
+    fn next_optype(&mut self) -> OpCode {
+        let is_get = (self.rng.gen::<u32>() % 100) >= self.put_pct as u32;
+        if is_get == true {
+            OpCode::SandstormGetRpc
+        } else {
+            OpCode::SandstormPutRpc
+        }
+    }
+
+    /// Lookup the `Workload` trait for documentation on this method.
     fn get_invoke_request(&mut self) -> (u32, &[u8]) {
         let t = self.tenant_rng.sample(&mut self.rng) as u32;
         (t, self.invoke_buf.as_slice())
     }
 
+    /// Lookup the `Workload` trait for documentation on this method.
     fn get_get_request(&mut self) -> (u32, &[u8]) {
         let t = self.tenant_rng.sample(&mut self.rng) as u32;
 
@@ -94,8 +113,8 @@ impl SendRecv for YCSBT {
         (t, self.key_buf.as_slice())
     }
 
+    /// Lookup the `Workload` trait for documentation on this method.
     fn get_put_request(&mut self) -> (u32, &[u8], &[u8]) {
-        // Sample a tenant.
         let t = self.tenant_rng.sample(&mut self.rng) as u32;
 
         let k = self.key_rng.sample(&mut self.rng) as u32;
@@ -106,12 +125,24 @@ impl SendRecv for YCSBT {
         (t, self.key_buf.as_slice(), self.value_buf.as_slice())
     }
 
-    fn next_optype(&mut self) -> OpCode {
-        let is_get = (self.rng.gen::<u32>() % 100) >= self.put_pct as u32;
-        if is_get == true {
-            OpCode::SandstormGetRpc
-        } else {
-            OpCode::SandstormPutRpc
-        }
+    /// Lookup the `Workload` trait for documentation on this method.
+    fn get_multiget_request(&mut self) -> (u32, u32, &[u8]) {
+        info!("Should not be used");
+        (0, 0, &self.key_buf.as_slice())
     }
+
+    /// Lookup the `Workload` trait for documentation on this method.
+    fn process_get_response(&mut self, packet: &Packet<GetResponse, EmptyMetadata>) {
+        let record = packet.get_payload();
+        println!("Get {}", record.len());
+    }
+
+    /// Lookup the `Workload` trait for documentation on this method.
+    fn process_put_response(&mut self, packet: &Packet<PutResponse, EmptyMetadata>) {
+        let record = packet.get_payload();
+        println!("Put {}", record.len());
+    }
+
+    /// Lookup the `Workload` trait for documentation on this method.
+    fn process_multiget_response(&mut self, _packet: &Packet<MultiGetResponse, EmptyMetadata>) {}
 }
