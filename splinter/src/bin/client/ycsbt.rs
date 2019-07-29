@@ -159,11 +159,11 @@ impl Workload for YCSBT {
 
         let k = self.key_rng.sample(&mut self.rng) as u32;
         let k: [u8; 4] = unsafe { transmute(k.to_le()) };
-        self.key_buf[0..mem::size_of::<u32>()].copy_from_slice(&k);
+        self.multikey_buf[0..mem::size_of::<u32>()].copy_from_slice(&k);
 
         let k = self.key_rng.sample(&mut self.rng) as u32;
         let k: [u8; 4] = unsafe { transmute(k.to_le()) };
-        self.key_buf[30..mem::size_of::<u32>()].copy_from_slice(&k);
+        self.multikey_buf[30..34].copy_from_slice(&k);
 
         (t, 2, self.multikey_buf.as_slice())
     }

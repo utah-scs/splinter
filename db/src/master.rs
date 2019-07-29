@@ -1268,6 +1268,7 @@ impl Master {
         let gen = Box::new(move || {
             let mut n_recs: u32 = 0;
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
+            let optype: u8 = 0x1;
 
             let outcome =
                 // Check if the tenant exists. If it does, then check if the
@@ -1296,9 +1297,19 @@ impl Master {
                     let alloc: &Allocator = accessor(alloc);
                     let res = table
                         .get(key)
-                        .and_then(|entry| alloc.resolve(entry.value))
-                        .and_then(|(_k, value)| {
-                            res.add_to_payload_tail(value.len(), &value[..]).ok()
+                        .and_then(|entry| Some((alloc.resolve(entry.value), entry.version)))
+                        .and_then(|(opt, version)| {
+                            if let Some(opt) = opt {
+                                let (k, value) = &opt;
+                                res.add_to_payload_tail(1, pack(&optype)).ok();
+                                res.add_to_payload_tail(size_of::<Version>(), &unsafe {
+                                    transmute::<Version, [u8; 8]>(version)
+                                }).ok();
+                                res.add_to_payload_tail(k.len(), &k[..]).ok();
+                                res.add_to_payload_tail(value.len(), &value[..]).ok()
+                            } else {
+                                None
+                            }
                         });
 
                     // If the current lookup failed, then stop all lookups.
