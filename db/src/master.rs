@@ -531,8 +531,35 @@ impl Master {
     /// * `table_id`:  Identifier of the table to be added to the tenant. This table will contain
     ///                all the objects.
     /// * `num`:       The number of objects to be added to the data table.
-    pub fn fill_ycsb(&self, _tenant_id: TenantId, _table_id: TableId, _num: u32) {
-        //TODO: Add the content
+    pub fn fill_ycsb(&self, tenant_id: TenantId, table_id: TableId, num: u32) {
+        // Create a tenant containing the table.
+        let tenant = Tenant::new(tenant_id);
+        tenant.create_table(table_id);
+
+        let table = tenant
+            .get_table(table_id)
+            .expect("Failed to init test table.");
+
+        let mut key = vec![0; 30];
+        let mut val = vec![0; 100];
+
+        // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
+        // and a 100 Byte value.
+        for i in 1..(num + 1) {
+            let value: [u8; 4] = unsafe { transmute(255u32.to_le()) };
+            let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+            &key[0..4].copy_from_slice(&temp);
+            &val[0..4].copy_from_slice(&value);
+
+            let obj = self
+                .heap
+                .object(tenant_id, table_id, &key, &val)
+                .expect("Failed to create test object.");
+            table.put(obj.0, obj.1);
+        }
+
+        // Add the tenant.
+        self.insert_tenant(tenant);
     }
 
     /// Loads the get(), put(), tao(), and bad() extensions.

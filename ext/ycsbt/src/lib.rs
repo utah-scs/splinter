@@ -39,8 +39,12 @@ use sandstorm::db::DB;
 #[allow(unused_assignments)]
 pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
     Box::new(move || {
+        let key_len = 30;
+        let mut table: u64 = 0;
+        let mut optype = 0;
+        let mut keys = Vec::with_capacity(2 * key_len);
         let mut obj = None;
-
+        let mut multiobj = None;
         {
             // First off, retrieve the arguments to the extension.
             let args = db.args();
@@ -54,37 +58,81 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
                 return 1;
             }
 
+            let (op, rest) = args.split_at(1);
+            optype = op[0];
+
             // Next, split the arguments into a view over the table identifier
             // (first eight bytes), and a view over the key to be looked up.
             // De-serialize the table identifier into a u64.
-            let (s_table, key) = args.split_at(8);
+            let (s_table, key) = rest.split_at(8);
+            keys.extend_from_slice(key);
 
-            let mut table: u64 = 0;
             // Get the table id from the unwrapped arguments.
             for (idx, e) in s_table.iter().enumerate() {
                 table |= (*e as u64) << (idx << 3);
             }
 
-            // Finally, lookup the database for the object.
-            obj = db.get(table, key);
-        }
-
-        // Populate a response to the tenant.
-        match obj {
-            // If the object was found, write it to the response.
-            Some(val) => {
-                db.resp(val.read());
-                return 0;
-            }
-
-            // If the object was not found, write an error message to the
-            // response.
-            None => {
-                let error = "Object does not exist";
-                db.resp(error.as_bytes());
-                return 0;
+            if optype == 1 {
+                obj = db.get(table, key);
+            } else {
+                multiobj = db.multiget(table, key_len as u16, &keys);
             }
         }
+
+        if optype == 1 {
+            // Read operation
+            match obj {
+                Some(val) => {
+                    db.resp(val.read());
+                }
+
+                None => {
+                    let error = "Object does not exist";
+                    db.resp(error.as_bytes());
+                }
+            }
+        } else {
+            // Read-modify-write operation
+            match multiobj {
+                Some(vals) => {
+                    if vals.num() == 2 {
+                        let mut value1 = Vec::with_capacity(vals.len() / 2);
+                        let mut value2 = Vec::with_capacity(vals.len() / 2);
+                        let (key1, key2) = keys.split_at(key_len as usize);
+                        value1.extend_from_slice(vals.read());
+                        let _ = vals.next();
+                        value2.extend_from_slice(vals.read());
+                        if value1[0] > 0 {
+                            value1[0] -= 1;
+                            value2[0] += 1;
+                        } else if value2[0] > 0 {
+                            value2[0] -= 1;
+                            value1[0] += 1;
+                        }
+
+                        if let Some(mut buf1) = db.alloc(table, key1, value1.len() as u64) {
+                            if let Some(mut buf2) = db.alloc(table, key2, value2.len() as u64) {
+                                buf1.write_slice(&value1);
+                                buf2.write_slice(&value2);
+                                db.put(buf1);
+                                db.put(buf2);
+                                return 1;
+                            }
+                        }
+                    }
+
+                    let error = "Error";
+                    db.resp(error.as_bytes());
+                }
+
+                None => {
+                    let error = "Object does not exist";
+                    db.resp(error.as_bytes());
+                }
+            }
+        }
+
+        return 0;
 
         // XXX: This yield is required to get the compiler to compile this closure into a
         // generator. It is unreachable and benign.

@@ -133,6 +133,7 @@ where
         workload: Box<Workload>,
         master: bool,
         masterservice: Arc<Master>,
+        table_id: u64,
     ) -> Client<T> {
         let resps = 34 * 1000 * 1000;
         Client {
@@ -143,7 +144,7 @@ where
             native: !config.use_invoke,
             rate_inv: cycles::cycles_per_second() / config.req_rate as u64,
             next: 0,
-            table_id: 1,
+            table_id: table_id,
             responses: resps,
             start: cycles::rdtsc(),
             recvd: 0,
@@ -268,17 +269,17 @@ where
                 p.free_packet();
             }
 
-            OpCode::SandstormPutRpc => {
-                let p = packet.parse_header::<PutResponse>();
+            OpCode::SandstormMultiGetRpc => {
+                let p = packet.parse_header::<MultiGetResponse>();
                 let timestamp = p.get_header().common_header.stamp;
                 match p.get_header().common_header.status {
                     RpcStatus::StatusOk => {
                         self.latencies.push(curr - timestamp);
-                        self.workload.process_put_response(&p);
+                        self.workload.process_multiget_response(&p);
                     }
 
                     _ => {
-                        info!("Invalid native put() response");
+                        info!("Invalid native Multiget() response");
                     }
                 }
                 p.free_packet();
@@ -454,10 +455,14 @@ where
     }
 }
 
-fn pick_client(config: &config::ClientConfig, sender: Arc<dispatch::Sender>) -> Box<Workload> {
+fn pick_client(
+    table_id: u64,
+    config: &config::ClientConfig,
+    sender: Arc<dispatch::Sender>,
+) -> Box<Workload> {
     match config.workload.as_str() {
-        "YCSBT" => Box::new(ycsbt::YCSBT::new(config, Arc::clone(&sender))),
-        _ => Box::new(ycsbt::YCSBT::new(config, Arc::clone(&sender))),
+        "YCSBT" => Box::new(ycsbt::YCSBT::new(table_id, config, Arc::clone(&sender))),
+        _ => Box::new(ycsbt::YCSBT::new(table_id, config, Arc::clone(&sender))),
     }
 }
 
@@ -482,7 +487,8 @@ fn setup_send_recv<S>(
         config.server_udp_ports,
     ));
 
-    let workload = pick_client(config, Arc::clone(&sender));
+    let table_id = 1;
+    let workload = pick_client(table_id, config, Arc::clone(&sender));
 
     // Add the receiver to a netbricks pipeline.
     match scheduler.add_task(Client::new(
@@ -492,6 +498,7 @@ fn setup_send_recv<S>(
         workload,
         master,
         masterservice,
+        table_id,
     )) {
         Ok(_) => {
             info!(

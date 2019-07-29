@@ -41,30 +41,40 @@ pub struct YCSBT {
     tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,
     value_buf: Vec<u8>,
-    invoke_buf: Vec<u8>,
+    multikey_buf: Vec<u8>,
+    invoke_get: Vec<u8>,
+    invoke_get_modify: Vec<u8>,
     _sender: Arc<Sender>,
 }
 
 impl YCSBT {
-    pub fn new(config: &ClientConfig, sender: Arc<Sender>) -> YCSBT {
+    pub fn new(table_id: u64, config: &ClientConfig, sender: Arc<Sender>) -> YCSBT {
         let seed: [u32; 4] = rand::random::<[u32; 4]>();
 
         let mut key_buf: Vec<u8> = Vec::with_capacity(config.key_len);
         key_buf.resize(config.key_len, 0);
         let mut value_buf: Vec<u8> = Vec::with_capacity(config.value_len);
         value_buf.resize(config.value_len, 0);
+        let mut multikey_buf: Vec<u8> = Vec::with_capacity(2 * config.key_len);
+        multikey_buf.resize(2 * config.value_len, 0);
 
-        let payload_len = "ycsbt".as_bytes().len()
-            + mem::size_of::<u64>()
-            + mem::size_of::<u32>()
-            + mem::size_of::<u32>()
-            + config.key_len;
-        let mut invoke_buf: Vec<u8> = Vec::with_capacity(payload_len);
-        invoke_buf.extend_from_slice("ycsbt".as_bytes());
-        invoke_buf.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
-        invoke_buf.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(1u32.to_le()) });
-        invoke_buf.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(1u32.to_le()) });
-        invoke_buf.resize(payload_len, 0);
+        // The payload on an invoke() based get request consists of the extensions name ("ycsbt"),
+        // the table id to perform the lookup on, and the key to lookup.
+        let payload_len = "ycsbt".as_bytes().len() + mem::size_of::<u64>() + config.key_len;
+        let mut invoke_get: Vec<u8> = Vec::with_capacity(payload_len);
+        invoke_get.extend_from_slice("ycsbt".as_bytes());
+        invoke_get.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(table_id.to_le()) });
+        invoke_get.resize(payload_len, 0);
+
+        // The payload on an invoke() based get request consists of the extensions name ("ycsbt"),
+        // the table id to perform the lookup on, and the two keys to lookup and modify.
+        let payload_len =
+            "ycsbt".as_bytes().len() + mem::size_of::<u64>() + config.key_len + config.key_len;
+        let mut invoke_get_modify: Vec<u8> = Vec::with_capacity(payload_len);
+        invoke_get_modify.extend_from_slice("ycsbt".as_bytes());
+        invoke_get_modify
+            .extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(table_id.to_le()) });
+        invoke_get_modify.resize(payload_len, 0);
 
         YCSBT {
             put_pct: config.put_pct,
@@ -79,7 +89,9 @@ impl YCSBT {
             ),
             key_buf: key_buf,
             value_buf: value_buf,
-            invoke_buf: invoke_buf,
+            multikey_buf: multikey_buf,
+            invoke_get: invoke_get,
+            invoke_get_modify: invoke_get_modify,
             _sender: sender,
         }
     }
@@ -92,14 +104,29 @@ impl Workload for YCSBT {
         if is_get == true {
             OpCode::SandstormGetRpc
         } else {
-            OpCode::SandstormPutRpc
+            OpCode::SandstormMultiGetRpc
         }
     }
 
     /// Lookup the `Workload` trait for documentation on this method.
     fn get_invoke_request(&mut self) -> (u32, &[u8]) {
         let t = self.tenant_rng.sample(&mut self.rng) as u32;
-        (t, self.invoke_buf.as_slice())
+        let is_get = (self.rng.gen::<u32>() % 100) >= self.put_pct as u32;
+        if is_get == true {
+            let k = self.key_rng.sample(&mut self.rng) as u32;
+            let k: [u8; 4] = unsafe { transmute(k.to_le()) };
+            self.invoke_get[13..17].copy_from_slice(&k);
+            (t, self.invoke_get.as_slice())
+        } else {
+            let k = self.key_rng.sample(&mut self.rng) as u32;
+            let k: [u8; 4] = unsafe { transmute(k.to_le()) };
+            self.invoke_get_modify[13..17].copy_from_slice(&k);
+
+            let k = self.key_rng.sample(&mut self.rng) as u32;
+            let k: [u8; 4] = unsafe { transmute(k.to_le()) };
+            self.invoke_get_modify[43..47].copy_from_slice(&k);
+            (t, self.invoke_get_modify.as_slice())
+        }
     }
 
     /// Lookup the `Workload` trait for documentation on this method.
@@ -115,6 +142,7 @@ impl Workload for YCSBT {
 
     /// Lookup the `Workload` trait for documentation on this method.
     fn get_put_request(&mut self) -> (u32, &[u8], &[u8]) {
+        info!("Shouldn't be used for this application");
         let t = self.tenant_rng.sample(&mut self.rng) as u32;
 
         let k = self.key_rng.sample(&mut self.rng) as u32;
@@ -127,8 +155,17 @@ impl Workload for YCSBT {
 
     /// Lookup the `Workload` trait for documentation on this method.
     fn get_multiget_request(&mut self) -> (u32, u32, &[u8]) {
-        info!("Should not be used");
-        (0, 0, &self.key_buf.as_slice())
+        let t = self.tenant_rng.sample(&mut self.rng) as u32;
+
+        let k = self.key_rng.sample(&mut self.rng) as u32;
+        let k: [u8; 4] = unsafe { transmute(k.to_le()) };
+        self.key_buf[0..mem::size_of::<u32>()].copy_from_slice(&k);
+
+        let k = self.key_rng.sample(&mut self.rng) as u32;
+        let k: [u8; 4] = unsafe { transmute(k.to_le()) };
+        self.key_buf[30..mem::size_of::<u32>()].copy_from_slice(&k);
+
+        (t, 2, self.multikey_buf.as_slice())
     }
 
     /// Lookup the `Workload` trait for documentation on this method.
