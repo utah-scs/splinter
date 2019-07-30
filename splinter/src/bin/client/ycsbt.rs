@@ -19,13 +19,14 @@ extern crate splinter;
 
 use std::mem;
 use std::mem::transmute;
+use std::slice;
 use std::sync::Arc;
 
 use db::config::ClientConfig;
 use db::e2d2::common::EmptyMetadata;
 use db::e2d2::interface::*;
 use db::log::*;
-use db::wireformat::{GetResponse, MultiGetResponse, OpCode, PutResponse};
+use db::wireformat::{GetResponse, MultiGetResponse, OpCode, OpType, PutResponse};
 
 use rand::distributions::Sample;
 use rand::{Rng, SeedableRng, XorShiftRng};
@@ -44,7 +45,8 @@ pub struct YCSBT {
     multikey_buf: Vec<u8>,
     invoke_get: Vec<u8>,
     invoke_get_modify: Vec<u8>,
-    _sender: Arc<Sender>,
+    sender: Arc<Sender>,
+    table_id: u64,
 }
 
 impl YCSBT {
@@ -92,7 +94,8 @@ impl YCSBT {
             multikey_buf: multikey_buf,
             invoke_get: invoke_get,
             invoke_get_modify: invoke_get_modify,
-            _sender: sender,
+            sender: sender,
+            table_id: table_id,
         }
     }
 }
@@ -170,16 +173,66 @@ impl Workload for YCSBT {
 
     /// Lookup the `Workload` trait for documentation on this method.
     fn process_get_response(&mut self, packet: &Packet<GetResponse, EmptyMetadata>) {
+        let header = packet.get_header();
         let record = packet.get_payload();
-        println!("Get {}", record.len());
+        self.sender.send_commit(
+            header.common_header.tenant,
+            self.table_id,
+            record,
+            header.common_header.stamp,
+            30,
+            100,
+        );
     }
 
     /// Lookup the `Workload` trait for documentation on this method.
     fn process_put_response(&mut self, packet: &Packet<PutResponse, EmptyMetadata>) {
         let record = packet.get_payload();
-        println!("Put {}", record.len());
+        info!("Put {}", record.len());
     }
 
     /// Lookup the `Workload` trait for documentation on this method.
-    fn process_multiget_response(&mut self, _packet: &Packet<MultiGetResponse, EmptyMetadata>) {}
+    fn process_multiget_response(&mut self, packet: &Packet<MultiGetResponse, EmptyMetadata>) {
+        let mut value1: Vec<u8> = Vec::with_capacity(100);
+        let mut value2: Vec<u8> = Vec::with_capacity(100);
+        let mut commit_payload = Vec::with_capacity(4 * 139);
+        commit_payload.extend_from_slice(packet.get_payload());
+
+        let header = packet.get_header();
+        let records = packet.get_payload();
+        let (record1, record2) = records.split_at(139);
+        let (key1, v1) = record1.split_at(9).1.split_at(30);
+        let (key2, v2) = record2.split_at(9).1.split_at(30);
+        value1.extend_from_slice(v1);
+        value2.extend_from_slice(v2);
+        if value1[0] > 0 {
+            value1[0] -= 1;
+            value2[0] += 1;
+        } else if value2[0] > 0 {
+            value1[0] += 1;
+            value2[0] -= 1;
+        }
+
+        let ptr = &OpType::SandstormWrite as *const _ as *const u8;
+        let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+        let version: [u8; 8] = unsafe { transmute(0u64.to_le()) };
+        commit_payload.extend_from_slice(optype);
+        commit_payload.extend_from_slice(&version);
+        commit_payload.extend_from_slice(key1);
+        commit_payload.extend_from_slice(&value1);
+
+        commit_payload.extend_from_slice(optype);
+        commit_payload.extend_from_slice(&version);
+        commit_payload.extend_from_slice(key2);
+        commit_payload.extend_from_slice(&value2);
+
+        self.sender.send_commit(
+            header.common_header.tenant,
+            self.table_id,
+            &commit_payload,
+            header.common_header.stamp,
+            30,
+            100,
+        );
+    }
 }

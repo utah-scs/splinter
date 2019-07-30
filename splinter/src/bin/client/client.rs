@@ -249,16 +249,14 @@ where
     }
 
     #[inline]
-    fn recv_native(&mut self, curr: u64, packet: Packet<UdpHeader, EmptyMetadata>) {
+    fn recv_native(&mut self, _curr: u64, packet: Packet<UdpHeader, EmptyMetadata>) {
         //TODO: Make it generic for each type of client, maybe forward
         // packet to client specific code for some processing.
         match parse_rpc_opcode(&packet) {
             OpCode::SandstormGetRpc => {
                 let p = packet.parse_header::<GetResponse>();
-                let timestamp = p.get_header().common_header.stamp;
                 match p.get_header().common_header.status {
                     RpcStatus::StatusOk => {
-                        self.latencies.push(curr - timestamp);
                         self.workload.process_get_response(&p);
                     }
 
@@ -271,10 +269,8 @@ where
 
             OpCode::SandstormMultiGetRpc => {
                 let p = packet.parse_header::<MultiGetResponse>();
-                let timestamp = p.get_header().common_header.stamp;
                 match p.get_header().common_header.status {
                     RpcStatus::StatusOk => {
-                        self.latencies.push(curr - timestamp);
                         self.workload.process_multiget_response(&p);
                     }
 
@@ -289,7 +285,6 @@ where
                 packet.free_packet();
             }
         }
-        self.recvd += 1;
         self.outstanding -= 1;
     }
 
@@ -359,7 +354,7 @@ where
                         let timestamp = p.get_header().common_header.stamp;
                         match p.get_header().common_header.status {
                             RpcStatus::StatusTxAbort => {
-                                info!("Abort");
+                                self.latencies.push(curr - timestamp);
                             }
 
                             RpcStatus::StatusOk => {
@@ -399,6 +394,9 @@ where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
     fn drop(&mut self) {
+        if self.stop == 0 {
+            self.stop = cycles::rdtsc();
+        }
         // Calculate & print the throughput for all client threads.
         println!(
             "Client Throughput {}",
@@ -406,10 +404,6 @@ where
         );
 
         info!("{}", self.recvd);
-
-        if self.stop == 0 {
-            panic!("The client thread received only {} packets", self.recvd);
-        }
 
         // Calculate & print median & tail latency only on the master thread.
         if self.master {
