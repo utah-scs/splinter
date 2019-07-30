@@ -49,10 +49,10 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             // First off, retrieve the arguments to the extension.
             let args = db.args();
 
-            // Check that the arguments received is long enough to contain an
-            // 8 byte table id and a key to be looked up. If not, then write
-            // an error message to the response and return to the database.
-            if args.len() <= 8 {
+            // Check that the arguments received is long enough to contain an 1 bytes
+            // operation type, 8 byte table id and a key to be looked up. If not, then
+            // write an error message to the response and return to the database.
+            if args.len() <= 39 {
                 let error = "Invalid args";
                 db.resp(error.as_bytes());
                 return 1;
@@ -84,11 +84,13 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             match obj {
                 Some(val) => {
                     db.resp(val.read());
+                    return 0;
                 }
 
                 None => {
                     let error = "Object does not exist";
                     db.resp(error.as_bytes());
+                    return 1;
                 }
             }
         } else {
@@ -116,23 +118,23 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
                                 buf2.write_slice(&value2);
                                 db.put(buf1);
                                 db.put(buf2);
-                                return 1;
+                                return 0;
                             }
                         }
                     }
 
                     let error = "Error";
                     db.resp(error.as_bytes());
+                    return 1;
                 }
 
                 None => {
                     let error = "Object does not exist";
                     db.resp(error.as_bytes());
+                    return 1;
                 }
             }
         }
-
-        return 0;
 
         // XXX: This yield is required to get the compiler to compile this closure into a
         // generator. It is unreachable and benign.

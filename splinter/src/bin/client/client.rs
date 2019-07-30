@@ -200,8 +200,8 @@ where
     #[inline]
     fn send_invoke(&mut self) {
         let curr = cycles::rdtsc();
+        let name_length = self.workload.name_length();
         let (tenant, request) = self.workload.get_invoke_request();
-        let name_length = 8;
         self.sender.send_invoke(tenant, name_length, &request, curr);
         self.manager.borrow_mut().create_task(
             curr,

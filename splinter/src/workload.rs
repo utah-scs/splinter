@@ -31,6 +31,14 @@ pub trait Workload {
     /// The enum OpCode which indicates the operation type.
     fn next_optype(&mut self) -> OpCode;
 
+    /// This method returns the name length used in the invoke() payload. It helps
+    /// both client and server to parse the argument passed in the request payload.
+    ///
+    /// # Return
+    ///
+    /// The name length for the extension name in the request payload.
+    fn name_length(&self) -> u32;
+
     /// This method decides the arguements for the next invoke() operation.
     /// Usually, it changes call specific arguments in a vector and which
     /// is later added to the request payload.
