@@ -52,7 +52,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             // Check that the arguments received is long enough to contain an 1 bytes
             // operation type, 8 byte table id and a key to be looked up. If not, then
             // write an error message to the response and return to the database.
-            if args.len() <= 39 {
+            if args.len() <= 38 {
                 let error = "Invalid args";
                 db.resp(error.as_bytes());
                 return 1;
