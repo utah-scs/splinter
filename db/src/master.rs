@@ -522,6 +522,46 @@ impl Master {
         }
     }
 
+    /// Adds a tenant and a table full of objects.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant_id`: Identifier of the tenant to be added. Any existing tenant with the same
+    ///                identifier will be overwritten.
+    /// * `table_id`:  Identifier of the table to be added to the tenant. This table will contain
+    ///                all the objects.
+    /// * `num`:       The number of objects to be added to the data table.
+    pub fn fill_ycsb(&self, tenant_id: TenantId, table_id: TableId, num: u32) {
+        // Create a tenant containing the table.
+        let tenant = Tenant::new(tenant_id);
+        tenant.create_table(table_id);
+
+        let table = tenant
+            .get_table(table_id)
+            .expect("Failed to init test table.");
+
+        let mut key = vec![0; 30];
+        let mut val = vec![0; 100];
+
+        // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
+        // and a 100 Byte value.
+        for i in 1..(num + 1) {
+            let value: [u8; 4] = unsafe { transmute(255u32.to_le()) };
+            let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+            &key[0..4].copy_from_slice(&temp);
+            &val[0..4].copy_from_slice(&value);
+
+            let obj = self
+                .heap
+                .object(tenant_id, table_id, &key, &val)
+                .expect("Failed to create test object.");
+            table.put(obj.0, obj.1);
+        }
+
+        // Add the tenant.
+        self.insert_tenant(tenant);
+    }
+
     /// Loads the get(), put(), tao(), and bad() extensions.
     ///
     /// # Arguments
@@ -582,10 +622,16 @@ impl Master {
             panic!("Failed to load analysis() extension.");
         }
 
-        // Load the pushback() extension.
+        // Load the auth() extension.
         let name = "../ext/auth/target/release/libauth.so";
         if self.extensions.load(name, tenant, "auth") == false {
             panic!("Failed to load auth() extension.");
+        }
+
+        // Load the ycsbt() extension.
+        let name = "../ext/ycsbt/target/release/libycsbt.so";
+        if self.extensions.load(name, tenant, "ycsbt") == false {
+            panic!("Failed to load ycsbt() extension.");
         }
     }
 
@@ -1222,6 +1268,7 @@ impl Master {
         let gen = Box::new(move || {
             let mut n_recs: u32 = 0;
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
+            let optype: u8 = 0x1;
 
             let outcome =
                 // Check if the tenant exists. If it does, then check if the
@@ -1250,9 +1297,19 @@ impl Master {
                     let alloc: &Allocator = accessor(alloc);
                     let res = table
                         .get(key)
-                        .and_then(|entry| alloc.resolve(entry.value))
-                        .and_then(|(_k, value)| {
-                            res.add_to_payload_tail(value.len(), &value[..]).ok()
+                        .and_then(|entry| Some((alloc.resolve(entry.value), entry.version)))
+                        .and_then(|(opt, version)| {
+                            if let Some(opt) = opt {
+                                let (k, value) = &opt;
+                                res.add_to_payload_tail(1, pack(&optype)).ok();
+                                res.add_to_payload_tail(size_of::<Version>(), &unsafe {
+                                    transmute::<Version, [u8; 8]>(version)
+                                }).ok();
+                                res.add_to_payload_tail(k.len(), &k[..]).ok();
+                                res.add_to_payload_tail(value.len(), &value[..]).ok()
+                            } else {
+                                None
+                            }
                         });
 
                     // If the current lookup failed, then stop all lookups.
@@ -1581,6 +1638,7 @@ impl Master {
         // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
         // reference to Master in the generator below.
         let tenant = self.get_tenant(tenant_id);
+        let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
         let gen = Box::new(move || {
@@ -1601,7 +1659,8 @@ impl Master {
                         None
                     } else {
                         // TODO: Improve the code to avoid so much of deserialization.
-                        let mut tx = TX::new();
+                        let alloc: &Allocator = accessor(alloc);
+                        let mut tx = TX::new(alloc);
                         let records = req.get_payload();
                         for record in records.chunks(record_len) {
                             let (optype, rem) = record.split_at(1);
@@ -1623,7 +1682,7 @@ impl Master {
                             }
                         }
 
-                        match table.validate(&mut tx) {
+                        match table.validate(tenant_id, table_id, &mut tx) {
                             Ok(()) => {
                                 status = RpcStatus::StatusOk;
                                 Some(())

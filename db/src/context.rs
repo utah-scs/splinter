@@ -77,7 +77,7 @@ pub struct Context<'a> {
     allocs: Cell<usize>,
 
     // The buffer which maintains the read/write set per extension.
-    tx: RefCell<TX>,
+    tx: RefCell<TX<'a>>,
 
     // The credit which the extension has earned by making the db calls.
     db_credit: RefCell<u64>,
@@ -123,7 +123,7 @@ impl<'a> Context<'a> {
             tenant: tenant,
             heap: alloc,
             allocs: Cell::new(0),
-            tx: RefCell::new(TX::new()),
+            tx: RefCell::new(TX::new(alloc)),
             db_credit: RefCell::new(0),
             model: model,
         }
@@ -153,7 +153,7 @@ impl<'a> Context<'a> {
         }
 
         if let Some(table) = self.tenant.get_table(table_id) {
-            match table.validate(&mut *self.tx.borrow_mut()) {
+            match table.validate(self.tenant.id(), table_id, &mut *self.tx.borrow_mut()) {
                 Ok(()) => {
                     return (self.request, self.response.into_inner());
                 }

@@ -260,7 +260,7 @@ impl Table {
     /// # Return
     /// * `COMMIT`: if `tx` was serializable and its writes were applied to `self`.
     /// * `ABORT`: if a record version `tx` has changed.
-    pub fn validate(&self, tx: &mut TX) -> Decision {
+    pub fn validate(&self, tenant_id: u32, table_id: u64, tx: &mut TX) -> Decision {
         // Sorting RW set will avoid deadlock later when we
         // validate in parallel.
         tx.sort();
@@ -353,8 +353,12 @@ impl Table {
             if let Lock::WriteLocked(ref mut guard) = lock {
                 let map: &mut Map = &mut*guard;
                 if let Some(entry) = map.get_mut(key) {
+                    let obj = tx
+                        .heap
+                        .object(tenant_id, table_id, key, &record.get_object())
+                        .expect("Failed to create object.");
                     entry.version = version;
-                    entry.value = record.get_object();
+                    entry.value = obj.1;
                 } else {
                     assert!(false); // Bucket was locked, but value disappeared! Impossible.
                 }
@@ -373,6 +377,7 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::{Table, Version, TX, Record, COMMIT, ABORT};
+    use super::super::alloc::Allocator;
     use super::super::wireformat::{OpType};
     use bytes::{BufMut, Bytes, BytesMut};
 
@@ -503,8 +508,12 @@ mod tests {
         Bytes::from(&value[..])
     }
 
-    fn create_tx(setup: Vec<(bool, u8, u64)>) -> TX {
-        let mut tx = TX::new();
+    fn create_tx<'a>(setup: Vec<(bool, u8, u64)>) -> TX<'a> {
+        let alloc = Allocator::new();
+        let alloc = &alloc as *const Allocator;
+        let alloc = unsafe { &*alloc };
+
+        let mut tx = TX::new(alloc);
         setup.into_iter().for_each(| (read, key, version) | {
             let r = Record::new(
                 if read { OpType::SandstormRead } else { OpType::SandstormWrite },
@@ -536,7 +545,7 @@ mod tests {
             vec![(true, 0, 1)] // Read k0 v1.
         );
         // Unchanged, so commit.
-        assert_eq!(COMMIT, table.validate(&mut tx));
+        assert_eq!(COMMIT, table.validate(1, 1, &mut tx));
     }
 
     #[test]
@@ -546,7 +555,7 @@ mod tests {
             (true, 0, 1) // Read k0 v1.
         ]);
         table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
-        assert_eq!(ABORT, table.validate(&mut tx));
+        assert_eq!(ABORT, table.validate(1, 1, &mut tx));
     }
 
     #[test]
@@ -557,7 +566,7 @@ mod tests {
         ]);
         table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
         // WW is blind, so commit ok.
-        assert_eq!(COMMIT, table.validate(&mut tx));
+        assert_eq!(COMMIT, table.validate(1, 1, &mut tx));
     }
 
     #[test]
@@ -569,7 +578,7 @@ mod tests {
         ]);
         table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
         // Abort due to RW conflict.
-        assert_eq!(ABORT, table.validate(&mut tx));
+        assert_eq!(ABORT, table.validate(1, 1, &mut tx));
     }
 
     #[test]
@@ -579,7 +588,7 @@ mod tests {
             (true, 0, 1),  // Read k0 v1.
             (true, 0, 1),  // Read k0 v1.
         ]);
-        assert_eq!(COMMIT, table.validate(&mut tx));
+        assert_eq!(COMMIT, table.validate(1, 1, &mut tx));
     }
 
     #[test]
@@ -589,7 +598,7 @@ mod tests {
             (false, 0, 1),  // Write k0.
             (false, 0, 1),  // Write k0.
         ]);
-        assert_eq!(COMMIT, table.validate(&mut tx));
+        assert_eq!(COMMIT, table.validate(1, 1, &mut tx));
     }
 
     #[test]
@@ -600,7 +609,7 @@ mod tests {
             (false, 1, 99),  // Write k1 = 99 (initially version 1).
         ]);
         table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
-        assert_eq!(ABORT, table.validate(&mut tx));
+        assert_eq!(ABORT, table.validate(1, 1, &mut tx));
         assert_eq!(Version(1), table.get(&mkval(1)[..]).unwrap().version);
     }
 }
