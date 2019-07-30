@@ -1638,6 +1638,7 @@ impl Master {
         // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
         // reference to Master in the generator below.
         let tenant = self.get_tenant(tenant_id);
+        let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
         let gen = Box::new(move || {
@@ -1658,7 +1659,8 @@ impl Master {
                         None
                     } else {
                         // TODO: Improve the code to avoid so much of deserialization.
-                        let mut tx = TX::new();
+                        let alloc: &Allocator = accessor(alloc);
+                        let mut tx = TX::new(alloc);
                         let records = req.get_payload();
                         for record in records.chunks(record_len) {
                             let (optype, rem) = record.split_at(1);
@@ -1680,7 +1682,7 @@ impl Master {
                             }
                         }
 
-                        match table.validate(&mut tx) {
+                        match table.validate(tenant_id, table_id, &mut tx) {
                             Ok(()) => {
                                 status = RpcStatus::StatusOk;
                                 Some(())

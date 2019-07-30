@@ -13,25 +13,30 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use super::alloc::Allocator;
 use super::wireformat::Record;
 
 /// This type is used by the extension invocation to record the read-write set.
 /// And the read-write set is transferred back to the client on Pushback. Also,
 /// it is used by the table type to validate and commit the transaction.
-pub struct TX {
+pub struct TX<'a> {
     // This vector maintains the read-set for a transaction.
     reads: Vec<Record>,
 
     // This vector maintains the write-set for a transaction.
     writes: Vec<Record>,
+
+    /// Manager of the table heap. Required to allow writes to the database.
+    pub heap: &'a Allocator,
 }
 
-impl TX {
+impl<'a> TX<'a> {
     /// This method returns an object for TX type.
-    pub fn new() -> TX {
+    pub fn new(alloc: &'a Allocator) -> TX<'a> {
         TX {
             reads: Vec::with_capacity(4),
             writes: Vec::with_capacity(2),
+            heap: alloc,
         }
     }
 
