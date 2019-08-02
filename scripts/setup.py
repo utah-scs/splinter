@@ -37,12 +37,12 @@ def setupCargo():
     printColor("bold", "=============== Fixing Deps ==========================")
     fix = "cargo generate-lockfile; " + \
           "cargo update -p spin:0.4.10 --precise 0.4.7; " + \
-          "cargo update -p serde:1.0.94 --precise 1.0.67; " + \
-          "cargo update -p serde_derive:1.0.94 --precise 1.0.67; " + \
+          "cargo update -p serde:1.0.98 --precise 1.0.67; " + \
+          "cargo update -p serde_derive:1.0.98 --precise 1.0.67; " + \
           "cargo update -p env_logger:0.5.13 --precise 0.5.3; " + \
           "cargo update -p rustc-demangle:0.1.15 --precise 0.1.13; " + \
           "cargo update -p twox-hash:1.4.2 --precise 1.1.1; " + \
-          "cargo update -p backtrace:0.3.33 --precise 0.3.20; " + \
+          "cargo update -p backtrace:0.3.34 --precise 0.3.20; " + \
           "cargo update -p backtrace-sys:0.1.31 --precise 0.1.28; " + \
           "cargo update -p atty:0.2.13 --precise 0.2.11; "
 

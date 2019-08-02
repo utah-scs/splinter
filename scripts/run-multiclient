@@ -35,7 +35,7 @@ run() {
         do
             rm -rf sample.temp
             # The client is using the rate just to wait for Total/rate time.
-            parallel-ssh -h clients.txt -t 0 -i "cd splinter; sudo ./scripts/run-$extname $size $ord" >> sample.temp 2>&1
+            parallel-ssh -h clients.txt -x "-oStrictHostKeyChecking=no  -i ~/.ssh/id_rsa" -t 0 -i "cd splinter; sudo ./scripts/run-$extname $size $ord" >> sample.temp 2>&1
             thrpt=$(cat sample.temp | grep "PUSHBACK Throughput" | \
                                  awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
 
