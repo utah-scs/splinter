@@ -15,6 +15,7 @@
 
 #![feature(use_extern_macros)]
 
+extern crate bytes;
 extern crate db;
 extern crate rand;
 extern crate sandstorm;
@@ -32,6 +33,7 @@ use std::mem;
 use std::mem::transmute;
 use std::sync::Arc;
 
+use self::bytes::Bytes;
 use db::config;
 use db::cycles;
 use db::e2d2::allocators::*;
@@ -45,6 +47,7 @@ use db::wireformat::*;
 use rand::distributions::{Normal, Sample};
 use rand::{Rng, SeedableRng, XorShiftRng};
 use splinter::nativestate::PushbackState;
+use splinter::proxy::KV;
 use splinter::sched::TaskManager;
 use splinter::*;
 use zipf::ZipfDistribution;
@@ -532,17 +535,36 @@ where
                                             );
                                             self.outstanding -= 1;
                                         } else {
-                                            // Send the packet with same tenantid, curr etc.
-                                            let val = record.split_at(self.key_len + 9).1;
-                                            self.sender.send_get(tenant, 1, &val[0..30], timestamp);
-                                            state.op_num += 1;
+                                            match parse_record_optype(record) {
+                                                OpType::SandstormRead => {
+                                                    // Send the packet with same tenantid, curr etc.
+                                                    let record = record.split_at(1).1;
+                                                    let (version, entry) = record.split_at(8);
+                                                    let (key, val) = entry.split_at(self.key_len);
+                                                    // Deserializing is required in actual client;
+                                                    // even we are doing the same for Pushback.
+                                                    let kv = KV::new(
+                                                        Bytes::from(version),
+                                                        Bytes::from(key),
+                                                        Bytes::from(val),
+                                                    );
+                                                    self.sender.send_get(
+                                                        tenant,
+                                                        1,
+                                                        &kv.value[0..30],
+                                                        timestamp,
+                                                    );
+                                                    state.op_num += 1;
+                                                }
+                                                _ => {
+                                                    info!("The record is expected to be SandstormRead type");
+                                                }
+                                            }
                                         }
                                     }
 
                                     _ => {}
                                 }
-                            } else {
-                                info!("No state for request id {}", timestamp);
                             }
                             p.free_packet();
                         }

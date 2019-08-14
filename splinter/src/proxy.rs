@@ -54,7 +54,7 @@ impl KV {
     /// # Return
     ///
     /// A record with a key and a value.
-    fn new(rversion: Bytes, rkey: Bytes, rvalue: Bytes) -> KV {
+    pub fn new(rversion: Bytes, rkey: Bytes, rvalue: Bytes) -> KV {
         KV {
             version: rversion,
             key: rkey,
