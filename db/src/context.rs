@@ -183,7 +183,17 @@ impl<'a> Context<'a> {
     /// from StatusOk to StatusPushback. Besides that the function also modifies the response
     /// packet to remove the old response and attach the records which the extension has read or
     /// written(Read Write Set), so that the client can resume the execution on its end.
-    pub fn prepare_for_pushback(&self) {
+    ///
+    /// # Return
+    ///
+    /// A tupule whose first member is the request packet/buffer for the extension, and whose second
+    /// member is the response packet/buffer that can be sent back to the tenant.
+    pub fn prepare_for_pushback(
+        self,
+    ) -> (
+        Packet<InvokeRequest, EmptyMetadata>,
+        Packet<InvokeResponse, EmptyMetadata>,
+    ) {
         self.response
             .borrow_mut()
             .get_mut_header()
@@ -232,6 +242,7 @@ impl<'a> Context<'a> {
                 self.resp(record.get_object().as_ref());
             }
         }
+        return (self.request, self.response.into_inner());
     }
 
     /// This method returns the value of the credit which an extension has accumulated over time.
