@@ -246,12 +246,12 @@ impl ProxyDB {
             }
 
             // Find the key length and value length for records in RWset.
-            if self.readset.borrow().len() > 1 {
+            if self.readset.borrow().len() > 0 {
                 key_len = self.readset.borrow()[0].key.len();
                 val_len = self.readset.borrow()[0].value.len();
             }
 
-            if key_len == 0 {
+            if key_len == 0 && self.writeset.borrow().len() > 0 {
                 key_len = self.writeset.borrow()[0].key.len();
                 val_len = self.writeset.borrow()[0].value.len();
             }

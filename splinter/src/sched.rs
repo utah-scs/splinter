@@ -120,7 +120,9 @@ impl TaskManager {
     /// # Arguments
     /// *`id`: The unique identifier for the task.
     pub fn delete_task(&mut self, id: u64) {
-        self.waiting.remove(&id);
+        if self.waiting.remove(&id).is_none() == true {
+            info!("No task to delete with id {}", id);
+        }
     }
 
     /// Find the number of tasks waiting in the ready queue.
