@@ -634,10 +634,12 @@ where
         while let Some(request) = requests.pop() {
             // Set the destination ip address on the response IP header.
             let ip = request.deparse_header(common::IP_HDR_LEN);
+            self.resp_ip_header.set_src(ip.get_header().dst());
             self.resp_ip_header.set_dst(ip.get_header().src());
 
             // Set the destination mac address on the response MAC header.
             let mac = ip.deparse_header(common::MAC_HDR_LEN);
+            self.resp_mac_header.set_src(mac.get_header().dst());
             self.resp_mac_header.set_dst(mac.get_header().src());
 
             let request = mac.parse_header::<IpHeader>().parse_header::<UdpHeader>();
@@ -653,6 +655,9 @@ where
                     .expect("ERROR: Failed to add response UDP header");
 
                 // Set the destination port on the response UDP header.
+                response
+                    .get_mut_header()
+                    .set_src_port(request.get_header().dst_port());
                 response
                     .get_mut_header()
                     .set_dst_port(request.get_header().src_port());
