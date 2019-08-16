@@ -1013,16 +1013,16 @@ pub enum OpType {
 /// be of this type.
 pub struct Record {
     /// This variable shows the type of operation for the record, Read or Write.
-    optype: OpType,
+    pub optype: OpType,
 
     /// The version number for the record.
-    version: Version,
+    pub version: Version,
 
     /// This variable stores the Key for the record.
-    key: Bytes,
+    pub key: Bytes,
 
     /// This variable stores the Value for the record.
-    object: Bytes,
+    pub object: Bytes,
 }
 
 impl Record {

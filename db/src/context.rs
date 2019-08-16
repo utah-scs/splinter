@@ -220,26 +220,26 @@ impl<'a> Context<'a> {
 
             // Add the read-set to the pushback response.
             for record in self.tx.borrow_mut().reads().iter() {
-                let ptr = &record.get_optype() as *const _ as *const u8;
+                let ptr = &record.optype as *const _ as *const u8;
                 let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
                 self.resp(optype);
-                let ptr = &record.get_version() as *const _ as *const u8;
+                let ptr = &record.version as *const _ as *const u8;
                 let version = unsafe { slice::from_raw_parts(ptr, mem::size_of::<Version>()) };
                 self.resp(version);
-                self.resp(record.get_key().as_ref());
-                self.resp(record.get_object().as_ref());
+                self.resp(record.key.as_ref());
+                self.resp(record.object.as_ref());
             }
 
             // Add the write-set to the pushback response.
             for record in self.tx.borrow_mut().writes().iter() {
-                let ptr = &record.get_optype() as *const _ as *const u8;
+                let ptr = &record.optype as *const _ as *const u8;
                 let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
                 self.resp(optype);
-                let ptr = &record.get_version() as *const _ as *const u8;
+                let ptr = &record.version as *const _ as *const u8;
                 let version = unsafe { slice::from_raw_parts(ptr, mem::size_of::<Version>()) };
                 self.resp(version);
-                self.resp(record.get_key().as_ref());
-                self.resp(record.get_object().as_ref());
+                self.resp(record.key.as_ref());
+                self.resp(record.object.as_ref());
             }
         }
         return (self.request, self.response.into_inner());
@@ -274,7 +274,7 @@ impl<'a> DB for Context<'a> {
                     .and_then(| (opt, version) | {
                         if let Some(opt) = opt {
                             let (k, v) = opt;
-                            self.tx.borrow_mut().record_get(Record::new(OpType::SandstormRead, version, k.clone(), v.clone()));
+                            self.tx.borrow_mut().record_get(Record::new(OpType::SandstormRead, version, k, v.clone()));
                             *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
                             unsafe { Some(ReadBuf::new(v)) }
                         } else{
@@ -307,7 +307,7 @@ impl<'a> DB for Context<'a> {
                             self.tx.borrow_mut().record_get(Record::new(
                                 OpType::SandstormRead,
                                 version,
-                                k.clone(),
+                                k,
                                 v.clone(),
                             ));
                             objs.push(v);
@@ -363,8 +363,8 @@ impl<'a> DB for Context<'a> {
                     self.tx.borrow_mut().record_put(Record::new(
                         OpType::SandstormWrite,
                         entry.version,
-                        k.clone(),
-                        buf.clone(),
+                        k,
+                        buf,
                     ));
                     *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
                     true
