@@ -15,14 +15,14 @@
 
 use hashbrown::HashMap;
 
+use bytes::Bytes;
 use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use bytes::{Bytes};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::ops::Deref;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::tx::{TX};
-use super::wireformat::{Record};
 use super::cycles;
+use super::tx::TX;
+use super::wireformat::Record;
 
 // The number of buckets in the hash table. Must be a power of two.
 // If you want to change this number, then you will also have to modify
@@ -33,9 +33,9 @@ use super::cycles;
 //     32 buckets: 14.4 Million ops/s (read-only), 7.2 Million ops/s (50-50)
 //     64 buckets: 17.0 Million ops/s (read-only)
 //    128 buckets: 18.5 Million ops/s (read-only), 12.3 Million ops/s (50-50)
-const N_BUCKETS : usize = 128;
+const N_BUCKETS: usize = 128;
 
-#[derive(Copy,Clone,PartialEq,Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 /// Each Entry in a Table has an associated Version that is per-key monotonic.
 /// This is used for concurrency control to identify when the value associated
 /// with a key has changed.
@@ -45,11 +45,11 @@ pub struct Version(u64);
 /// An Entry in a Table which stores metadata about the stored value and a smart
 /// pointer to the value itself.
 pub struct Entry {
-  /// A unique, per-table-key monotonic id for the value associated with this
-  /// verison.
-  pub version: Version,
-  /// A ref-counted smart pointer to a stored value.
-  pub value: Bytes,
+    /// A unique, per-table-key monotonic id for the value associated with this
+    /// verison.
+    pub version: Version,
+    /// A ref-counted smart pointer to a stored value.
+    pub value: Bytes,
 }
 
 /// Indicates commit (Ok(())) or abort (Err(())) decision from validate().
@@ -188,7 +188,7 @@ impl Table {
         let map = self.maps[Self::bucket(key)].read();
 
         // Perform the lookup, and return.
-        return map.get(key).and_then(| entry | { Some((*entry).clone()) });
+        return map.get(key).and_then(|entry| Some((*entry).clone()));
     }
 
     /// This function writes an object into a table.
@@ -214,7 +214,7 @@ impl Table {
         // sure that its version number is higher than any version that
         // could have previously been associated with this key.
         let version = Version(self.max_deleted_version.load(Ordering::Relaxed) + 1);
-        return map.insert(key, Entry{version, value});
+        return map.insert(key, Entry { version, value });
     }
 
     /// This function deletes an object from a table.
@@ -256,7 +256,7 @@ impl Table {
     ///         Contains the set of keys read and written along with
     ///         version numbers for records that were read.
     ///         validate() is non-destructive to `tx`.
-    /// 
+    ///
     /// # Return
     /// * `COMMIT`: if `tx` was serializable and its writes were applied to `self`.
     /// * `ABORT`: if a record version `tx` has changed.
@@ -268,11 +268,11 @@ impl Table {
         // Used to track lock guards for each bucket in the table
         // for this transaction.
         enum Lock<'a> {
-            Unlocked, // Bucket not yet locked by this tx.
-            ReadLocked(RwLockReadGuard<'a, Map>), // Bucket read-locked by tx.
-            WriteLocked(RwLockWriteGuard<'a, Map>) // Bucket write-locked by tx.
+            Unlocked,                               // Bucket not yet locked by this tx.
+            ReadLocked(RwLockReadGuard<'a, Map>),   // Bucket read-locked by tx.
+            WriteLocked(RwLockWriteGuard<'a, Map>), // Bucket write-locked by tx.
         }
-        
+
         // Create an array of N_BUCKETS lock guards; the unsafe code here is to get
         // around the fact that there isn't a way to initialize with Unlocked for each
         // element since Lock is non-Copy.
@@ -285,17 +285,17 @@ impl Table {
         };
 
         // Acquire write locks.
-        tx.writes().iter().for_each(| record | {
-            let bucket = Self::bucket(&record.get_key()[..]);
-            let lock = unsafe{ locks.get_unchecked_mut(bucket) };
+        tx.writes().iter().for_each(|record| {
+            let bucket = Self::bucket(&record.key[..]);
+            let lock = unsafe { locks.get_unchecked_mut(bucket) };
             match lock {
                 Lock::Unlocked => {
                     let guard = self.maps[bucket].write();
                     *lock = Lock::WriteLocked(guard);
-                },
+                }
                 Lock::WriteLocked(_guard) => {
                     // Nothing to do; already locked.
-                },
+                }
                 Lock::ReadLocked(_guard) => {
                     assert!(false); // Impossible; acquired further down.
                 }
@@ -303,11 +303,12 @@ impl Table {
         });
 
         fn record_version_ok<Guard>(guard: &Guard, record: &Record) -> Decision
-            where Guard: Deref<Target = Map>
+        where
+            Guard: Deref<Target = Map>,
         {
             let map: &Map = &*guard; // Convert from guard ref-like to actual Map ref.
-            if let Some(entry) = map.get(&record.get_key()[..]) {
-                if record.get_version() == entry.version {
+            if let Some(entry) = map.get(&record.key[..]) {
+                if record.version == entry.version {
                     COMMIT
                 } else {
                     ABORT
@@ -318,26 +319,28 @@ impl Table {
         }
 
         // Acquire read locks and validate each version as we go.
-        tx.reads().iter().map(| record | {
-            let bucket = Self::bucket(&record.get_key()[..]);
-            let lock = unsafe{ locks.get_unchecked_mut(bucket) };
-            match lock {
-                Lock::Unlocked => {
-                    let guard = self.maps[bucket].read();
-                    let result = record_version_ok(&guard, record);
-                    *lock = Lock::ReadLocked(guard);
-                    result
-                },
-                Lock::WriteLocked(guard) => {
-                    // Already locked; just validate.
-                    record_version_ok(guard, record)
-                },
-                Lock::ReadLocked(guard) => {
-                    // Already locked; just validate.
-                    record_version_ok(guard, record)
+        tx.reads()
+            .iter()
+            .map(|record| {
+                let bucket = Self::bucket(&record.key[..]);
+                let lock = unsafe { locks.get_unchecked_mut(bucket) };
+                match lock {
+                    Lock::Unlocked => {
+                        let guard = self.maps[bucket].read();
+                        let result = record_version_ok(&guard, record);
+                        *lock = Lock::ReadLocked(guard);
+                        result
+                    }
+                    Lock::WriteLocked(guard) => {
+                        // Already locked; just validate.
+                        record_version_ok(guard, record)
+                    }
+                    Lock::ReadLocked(guard) => {
+                        // Already locked; just validate.
+                        record_version_ok(guard, record)
+                    }
                 }
-            }
-        }).collect::<Decision>()?;
+            }).collect::<Decision>()?;
 
         // Allocate a version number/timestamp.
         // Note: the current approach depends A) on the monotonicity of rdtsc().
@@ -345,17 +348,17 @@ impl Table {
         let version: Version = Version(cycles::rdtsc());
 
         // Install write set.
-        tx.writes().iter().for_each(| record | {
-            let key = &record.get_key()[..];
+        tx.writes().iter().for_each(|record| {
+            let key = &record.key[..];
             let bucket = Self::bucket(key);
 
-            let lock = unsafe{ locks.get_unchecked_mut(bucket) };
+            let lock = unsafe { locks.get_unchecked_mut(bucket) };
             if let Lock::WriteLocked(ref mut guard) = lock {
-                let map: &mut Map = &mut*guard;
+                let map: &mut Map = &mut *guard;
                 if let Some(entry) = map.get_mut(key) {
                     let obj = tx
                         .heap
-                        .object(tenant_id, table_id, key, &record.get_object())
+                        .object(tenant_id, table_id, key, &record.object)
                         .expect("Failed to create object.");
                     entry.version = version;
                     entry.value = obj.1;
@@ -376,9 +379,9 @@ impl Table {
 // test basic functionality like reference counting etc.
 #[cfg(test)]
 mod tests {
-    use super::{Table, Version, TX, Record, COMMIT, ABORT};
     use super::super::alloc::Allocator;
-    use super::super::wireformat::{OpType};
+    use super::super::wireformat::OpType;
+    use super::{Record, Table, Version, ABORT, COMMIT, TX};
     use bytes::{BufMut, Bytes, BytesMut};
 
     // This unit test inserts a key-value pair into a table, performs a read
@@ -454,8 +457,7 @@ mod tests {
                 let new_val: &[u8] = &[2; 30];
 
                 // Create an object with the same key, but new value.
-                let mut obj: BytesMut = BytesMut::with_capacity(key.len() +
-                                                                new_val.len());
+                let mut obj: BytesMut = BytesMut::with_capacity(key.len() + new_val.len());
                 obj.put_slice(key);
                 obj.put_slice(new_val);
                 let mut obj: Bytes = obj.freeze();
@@ -514,12 +516,16 @@ mod tests {
         let alloc = unsafe { &*alloc };
 
         let mut tx = TX::new(alloc);
-        setup.into_iter().for_each(| (read, key, version) | {
+        setup.into_iter().for_each(|(read, key, version)| {
             let r = Record::new(
-                if read { OpType::SandstormRead } else { OpType::SandstormWrite },
+                if read {
+                    OpType::SandstormRead
+                } else {
+                    OpType::SandstormWrite
+                },
                 Version(version),
                 mkval(key),
-                mkval(key)
+                mkval(key),
             );
             if read {
                 tx.record_get(r);
@@ -542,7 +548,7 @@ mod tests {
     fn test_validate_rotx_ok() {
         let table = filled_table();
         let mut tx = create_tx(
-            vec![(true, 0, 1)] // Read k0 v1.
+            vec![(true, 0, 1)], // Read k0 v1.
         );
         // Unchanged, so commit.
         assert_eq!(COMMIT, table.validate(1, 1, &mut tx));
@@ -552,7 +558,7 @@ mod tests {
     fn test_validate_rotx_rwconflict() {
         let table = filled_table();
         let mut tx = create_tx(vec![
-            (true, 0, 1) // Read k0 v1.
+            (true, 0, 1), // Read k0 v1.
         ]);
         table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
         assert_eq!(ABORT, table.validate(1, 1, &mut tx));
@@ -562,10 +568,10 @@ mod tests {
     fn test_validate_rotx_wwconflict() {
         let table = filled_table();
         let mut tx = create_tx(vec![
-            (false, 0, 1) // Wrote k0, version becomes tsc.
+            (false, 0, 1), // Wrote k0, version becomes tsc.
         ]);
         table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
-        // WW is blind, so commit ok.
+                                       // WW is blind, so commit ok.
         assert_eq!(COMMIT, table.validate(1, 1, &mut tx));
     }
 
@@ -577,7 +583,7 @@ mod tests {
             (false, 0, 1), // Wrote k0, version becomes tsc.
         ]);
         table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
-        // Abort due to RW conflict.
+                                       // Abort due to RW conflict.
         assert_eq!(ABORT, table.validate(1, 1, &mut tx));
     }
 
@@ -585,8 +591,8 @@ mod tests {
     fn test_validate_double_read_lock_no_deadlock() {
         let table = filled_table();
         let mut tx = create_tx(vec![
-            (true, 0, 1),  // Read k0 v1.
-            (true, 0, 1),  // Read k0 v1.
+            (true, 0, 1), // Read k0 v1.
+            (true, 0, 1), // Read k0 v1.
         ]);
         assert_eq!(COMMIT, table.validate(1, 1, &mut tx));
     }
@@ -595,8 +601,8 @@ mod tests {
     fn test_validate_double_write_lock_no_deadlock() {
         let table = filled_table();
         let mut tx = create_tx(vec![
-            (false, 0, 1),  // Write k0.
-            (false, 0, 1),  // Write k0.
+            (false, 0, 1), // Write k0.
+            (false, 0, 1), // Write k0.
         ]);
         assert_eq!(COMMIT, table.validate(1, 1, &mut tx));
     }
@@ -605,8 +611,8 @@ mod tests {
     fn test_validate_aborted_discards_writes() {
         let table = filled_table();
         let mut tx = create_tx(vec![
-            (true, 0, 1),  // Read k0 v1.
-            (false, 1, 99),  // Write k1 = 99 (initially version 1).
+            (true, 0, 1),   // Read k0 v1.
+            (false, 1, 99), // Write k1 = 99 (initially version 1).
         ]);
         table.put(mkval(0), mkval(0)); // Other wrote k0 (v becomes 2).
         assert_eq!(ABORT, table.validate(1, 1, &mut tx));
