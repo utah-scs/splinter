@@ -194,52 +194,59 @@ impl<'a> Context<'a> {
         Packet<InvokeRequest, EmptyMetadata>,
         Packet<InvokeResponse, EmptyMetadata>,
     ) {
-        self.response
-            .borrow_mut()
-            .get_mut_header()
-            .common_header
-            .status = RpcStatus::StatusPushback;
+        {
+            let mut response = self.response.borrow_mut();
+            response.get_mut_header().common_header.status = RpcStatus::StatusPushback;
 
-        if INCLUDE_RWSET {
-            // Remove the original payload and append the read-write set to the response payload.
-            let payload_len = self.response.borrow().get_payload().len();
-            match self
-                .response
-                .borrow_mut()
-                .remove_from_payload_tail(payload_len)
-            {
-                Ok(_) => {}
+            if INCLUDE_RWSET {
+                // Remove the original payload and append the read-write set to the response payload.
+                let payload_len = response.get_payload().len();
+                match response.remove_from_payload_tail(payload_len) {
+                    Ok(_) => {}
 
-                Err(ref err) => {
-                    error!(
-                        "Unable to delete previous payload while doing pushback {}",
-                        err
-                    );
+                    Err(ref err) => {
+                        error!(
+                            "Unable to delete previous payload while doing pushback {}",
+                            err
+                        );
+                    }
                 }
-            }
 
-            // Add the read-set to the pushback response.
-            for record in self.tx.borrow_mut().reads().iter() {
-                let ptr = &record.optype as *const _ as *const u8;
-                let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
-                self.resp(optype);
-                let ptr = &record.version as *const _ as *const u8;
-                let version = unsafe { slice::from_raw_parts(ptr, mem::size_of::<Version>()) };
-                self.resp(version);
-                self.resp(record.key.as_ref());
-                self.resp(record.object.as_ref());
-            }
+                // Add the read-set to the pushback response.
+                for record in self.tx.borrow_mut().reads().iter() {
+                    let ptr = &record.optype as *const _ as *const u8;
+                    let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+                    response.add_to_payload_tail(optype.len(), optype).unwrap();
+                    let ptr = &record.version as *const _ as *const u8;
+                    let version = unsafe { slice::from_raw_parts(ptr, mem::size_of::<Version>()) };
+                    response
+                        .add_to_payload_tail(version.len(), version)
+                        .unwrap();
+                    response
+                        .add_to_payload_tail(record.key.len(), record.key.as_ref())
+                        .unwrap();
+                    response
+                        .add_to_payload_tail(record.object.len(), record.object.as_ref())
+                        .unwrap();
+                }
 
-            // Add the write-set to the pushback response.
-            for record in self.tx.borrow_mut().writes().iter() {
-                let ptr = &record.optype as *const _ as *const u8;
-                let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
-                self.resp(optype);
-                let ptr = &record.version as *const _ as *const u8;
-                let version = unsafe { slice::from_raw_parts(ptr, mem::size_of::<Version>()) };
-                self.resp(version);
-                self.resp(record.key.as_ref());
-                self.resp(record.object.as_ref());
+                // Add the write-set to the pushback response.
+                for record in self.tx.borrow_mut().writes().iter() {
+                    let ptr = &record.optype as *const _ as *const u8;
+                    let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+                    response.add_to_payload_tail(optype.len(), optype).unwrap();
+                    let ptr = &record.version as *const _ as *const u8;
+                    let version = unsafe { slice::from_raw_parts(ptr, mem::size_of::<Version>()) };
+                    response
+                        .add_to_payload_tail(version.len(), version)
+                        .unwrap();
+                    response
+                        .add_to_payload_tail(record.key.len(), record.key.as_ref())
+                        .unwrap();
+                    response
+                        .add_to_payload_tail(record.object.len(), record.object.as_ref())
+                        .unwrap();
+                }
             }
         }
         return (self.request, self.response.into_inner());
