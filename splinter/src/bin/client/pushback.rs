@@ -521,10 +521,11 @@ where
                                 match p.get_header().common_header.status {
                                     RpcStatus::StatusOk => {
                                         let record = p.get_payload();
-                                        state.update_rwset(&record);
+                                        state.update_rwset(&record, self.key_len);
                                         if state.op_num == self.num as u8 {
-                                            let start = cycles::rdtsc();
-                                            while cycles::rdtsc() - start < self.ord as u64 {}
+                                            /*let start = cycles::rdtsc();
+                                            while cycles::rdtsc() - start < self.ord as u64 {}*/
+                                            state.execute_task(self.num, self.ord);
                                             self.sender.send_commit(
                                                 tenant,
                                                 1,
