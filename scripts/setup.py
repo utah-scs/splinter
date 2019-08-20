@@ -37,14 +37,21 @@ def setupCargo():
     printColor("bold", "=============== Fixing Deps ==========================")
     fix = "cargo generate-lockfile; " + \
           "cargo update -p spin:0.4.10 --precise 0.4.7; " + \
-          "cargo update -p serde:1.0.98 --precise 1.0.67; " + \
-          "cargo update -p serde_derive:1.0.98 --precise 1.0.67; " + \
+          "cargo update -p serde:1.0.99 --precise 1.0.67; " + \
+          "cargo update -p serde_derive:1.0.99 --precise 1.0.67; " + \
           "cargo update -p env_logger:0.5.13 --precise 0.5.3; " + \
-          "cargo update -p rustc-demangle:0.1.15 --precise 0.1.13; " + \
-          "cargo update -p twox-hash:1.4.2 --precise 1.1.1; " + \
-          "cargo update -p backtrace:0.3.34 --precise 0.3.20; " + \
+          "cargo update -p rustc-demangle:0.1.16 --precise 0.1.13; " + \
+          "cargo update -p twox-hash:1.5.0 --precise 1.1.1; " + \
+          "cargo update -p backtrace:0.3.35 --precise 0.3.20; " + \
           "cargo update -p backtrace-sys:0.1.31 --precise 0.1.28; " + \
-          "cargo update -p atty:0.2.13 --precise 0.2.11; "
+          "cargo update -p atty:0.2.13 --precise 0.2.11; " + \
+          "cargo update -p getopts:0.2.21 --precise 0.2.19; " + \
+          "cargo update -p unicode-width:0.1.6 --precise 0.1.5; "
+
+    ext_fix = "cargo generate-lockfile; " + \
+          "cargo update -p spin:0.4.10 --precise 0.4.7; " + \
+          "cargo update -p serde:1.0.99 --precise 1.0.67; " + \
+          "cargo update -p serde_derive:1.0.99 --precise 1.0.67; "
 
     # Fix dependencies inside db.
     cmd = "cd db; " + fix + "cd ../"
@@ -58,6 +65,49 @@ def setupCargo():
     cmd = "cd ext/pushback; " + fix + "cd ../../"
     subprocess.check_call(cmd, shell=True)
 
+    # Fix dependencies inside ext/bad.
+    cmd = "cd ext/bad; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/tao.
+    cmd = "cd ext/tao; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/get.
+    cmd = "cd ext/get; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/put.
+    cmd = "cd ext/put; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/err.
+    cmd = "cd ext/err; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/long.
+    cmd = "cd ext/long; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/aggregate.
+    cmd = "cd ext/aggregate; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/scan.
+    cmd = "cd ext/scan; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/analysis.
+    cmd = "cd ext/analysis; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/auth.
+    cmd = "cd ext/auth; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/ycsbt.
+    cmd = "cd ext/ycsbt; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
 
     # Fix dependencies inside splinter.
     cmd = "cd splinter; " + fix + "cd ../"
