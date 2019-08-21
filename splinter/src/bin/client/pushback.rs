@@ -355,10 +355,9 @@ where
                     |tenant, key, _ord| self.sender.send_get(tenant, 1, key, curr),
                     |tenant, key, val, _ord| self.sender.send_put(tenant, 1, key, val, curr),
                 );
-                self.native_state.borrow_mut().insert(
-                    curr,
-                    PushbackState::new(self.ord as usize * self.record_len as usize),
-                );
+                self.native_state
+                    .borrow_mut()
+                    .insert(curr, PushbackState::new(self.num, self.record_len as usize));
                 self.outstanding += 1;
             } else {
                 // Configured to issue invoke() RPCs.

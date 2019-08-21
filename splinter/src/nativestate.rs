@@ -37,11 +37,11 @@ impl PushbackState {
     ///
     /// # Return
     /// A new object for PushbackState struct.
-    pub fn new(capacity: usize) -> PushbackState {
+    pub fn new(number: u32, record_len: usize) -> PushbackState {
         PushbackState {
             op_num: 1,
-            commit_payload: Vec::with_capacity(capacity),
-            readset: Vec::with_capacity(capacity),
+            commit_payload: Vec::with_capacity(number as usize * record_len),
+            readset: Vec::with_capacity(number as usize),
         }
     }
 

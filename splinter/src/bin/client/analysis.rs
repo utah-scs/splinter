@@ -351,7 +351,7 @@ where
                 );
                 self.native_state
                     .borrow_mut()
-                    .insert(curr, PushbackState::new(2 * self.record_len));
+                    .insert(curr, PushbackState::new(self.number, self.record_len));
                 self.outstanding += 1;
             } else {
                 // Configured to issue invoke() RPCs.
