@@ -23,10 +23,10 @@ run() {
     fi
 
     num_clients=$(cat clients.txt | grep "22" | wc -l)
-    sizes=(4)
+    sizes=(2)
     order=(0 1000 2000 3000 4000 5000 6000 7000 8000 9000 10000)
 
-    invoke="false"
+    invoke="true"
     echo "ASize Order 50 99 Thrpt" > pushback_invoke_"$invoke".data
 
     for size in ${sizes[@]}
@@ -35,10 +35,12 @@ run() {
         do
             rm -rf sample.temp
             # The client is using the rate just to wait for Total/rate time.
-            parallel-ssh -h clients.txt -x "-oStrictHostKeyChecking=no  -i ~/.ssh/id_rsa" -t 0 -i "cd splinter; sudo ./scripts/run-$extname $size $ord" >> sample.temp 2>&1
-            thrpt=$(cat sample.temp | grep "PUSHBACK Throughput" | \
-                                 awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+            parallel-ssh -h clients.txt -x "-oStrictHostKeyChecking=no  -i ~/.ssh/id_rsa" -t 0 -i "cd splinter; \
+            cd splinter; sed -i 's/use_invoke = [a-z]*/use_invoke = $invoke/g' client.toml; cd ../; \
+            sudo ./scripts/run-$extname $size $ord" >> sample.temp 2>&1
 
+            thrpt=$(cat sample.temp | grep "Median" | \
+                                 awk 'BEGIN { sum = 0 } { sum += $6 } END { print sum }')
             median=$(cat sample.temp | grep "Median" | \
                      awk -v clients="$num_clients" 'BEGIN { sum = 0 } { sum += $2 } END { print sum/clients }')
             taill=$(cat sample.temp | grep "Median" | \
@@ -53,8 +55,8 @@ clean() {
         echo "Specify the extension name to kill the client"
         exit 1
     fi
-    echo "sudo kill -9 `pidof $extname`"
-    pssh -h clients.txt -t 0 -i "sudo kill -9 `pidof $extname`"
+    echo "sudo kill -9 pidof $extname"
+    parallel-ssh -h clients.txt -x "-oStrictHostKeyChecking=no  -i ~/.ssh/id_rsa" -t 0 -i "sudo killall $extname"
 }
 
 display_help() {
