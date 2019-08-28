@@ -152,7 +152,7 @@ impl<'a> Context<'a> {
             }
         }
 
-        if let Some(table) = self.tenant.get_table(table_id) {
+        if let Some(table) = self.tenant.lock_table().get(&table_id) {
             match table.validate(self.tenant.id(), table_id, &mut *self.tx.borrow_mut()) {
                 Ok(()) => {
                     return (self.request, self.response.into_inner());

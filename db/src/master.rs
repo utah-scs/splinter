@@ -1647,54 +1647,56 @@ impl Master {
             let _outcome =
                 // Check if the tenant exists. If it does, then check if the
                 // table exists, and update the status of the rpc.
-                tenant.and_then(| tenant | {
-                                status = RpcStatus::StatusTableDoesNotExist;
-                                tenant.get_table(table_id)
-                            })
-                // If the table exists, validate the transaction, and update the status of the rpc.
-                .and_then(| table | {
-                     // If the payload size is less than the name length, return an error.
-                    if req.get_payload().len() < record_len {
-                        status = RpcStatus::StatusMalformedRequest;
-                        None
+                if let Some(tenant) = tenant {
+                    if let Some(table) = tenant.lock_table().get(&table_id) {
+                        // If the payload size is less than the name length, return an error.
+                        if req.get_payload().len() < record_len {
+                            status = RpcStatus::StatusMalformedRequest;
+                            None
+                        } else {
+                            // TODO: Improve the code to avoid so much of deserialization.
+                            let alloc: &Allocator = accessor(alloc);
+                            let mut tx = TX::new(alloc);
+                            let records = req.get_payload();
+                            for record in records.chunks(record_len) {
+                                let (optype, rem) = record.split_at(1);
+                                let (mut version, rem) = rem.split_at(8);
+                                let (key, value) = rem.split_at(key_len);
+                                let version: Version = unsafe { transmute(version.read_u64::<LittleEndian>().unwrap()) };
+                                match parse_record_optype(optype) {
+                                    OpType::SandstormRead => {
+                                        tx.record_get(Record::new(OpType::SandstormRead, version, Bytes::from(key), Bytes::from(value)));
+                                    },
+
+                                    OpType::SandstormWrite => {
+                                        tx.record_put(Record::new(OpType::SandstormWrite, version, Bytes::from(key), Bytes::from(value)));
+                                    }
+
+                                    _ => {
+                                        info!("Commit: The type of a record can only be read or write");
+                                    }
+                                }
+                            }
+
+                            match table.validate(tenant_id, table_id, &mut tx) {
+                                Ok(()) => {
+                                    status = RpcStatus::StatusOk;
+                                    Some(())
+                                }
+
+                                Err(()) => {
+                                    status = RpcStatus::StatusTxAbort;
+                                    None
+                                }
+                            }
+                        }
                     } else {
-                        // TODO: Improve the code to avoid so much of deserialization.
-                        let alloc: &Allocator = accessor(alloc);
-                        let mut tx = TX::new(alloc);
-                        let records = req.get_payload();
-                        for record in records.chunks(record_len) {
-                            let (optype, rem) = record.split_at(1);
-                            let (mut version, rem) = rem.split_at(8);
-                            let (key, value) = rem.split_at(key_len);
-                            let version: Version = unsafe { transmute(version.read_u64::<LittleEndian>().unwrap()) };
-                            match parse_record_optype(optype) {
-                                OpType::SandstormRead => {
-                                    tx.record_get(Record::new(OpType::SandstormRead, version, Bytes::from(key), Bytes::from(value)));
-                                },
-
-                                OpType::SandstormWrite => {
-                                    tx.record_put(Record::new(OpType::SandstormWrite, version, Bytes::from(key), Bytes::from(value)));
-                                }
-
-                                _ => {
-                                    info!("Commit: The type of a record can only be read or write");
-                                }
-                            }
-                        }
-
-                        match table.validate(tenant_id, table_id, &mut tx) {
-                            Ok(()) => {
-                                status = RpcStatus::StatusOk;
-                                Some(())
-                            }
-
-                            Err(()) => {
-                                status = RpcStatus::StatusTxAbort;
-                                None
-                            }
-                        }
+                        status = RpcStatus::StatusTableDoesNotExist;
+                        None
                     }
-                });
+                } else{
+                    None
+                };
 
             res.get_mut_header().common_header.status = status;
 
