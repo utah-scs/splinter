@@ -240,8 +240,8 @@ impl RoundRobin {
                     // if the current dispatcher invocation received MAX_RX_PACKETS /4 new tasks.
                     if cfg!(feature = "pushback")
                         && is_dispatcher == true
-                        && (queue_length >= MAX_RX_PACKETS / 4 || difference > time_trigger)
-                        && ((self.waiting.read().len() - queue_length) >= MAX_RX_PACKETS / 4)
+                        && (queue_length >= MAX_RX_PACKETS / 8 || difference > time_trigger)
+                        && ((self.waiting.read().len() - queue_length) > 0)
                     {
                         for _i in 0..queue_length {
                             let mut yeilded_task = self.waiting.write().pop_front().unwrap();
