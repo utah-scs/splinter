@@ -634,7 +634,9 @@ where
     fn execute(&mut self) {
         self.send();
         self.recv();
-        self.manager.borrow_mut().execute_task();
+        for _i in 0..MAX_CREDIT {
+            self.manager.borrow_mut().execute_task();
+        }
         if self.finished == true {
             unsafe { FINISHED = true }
             return;
