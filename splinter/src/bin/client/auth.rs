@@ -379,29 +379,32 @@ where
         // Try to receive packets from the network port.
         // If there are packets, sample the latency of the server.
         if let Some(mut packets) = self.receiver.recv_res() {
+            let curr = cycles::rdtsc();
             while let Some(packet) = packets.pop() {
-                if self.native == false {
-                    let curr = cycles::rdtsc();
-
-                    match parse_rpc_opcode(&packet) {
-                        OpCode::SandstormCommitRpc => {
-                            let p = packet.parse_header::<CommitResponse>();
-                            match p.get_header().common_header.status {
-                                RpcStatus::StatusTxAbort => {
-                                    info!("Abort");
-                                }
-
-                                RpcStatus::StatusOk => {
-                                    self.latencies
-                                        .push(curr - p.get_header().common_header.stamp);
-                                }
-
-                                _ => {}
+                match parse_rpc_opcode(&packet) {
+                    OpCode::SandstormCommitRpc => {
+                        let p = packet.parse_header::<CommitResponse>();
+                        match p.get_header().common_header.status {
+                            RpcStatus::StatusTxAbort => {
+                                info!("Abort");
                             }
-                            self.recvd += 1;
-                            p.free_packet();
-                        }
 
+                            RpcStatus::StatusOk => {
+                                self.latencies
+                                    .push(curr - p.get_header().common_header.stamp);
+                            }
+
+                            _ => {}
+                        }
+                        self.recvd += 1;
+                        p.free_packet();
+                        continue;
+                    }
+                    _ => {}
+                }
+
+                if self.native == false {
+                    match parse_rpc_opcode(&packet) {
                         // The response corresponds to an invoke() RPC.
                         OpCode::SandstormInvokeRpc => {
                             let p = packet.parse_header::<InvokeResponse>();
@@ -469,16 +472,21 @@ where
                                         bcrypt(1, salt, &password, output);
 
                                         // Compare the calculated hash and DB stored hash.
-                                        let mut status: u64;
+                                        let mut _status: u64;
                                         if output == hash {
-                                            status = 1;
+                                            _status = 1;
                                         } else {
-                                            status = 0;
+                                            _status = 0;
                                         }
-
-                                        self.latencies.push(cycles::rdtsc() - timestamp - status);
+                                        self.sender.send_commit(
+                                            p.get_header().common_header.tenant,
+                                            1,
+                                            p.get_payload(),
+                                            timestamp,
+                                            30,
+                                            40,
+                                        );
                                         self.native_state.borrow_mut().remove(&timestamp);
-                                        self.recvd += 1;
                                         self.outstanding -= 1;
                                     }
                                 }
@@ -584,7 +592,7 @@ fn setup_send_recv<S>(
     // Add the receiver to a netbricks pipeline.
     match scheduler.add_task(AuthRecvSend::new(
         ports[0].clone(),
-        34 * 1000 * 1000 as u64,
+        4 * 1000 * 1000 as u64,
         master,
         config,
         ports[0].clone(),
