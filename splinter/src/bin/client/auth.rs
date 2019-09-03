@@ -55,7 +55,7 @@ use zipf::ZipfDistribution;
 static mut FINISHED: bool = false;
 
 // Type: 1, KeySize: 30, ValueSize:40
-const RECORD_SIZE: usize = 71;
+const RECORD_SIZE: usize = 79;
 
 // AUTH benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
