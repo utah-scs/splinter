@@ -30,6 +30,8 @@ then
     # Remove any preexisting temp files.
     rm -f ../samples.temp
 
+    sed -i "s/num_aggr = [1-9][0-9]*/num_aggr = $1/g" client.toml
+
     # Run Analysis.
     RUST_LOG=debug ./target/release/analysis >> ../samples.temp
 
@@ -44,6 +46,8 @@ then
     echo ""
     echo "Median(ns): $m, Tail(ns): $t, Throughput(op/s): $thrpt"
     rm -f ../samples.temp
+
+    exit 0
 fi
 
 # Get the "use_invoke" field from the client configuration. The output file

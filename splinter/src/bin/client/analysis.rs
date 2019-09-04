@@ -506,7 +506,6 @@ where
                                         let record = p.get_payload();
                                         state.update_rwset(&record, self.key_len);
                                         if state.op_num == self.number as u8 {
-                                            self.recvd += 1;
                                             self.outstanding -= 1;
                                             self.sender.send_commit(
                                                 tenant,
