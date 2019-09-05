@@ -582,15 +582,16 @@ where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
     fn drop(&mut self) {
+        if self.stop == 0 {
+            self.stop = cycles::rdtsc();
+            info!("The client thread received only {} packets", self.recvd);
+        }
+
         // Calculate & print the throughput for all client threads.
         println!(
             "Analysis Throughput {}",
             self.recvd as f64 / cycles::to_seconds(self.stop - self.start)
         );
-
-        if self.stop == 0 {
-            panic!("The client thread received only {} packets", self.recvd);
-        }
 
         // Calculate & print median & tail latency only on the master thread.
         if self.master {
@@ -625,7 +626,9 @@ where
     fn execute(&mut self) {
         self.send();
         self.recv();
-        self.manager.borrow_mut().execute_task();
+        for _i in 0..8 {
+            self.manager.borrow_mut().execute_task();
+        }
         if self.finished == true {
             unsafe { FINISHED = true }
             return;
