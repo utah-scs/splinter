@@ -44,8 +44,8 @@ use zipf::ZipfDistribution;
 use splinter::sched::TaskManager;
 use splinter::*;
 
-// Type: 1, KeySize: 30, ValueSize:100
-const RECORD_SIZE: usize = 131;
+// Type: 1, Version: 8, KeySize: 30, ValueSize:100
+const RECORD_SIZE: usize = 139;
 
 /// This type implements the send half of a client that issues back to back reads to a server and
 /// aggregates the returned value into a single 64 bit integer.
@@ -274,7 +274,7 @@ impl AggregateSendRecv {
         let median = self.latencies[self.latencies.len() / 2];
         let tail = self.latencies[(self.latencies.len() * 99) / 100];
 
-        info!(
+        println!(
             "Median(ns): {} Tail(ns): {} Throughput: {}",
             cycles::to_seconds(median) * 1e9,
             cycles::to_seconds(tail) * 1e9,
@@ -291,6 +291,29 @@ impl AggregateSendRecv {
         // Check for received packets. If any, then take latency measurements.
         if let Some(mut resps) = self.receiver.recv_res() {
             while let Some(packet) = resps.pop() {
+                match parse_rpc_opcode(&packet) {
+                    OpCode::SandstormCommitRpc => {
+                        let p = packet.parse_header::<CommitResponse>();
+                        match p.get_header().common_header.status {
+                            RpcStatus::StatusTxAbort => {
+                                info!("Abort");
+                            }
+
+                            RpcStatus::StatusOk => {
+                                self.latencies
+                                    .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                            }
+
+                            _ => {}
+                        }
+                        self.recvd += 1;
+                        p.free_packet();
+                        continue;
+                    }
+
+                    _ => {}
+                }
+
                 if self.native {
                     match parse_rpc_opcode(&packet) {
                         OpCode::SandstormGetRpc => {
@@ -300,22 +323,24 @@ impl AggregateSendRecv {
                                 1,
                                 30,
                                 self.num,
-                                p.get_payload(),
+                                p.get_payload().split_at(17).1, //1 Type, 8 Version, 8 Key
                                 p.get_header().common_header.stamp,
                             );
                             p.free_packet();
                         }
 
                         OpCode::SandstormMultiGetRpc => {
-                            self.recvd += 1;
-                            self.outstanding -= 1;
-
                             let p = packet.parse_header::<MultiGetResponse>();
                             let _s = self.aggregate(0, p.get_payload());
-                            if self.recvd & 0xf == 0 {
-                                self.latencies
-                                    .push(cycles::rdtsc() - p.get_header().common_header.stamp);
-                            }
+                            self.sender.send_commit(
+                                p.get_header().common_header.tenant,
+                                1,
+                                p.get_payload(),
+                                p.get_header().common_header.stamp,
+                                30,
+                                100,
+                            );
+                            self.outstanding -= 1;
                             p.free_packet();
                         }
 
@@ -326,24 +351,6 @@ impl AggregateSendRecv {
                     }
                 } else {
                     match parse_rpc_opcode(&packet) {
-                        OpCode::SandstormCommitRpc => {
-                            let p = packet.parse_header::<CommitResponse>();
-                            match p.get_header().common_header.status {
-                                RpcStatus::StatusTxAbort => {
-                                    info!("Abort");
-                                }
-
-                                RpcStatus::StatusOk => {
-                                    self.latencies
-                                        .push(cycles::rdtsc() - p.get_header().common_header.stamp);
-                                }
-
-                                _ => {}
-                            }
-                            self.recvd += 1;
-                            p.free_packet();
-                        }
-
                         OpCode::SandstormInvokeRpc => {
                             let p = packet.parse_header::<InvokeResponse>();
                             match p.get_header().common_header.status {
@@ -530,6 +537,9 @@ fn main() {
                 ),
             ).expect("Failed to initialize receive side.");
     }
+
+    // Allow the system to bootup fully.
+    std::thread::sleep(std::time::Duration::from_secs(1));
 
     // Run the client.
     net_context.execute();

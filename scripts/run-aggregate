@@ -28,22 +28,23 @@ fi
 # If a command line argument was provided, use it as a request rate for YCSB.
 if [ $# -eq 1 ]
 then
-    rm -rf samples.temp
+    rm -rf ../samples.temp
     # Configure the client TOML file with the aggr size.
     sed -i "s/num_aggr = [1-9][0-9]*/num_aggr = $1/g" client.toml
 
     # Run YCSB.
-    RUST_LOG=debug ./target/release/aggregate >> ../samples.temp
+    RUST_LOG=debug ./target/release/aggregate 2>&1 | tee -a ../samples.temp
 
     thrpt=$(cat ../samples.temp | grep "Throughput" | \
-                awk 'BEGIN { sum = 0 } { sum += $7 } END { print sum }')
+                awk 'BEGIN { sum = 0 } { sum += $6 } END { print sum }')
 
     m=$(cat ../samples.temp | grep "Throughput" | \
-                awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum/8 }')
+                awk 'BEGIN { sum = 0 } { sum += $2 } END { print sum/8 }')
 
     t=$(cat ../samples.temp | grep "Throughput" | \
-                awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum/8 }')
+                awk 'BEGIN { sum = 0 } { sum += $4 } END { print sum/8 }')
 
+    echo ""
     echo "Median(ns): $m Tail(ns): $t Throghput: $thrpt"
     exit 0
 fi
