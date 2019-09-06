@@ -76,15 +76,15 @@ fn dispatch(db: Rc<DB>) -> u64 {
         return 1;
     }
 
-    let (ops, opcode) = db.args().split_at(16);
-    let opcode: u8 = 0 | opcode[0] as u8;
+    let args = db.args();
+    let opcode: u8 = 0 | args[args.len() - 1] as u8;
 
     match TaoOp::from(opcode) {
-        TaoOp::ObjGet => obj_get_dispatch(Rc::clone(&db), ops),
-        TaoOp::ObjAdd => obj_add_dispatch(Rc::clone(&db), ops),
-        TaoOp::ObjUpdate => obj_update_dispatch(Rc::clone(&db), ops),
-        TaoOp::ObjDelete => obj_delete_dispatch(Rc::clone(&db), ops),
-        _ => assoc_dispatch(opcode, Rc::clone(&db), ops),
+        TaoOp::ObjGet => obj_get_dispatch(Rc::clone(&db), args.split_at(16).0),
+        TaoOp::ObjAdd => obj_add_dispatch(Rc::clone(&db), args.split_at(10).0),
+        TaoOp::ObjUpdate => obj_update_dispatch(Rc::clone(&db), args.split_at(18).0),
+        TaoOp::ObjDelete => obj_delete_dispatch(Rc::clone(&db), args.split_at(16).0),
+        _ => assoc_dispatch(opcode, Rc::clone(&db), args.split_at(26).0),
     };
 
     return 0;
@@ -130,7 +130,7 @@ fn assoc_response_handler(db: Rc<DB>, assoc: Association) {
 fn obj_get_dispatch(db: Rc<DB>, ops: &[u8]) {
     // |table_id = 8|obj_id = 8|
     if ops.len() != 16 {
-        let error = "Invalid packet length.";
+        let error = "Invalid packet len.";
         db.resp(error.as_bytes());
         return;
     }
@@ -155,7 +155,7 @@ fn obj_get_dispatch(db: Rc<DB>, ops: &[u8]) {
 fn obj_add_dispatch(db: Rc<DB>, ops: &[u8]) {
     // |table_id = 8|obj_type = 2|value = n > 0|
     if ops.len() <= 10 {
-        let error = "Invalid packet length.";
+        let error = "Invalid packet len.";
         db.resp(error.as_bytes());
         return;
     }
@@ -182,7 +182,7 @@ fn obj_add_dispatch(db: Rc<DB>, ops: &[u8]) {
 fn obj_update_dispatch(db: Rc<DB>, ops: &[u8]) {
     // |table_id = 8|obj_id = 8|obj_type = 2|value = n > 0|
     if ops.len() <= 18 {
-        let error = "Invalid packet length.";
+        let error = "Invalid packet len.";
         db.resp(error.as_bytes());
         return;
     }
@@ -213,7 +213,7 @@ fn obj_update_dispatch(db: Rc<DB>, ops: &[u8]) {
 fn obj_delete_dispatch(db: Rc<DB>, ops: &[u8]) {
     // |table_id = 8|obj_id = 8|
     if ops.len() != 16 {
-        let error = "Invalid packet length.";
+        let error = "Invalid packet len.";
         db.resp(error.as_bytes());
         return;
     }
@@ -243,7 +243,7 @@ fn obj_delete_dispatch(db: Rc<DB>, ops: &[u8]) {
 fn assoc_dispatch(opcode: u8, db: Rc<DB>, ops: &[u8]) {
     // |table_id = 8|id1 = 8|assoc_type = 2|id2 = 8|
     if ops.len() != 26 {
-        db.resp("Invalid packet length.".as_bytes());
+        db.resp("Invalid packet len.".as_bytes());
         return;
     }
 
