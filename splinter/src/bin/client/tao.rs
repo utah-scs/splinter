@@ -327,7 +327,7 @@ impl TaoSendRecv {
     // Receive packets in response to the requests generated from send() function.
     fn recv(&mut self) {
         // Free incoming packets if all responses have been received.
-        if self.responses <= self.recvd {
+        if self.responses <= self.recvd && self.finished == true {
             // Free single operation responses.
             if let Some(mut resps) = self.receiver.recv_res() {
                 while let Some(packet) = resps.pop() {
@@ -474,6 +474,7 @@ impl TaoSendRecv {
         // Print out measurements after all responses have been received.
         if self.responses <= self.recvd {
             self.stop = cycles::rdtsc();
+            self.finished = true;
         }
     }
 }
