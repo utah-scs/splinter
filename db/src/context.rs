@@ -143,7 +143,7 @@ impl<'a> Context<'a> {
         Packet<InvokeRequest, EmptyMetadata>,
         Packet<InvokeResponse, EmptyMetadata>,
     ) {
-        let mut table_id: u64 = 1;
+        let mut table_id: u64 = 0;
         {
             let args = self.args();
             let (table, _) = args.split_at(8);
@@ -175,6 +175,8 @@ impl<'a> Context<'a> {
                     return (self.request, self.response.into_inner());
                 }
             }
+        } else {
+            info!("No table-id {} for commit", table_id);
         }
         return (self.request, self.response.into_inner());
     }

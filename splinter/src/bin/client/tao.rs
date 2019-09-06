@@ -148,14 +148,15 @@ impl TaoSendRecv {
         config: &config::ClientConfig,
     ) -> TaoSendRecv {
         // Allocate a vector for the obj_get invoke() RPC's payload. The payload consists of the
-        // name of the extension, an opcode, the table id (8 bytes) and the key length.
-        let len = "tao".as_bytes().len() + 1 + size_of::<u64>() + 8;
+        // name of the extension, the table id (8 bytes) and the key length, an opcode.
+        let len = "tao".as_bytes().len() + size_of::<u64>() + 8 + 1;
         let mut io_buff = Vec::with_capacity(len);
 
         // Pre-populate the extension name, opcode, and table id.
         io_buff.extend_from_slice("tao".as_bytes());
-        io_buff.extend_from_slice(&[0u8]);
         io_buff.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
+        io_buff.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(0u64.to_le()) }); // placeholder for key
+        io_buff.extend_from_slice(&[0u8]);
         io_buff.resize(len, 0);
 
         // Allocate a vector for the assoc_get invoke() RPC's payload. The payload consists of the
@@ -165,8 +166,9 @@ impl TaoSendRecv {
 
         // Pre-populate the extension name, opcode, and table id.
         ia_buff.extend_from_slice("tao".as_bytes());
-        ia_buff.extend_from_slice(&[4u8]);
         ia_buff.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(2u64.to_le()) });
+        ia_buff.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(0u64.to_le()) }); // placeholder for key
+        ia_buff.extend_from_slice(&[4u8]);
         ia_buff.resize(len, 0);
 
         // Allocate and init a buffer into which keys for a native obj_get will be generated.
@@ -260,13 +262,13 @@ impl TaoSendRecv {
                     }
 
                     false => {
-                        self.io_buff[12..16].copy_from_slice(&k);
+                        self.io_buff[11..15].copy_from_slice(&k);
                         self.sender.send_invoke(t, 3, &self.io_buff, curr);
                     }
                 },
 
                 false => {
-                    self.ia_buff[12..16].copy_from_slice(&k);
+                    self.ia_buff[11..15].copy_from_slice(&k);
                     self.sender.send_invoke(t, 3, &self.ia_buff, curr);
                 }
             },

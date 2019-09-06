@@ -76,7 +76,7 @@ fn dispatch(db: Rc<DB>) -> u64 {
         return 1;
     }
 
-    let (opcode, ops) = db.args().split_at(1);
+    let (ops, opcode) = db.args().split_at(16);
     let opcode: u8 = 0 | opcode[0] as u8;
 
     match TaoOp::from(opcode) {
