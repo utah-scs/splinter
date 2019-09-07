@@ -326,8 +326,13 @@ impl Master {
     pub fn fill_analysis(&self, num_tenants: u32) {
         // Run the ML model required for the extension and store the serialized version
         // and deserialized version of the model, which will be used in the extension.
-        let (sgd, _d_tree, _r_forest) = run_ml_application();
-        insert_global_model(String::from("analysis"), sgd.clone());
+        let (sgd, d_tree, r_forest) = run_ml_application();
+        insert_global_model(
+            String::from("analysis"),
+            sgd.clone(),
+            d_tree.clone(),
+            r_forest.clone(),
+        );
 
         let table_id = 1;
         let data = get_raw_data(TESTING_DATASET);
@@ -422,27 +427,98 @@ impl Master {
     /// * `num_tenants`: The number of tenants for this workload.
     /// * `num`:       The number of objects to be added to the data table.
     pub fn fill_mix(&self, num_tenants: u32, num: u32) {
-        let table_id = 1;
-        let auth_table_id = 2;
-        let fake_table_id = 3;
+        let tao_table_id1 = 1;
+        let tao_table_id2 = 2;
+        let ml_table_id = 3;
 
         // Run the ML model required for the extension and store the serialized version
         // and deserialized version of the model, which will be used in the extension.
-        let (sgd, _d_tree, _r_forest) = run_ml_application();
-        insert_global_model(String::from("analysis"), sgd.clone());
+        let (sgd, d_tree, r_forest) = run_ml_application();
+        insert_global_model(
+            String::from("analysis"),
+            sgd.clone(),
+            d_tree.clone(),
+            r_forest.clone(),
+        );
 
         let data = get_raw_data(TESTING_DATASET);
 
         for tenant_id in 1..(num_tenants + 1) {
             // Create a tenant containing the table.
             let tenant = Tenant::new(tenant_id);
-            tenant.create_table(table_id);
-            tenant.create_table(auth_table_id);
-            tenant.create_table(fake_table_id);
+            tenant.create_table(tao_table_id1);
+            tenant.create_table(tao_table_id2);
+            tenant.create_table(ml_table_id);
+
+            //-----------------------Fill TAO----------------------------------------------------------//
+            // First, fill up the object table.
+            let table = tenant
+                .get_table(tao_table_id1)
+                .expect("Failed to init test table.");
+
+            // Objects are identified by an 8 byte key.
+            let mut key = vec![0; 8];
+            // Objects contain a 4 byte otype, 8 byte version, 4 byte update time, and
+            // 16 byte payload, all of which are zero.
+            let val = vec![0; 32];
+
+            // Setup the object table with num objects.
+            for i in 1..(num + 1) {
+                let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+                &key[0..4].copy_from_slice(&temp);
+
+                let obj = self
+                    .heap
+                    .object(tenant_id, tao_table_id1, &key, &val)
+                    .expect("Failed to create test object.");
+                table.put(obj.0, obj.1);
+            }
+
+            // Next, fill up the assoc table.
+            let table = tenant
+                .get_table(tao_table_id2)
+                .expect("Failed to init test table.");
+
+            // Assocs are identified by an 8 byte object 1 id, 2 byte association
+            // type (always zero), and 8 byte object 2 id.
+            let mut key = vec![0; 18];
+            // Assocs have a 22 byte value (all zeros).
+            let val = vec![0; 22];
+
+            // Populate the assoc table. Each object gets four assocs to it's
+            // neighbours.
+            for i in 1..(num + 1) {
+                let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+                &key[0..4].copy_from_slice(&temp);
+
+                // Assoc list for this particular object.
+                let mut list: Vec<u8> = Vec::new();
+
+                for a in 1u32..5u32 {
+                    let temp: [u8; 4] = unsafe { transmute(((i + a) % num).to_le()) };
+                    &key[10..14].copy_from_slice(&temp);
+                    list.extend_from_slice(&temp);
+                    list.extend_from_slice(&[0; 12]);
+
+                    // Add this assoc to the assoc table.
+                    let obj = self
+                        .heap
+                        .object(tenant_id, tao_table_id2, &key, &val)
+                        .expect("Failed to create test object.");
+                    table.put(obj.0, obj.1);
+                }
+
+                // Add the assoc list to the table too.
+                let obj = self
+                    .heap
+                    .object(tenant_id, tao_table_id2, &key[0..10], &list)
+                    .expect("Failed to create test object.");
+                table.put(obj.0, obj.1);
+            }
 
             //-----------------------Fill ANALYSIS----------------------------------------------------------//
             let table = tenant
-                .get_table(table_id)
+                .get_table(ml_table_id)
                 .expect("Failed to init test table.");
 
             let mut key = vec![0; 30];
@@ -461,59 +537,7 @@ impl Master {
                 // Insert the key-value in the table.
                 let obj = self
                     .heap
-                    .object(tenant_id, table_id, &key, &serialized)
-                    .expect("Failed to create test object.");
-                table.put(obj.0, obj.1);
-            }
-
-            //----------------------------Fill Auth--------------------------------------------------//
-            let num_records_auth: u32 = 1000;
-            let table = tenant
-                .get_table(auth_table_id)
-                .expect("Failed to init test table.");
-            let mut username = vec![0; 30];
-            let mut password = vec![0; 72];
-            let mut hash_salt = vec![0; 40];
-            let mut salt = vec![0; 16];
-
-            // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
-            // and a 40 Byte value(24 byte HASH followed by 16 byte SALT).
-            for i in 1..(num_records_auth + 1) {
-                let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
-                &username[0..4].copy_from_slice(&temp);
-                &password[0..4].copy_from_slice(&temp);
-                &hash_salt[24..28].copy_from_slice(&temp);
-                &salt[0..4].copy_from_slice(&temp);
-
-                let output: &mut [u8] = &mut [0; 24];
-                bcrypt(1, &salt, &password, output);
-                &hash_salt[0..24].copy_from_slice(&output);
-
-                // Add a mapping of the username and (HASH+SALT) in the table.
-                let obj = self
-                    .heap
-                    .object(tenant_id, auth_table_id, &username, &hash_salt)
-                    .expect("Failed to create test object.");
-                table.put(obj.0, obj.1);
-            }
-
-            //-------------------------------Fill Test-----------------------------------------------//
-            let table = tenant
-                .get_table(fake_table_id)
-                .expect("Failed to init test table.");
-            let mut key = vec![0; 30];
-            let mut val = vec![0; 100];
-
-            // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
-            // and a 100 Byte value.
-            for i in 1..(num + 1) {
-                let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
-                &key[0..4].copy_from_slice(&temp);
-                &val[0..4].copy_from_slice(&temp);
-
-                let obj = self
-                    .heap
-                    .object(tenant_id, fake_table_id, &key, &val)
+                    .object(tenant_id, ml_table_id, &key, &serialized)
                     .expect("Failed to create test object.");
                 table.put(obj.0, obj.1);
             }
