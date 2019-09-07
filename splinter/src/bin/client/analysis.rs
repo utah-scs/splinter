@@ -62,6 +62,9 @@ static mut FINISHED: bool = false;
 static ORDER: f64 = 2500.0;
 static STD_DEV: f64 = 500.0;
 
+// This shows which model to use, 1 is for LR, 2 is for D-Tree, and 3 is for Random Forest.
+static ML_MODEL: u8 = 1;
+
 // Analysis benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
 // share the same benchmark instance. Each thread can call `abc()` which
@@ -273,15 +276,17 @@ where
     ) -> AnalysisRecvSend<T> {
         let num = config.num_aggr as u32;
         // The payload on an invoke() based get request consists of the extensions name ("analysis"),
-        // the table id to perform the lookup on, number of get(), and the key to lookup.
+        // the table id to perform the lookup on, number of get(), ml model number, and the key to lookup.
         let payload_len = "analysis".as_bytes().len()
             + mem::size_of::<u64>()
             + mem::size_of::<u32>()
+            + mem::size_of::<u8>()
             + config.key_len;
         let mut payload_analysis = Vec::with_capacity(payload_len);
         payload_analysis.extend_from_slice("analysis".as_bytes());
         payload_analysis.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
         payload_analysis.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(num.to_le()) });
+        payload_analysis.extend_from_slice(&[ML_MODEL]);
         payload_analysis.resize(payload_len, 0);
 
         // The payload on an invoke() based put request consists of the extensions name ("put"),
@@ -365,7 +370,7 @@ where
                         // First 20 bytes on the payload were already pre-populated with the
                         // extension name (8 bytes), the table id (8 bytes), the number of
                         // gets(4 bytes). Just write in the first 4 bytes of the key.
-                        p_get[20..24].copy_from_slice(&key[0..4]);
+                        p_get[21..25].copy_from_slice(&key[0..4]);
                         self.manager.borrow_mut().create_task(
                             curr,
                             &p_get,
@@ -380,7 +385,7 @@ where
                         // extension name (8 bytes), the table id (8 bytes), and the key length (2
                         // bytes). Just write in the first 4 bytes of the key. The value is anyway
                         // always zero.
-                        p_put[18..22].copy_from_slice(&key[0..4]);
+                        p_put[19..23].copy_from_slice(&key[0..4]);
                         self.manager.borrow_mut().create_task(
                             curr,
                             &p_put,
@@ -542,11 +547,25 @@ where
                                     GLOBAL_MODEL.with(|a_model| {
                                         if let Some(model) = (*a_model).borrow().get(&self.extname)
                                         {
-                                            response = model
-                                                .deserialized
-                                                .predict(&Array::from(&vec![predict]))
-                                                .unwrap()
-                                                .data()[0];
+                                            if ML_MODEL == 1 {
+                                                response = model
+                                                    .lr_deserialized
+                                                    .predict(&Array::from(&vec![predict]))
+                                                    .unwrap()
+                                                    .data()[0];
+                                            } else if ML_MODEL == 2 {
+                                                response = model
+                                                    .dr_deserialized
+                                                    .predict(&Array::from(&vec![predict]))
+                                                    .unwrap()
+                                                    .data()[0];
+                                            } else if ML_MODEL == 3 {
+                                                response = model
+                                                    .rf_deserialized
+                                                    .predict(&Array::from(&vec![predict]))
+                                                    .unwrap()
+                                                    .data()[0];
+                                            }
                                         }
                                     });
                                     self.latencies
@@ -656,7 +675,12 @@ fn setup_send_recv<S>(
     }
 
     if let Some(a_model) = MODEL.lock().unwrap().get(&String::from("analysis")) {
-        insert_model(String::from("analysis"), a_model.serialized.clone());
+        insert_model(
+            String::from("analysis"),
+            a_model.lr_serialized.clone(),
+            a_model.dr_serialized.clone(),
+            a_model.rf_serialized.clone(),
+        );
     }
 
     // Add the receiver to a netbricks pipeline.
@@ -702,8 +726,13 @@ fn main() {
 
     // Run the ML model required for the extension and store the serialized version
     // and deserialized version of the model, which will be used in the extension.
-    let (sgd, _d_tree, _r_forest) = run_ml_application();
-    insert_global_model(String::from("analysis"), sgd.clone());
+    let (sgd, d_tree, r_forest) = run_ml_application();
+    insert_global_model(
+        String::from("analysis"),
+        sgd.clone(),
+        d_tree.clone(),
+        r_forest.clone(),
+    );
 
     // Setup Netbricks.
     let mut net_context = setup::config_and_init_netbricks(&config);

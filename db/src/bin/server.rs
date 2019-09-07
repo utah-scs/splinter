@@ -141,13 +141,23 @@ fn setup_server<S>(
         //                                       Global does an atomic access.
         "ANALYSIS" => {
             if let Some(a_model) = MODEL.lock().unwrap().get(&String::from("analysis")) {
-                insert_model(String::from("analysis"), a_model.serialized.clone());
+                insert_model(
+                    String::from("analysis"),
+                    a_model.lr_serialized.clone(),
+                    a_model.dr_serialized.clone(),
+                    a_model.rf_serialized.clone(),
+                );
             }
         }
 
         "MIX" => {
             if let Some(a_model) = MODEL.lock().unwrap().get(&String::from("analysis")) {
-                insert_model(String::from("analysis"), a_model.serialized.clone());
+                insert_model(
+                    String::from("analysis"),
+                    a_model.lr_serialized.clone(),
+                    a_model.dr_serialized.clone(),
+                    a_model.rf_serialized.clone(),
+                );
             }
         }
 
@@ -382,9 +392,8 @@ fn main() {
 
         "MIX" => {
             info!("Populating MIX data, {} tenants", config.num_tenants);
+            info!("TAO: {} records/tenants", config.num_records);
             info!("ANALYSIS: 68000 records/tenant");
-            info!("AUTH: 1000 records/tenants");
-            info!("Pushback: {} records/tenants", config.num_records);
             master.fill_mix(config.num_tenants, config.num_records);
             for tenant in 1..(config.num_tenants + 1) {
                 master.load_test(tenant);

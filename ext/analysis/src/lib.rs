@@ -52,6 +52,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
         let mut number: u32 = 0;
         let mut keys: Vec<u8> = Vec::with_capacity(30);
         let mut values: Vec<Vec<u8>> = Vec::new();
+        let mut ml_model: u8 = 0;
 
         {
             // First off, retrieve the arguments to the extension.
@@ -70,7 +71,9 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             // (first eight bytes), and a view over the key to be looked up.
             // De-serialize the table identifier into a u64.
             let (stable, remaining) = args.split_at(8);
-            let (num, key) = remaining.split_at(4);
+            let (num, remaining) = remaining.split_at(4);
+            let (model, key) = remaining.split_at(1);
+            ml_model = 0 | model[0] as u8;
             keys.extend_from_slice(key);
 
             for (idx, e) in stable.iter().enumerate() {
@@ -113,12 +116,27 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
         for value in values.iter() {
             match db.get_model() {
                 Some(model) => {
+                    let mut response: f32 = 0.0;
                     let predict: Vec<f32> = bincode::deserialize(&value).unwrap();
-                    let response = model
-                        .deserialized
-                        .predict(&Array::from(&vec![predict]))
-                        .unwrap()
-                        .data()[0];
+                    if ml_model == 1 {
+                        response = model
+                            .lr_deserialized
+                            .predict(&Array::from(&vec![predict]))
+                            .unwrap()
+                            .data()[0];
+                    } else if ml_model == 2 {
+                        response = model
+                            .dr_deserialized
+                            .predict(&Array::from(&vec![predict]))
+                            .unwrap()
+                            .data()[0];
+                    } else if ml_model == 3 {
+                        response = model
+                            .rf_deserialized
+                            .predict(&Array::from(&vec![predict]))
+                            .unwrap()
+                            .data()[0];
+                    }
                     db.resp(pack(&response));
                 }
 
