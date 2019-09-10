@@ -367,20 +367,15 @@ impl<'a> DB for Context<'a> {
 
         // If the table exists, write to the database.
         if let Some(table) = self.tenant.get_table(table_id) {
-            return self.heap.resolve(buf.clone()).map_or(false, |(k, _v)| {
-                if let Some(entry) = table.put(k.clone(), buf.clone()) {
-                    self.tx.borrow_mut().record_put(Record::new(
-                        OpType::SandstormWrite,
-                        entry.version,
-                        k,
-                        buf,
-                    ));
-                    *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
-                    true
-                } else {
-                    *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
-                    false
-                }
+            return self.heap.resolve(buf.clone()).map_or(false, |(k, v)| {
+                self.tx.borrow_mut().record_put(Record::new(
+                    OpType::SandstormWrite,
+                    table.version(),
+                    k,
+                    v,
+                ));
+                *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
+                true
             });
         }
 
