@@ -29,6 +29,8 @@ mod ycsbt;
 
 use std::cell::RefCell;
 use std::fmt::Display;
+use std::mem;
+use std::mem::transmute;
 use std::sync::Arc;
 
 use db::config;
@@ -126,6 +128,9 @@ where
 
     // The length of the record.
     record_len: usize,
+
+    // Needed for pushback aborted transactions.
+    invoke_get_modify: Vec<u8>,
 }
 
 impl<T> Client<T>
@@ -143,6 +148,22 @@ where
         table_id: u64,
     ) -> Client<T> {
         let resps = 34 * 1000 * 1000;
+        let order = config.order as u32;
+        let payload_len = "ycsbt".as_bytes().len()
+            + mem::size_of::<u64>()
+            + config.key_len
+            + config.key_len
+            + mem::size_of::<u32>()
+            + mem::size_of::<u8>();
+        let mut invoke_get_modify: Vec<u8> = Vec::with_capacity(payload_len);
+        invoke_get_modify.extend_from_slice("ycsbt".as_bytes());
+        invoke_get_modify
+            .extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(table_id.to_le()) });
+        invoke_get_modify.extend_from_slice(&[0; 60]); // Placeholder for 2 keys
+        invoke_get_modify.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(order.to_le()) });
+        invoke_get_modify.extend_from_slice(&[2]);
+        invoke_get_modify.resize(payload_len, 0);
+
         Client {
             receiver: dispatch::Receiver::new(rx_port),
             sender: Arc::clone(&sender),
@@ -165,6 +186,7 @@ where
             manager: RefCell::new(TaskManager::new(Arc::clone(&masterservice))),
             key_len: config.key_len,
             record_len: config.key_len + config.value_len + 9,
+            invoke_get_modify: invoke_get_modify,
         }
     }
 
@@ -329,7 +351,12 @@ where
 
                     RpcStatus::StatusTxAbort => {
                         self.aborted += 1;
-                        self.outstanding -= 1;
+                        self.sender.send_invoke(
+                            p.get_header().common_header.tenant,
+                            self.workload.name_length(),
+                            p.get_payload(),
+                            timestamp,
+                        );
                     }
 
                     _ => {
@@ -371,9 +398,59 @@ where
                     OpCode::SandstormCommitRpc => {
                         let p = packet.parse_header::<CommitResponse>();
                         let timestamp = p.get_header().common_header.stamp;
+                        let tenant = p.get_header().common_header.tenant;
                         match p.get_header().common_header.status {
                             RpcStatus::StatusTxAbort => {
+                                if self.native == true {
+                                    // For native commit response.
+                                    if p.get_payload().len() == self.key_len {
+                                        self.sender.send_get(
+                                            tenant,
+                                            self.table_id,
+                                            p.get_payload(),
+                                            timestamp,
+                                        )
+                                    } else {
+                                        let n_keys: u32 =
+                                            (p.get_payload().len() / self.key_len) as u32;
+                                        self.sender.send_multiget(
+                                            tenant,
+                                            self.table_id,
+                                            self.key_len as u16,
+                                            n_keys,
+                                            p.get_payload(),
+                                            timestamp,
+                                        );
+                                    }
+                                } else {
+                                    // For Pushback commit response.
+                                    let name_length = self.workload.name_length();
+                                    let mut start_index = 13;
+                                    let mut end_index = start_index + 4;
+                                    let records = p.get_payload();
+                                    for key in records.chunks(self.key_len) {
+                                        self.invoke_get_modify[start_index..end_index]
+                                            .copy_from_slice(&key[0..4]);
+                                        start_index += 30;
+                                        end_index += 30;
+                                    }
+
+                                    self.sender.send_invoke(
+                                        tenant,
+                                        name_length,
+                                        &self.invoke_get_modify,
+                                        timestamp,
+                                    );
+                                    self.manager.borrow_mut().create_task(
+                                        timestamp,
+                                        &self.invoke_get_modify,
+                                        tenant,
+                                        name_length as usize,
+                                        Arc::clone(&self.sender),
+                                    );
+                                }
                                 self.aborted += 1;
+                                self.outstanding += 1;
                             }
 
                             RpcStatus::StatusOk => {
