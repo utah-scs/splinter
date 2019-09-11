@@ -401,7 +401,7 @@ where
 
         // The moment all response packets have been received, set the value of the
         // stop timestamp so that throughput can be estimated later.
-        if self.responses <= self.recvd {
+        if self.responses <= (self.recvd + self.aborted) {
             self.stop = cycles::rdtsc();
         }
     }
@@ -426,6 +426,11 @@ where
             "Client Aborted {}",
             self.aborted as f64 / cycles::to_seconds(self.stop - self.start)
         );
+
+        let (tenant, request) = self.workload.get_invoke_request();
+        let mut vec = request.to_vec();
+        vec[request.len() - 1] = 3;
+        self.sender.send_invoke(tenant, 5, &vec, cycles::rdtsc());
 
         // Calculate & print median & tail latency only on the master thread.
         if self.master {
@@ -459,9 +464,13 @@ where
     fn execute(&mut self) {
         self.send();
         self.recv();
-        for _i in 0..MAX_CREDIT {
-            self.manager.borrow_mut().execute_task();
+
+        if self.native == false && self.manager.borrow().get_queue_len() > 0 {
+            for _i in 0..MAX_CREDIT {
+                self.manager.borrow_mut().execute_task();
+            }
         }
+
         if self.stop > 0 {
             unsafe { FINISHED = true }
             return;

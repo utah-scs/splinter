@@ -14,6 +14,7 @@
  */
 
 use std::cell::{Cell, RefCell};
+use std::mem::transmute;
 use std::sync::Arc;
 use std::{mem, slice, str};
 
@@ -38,6 +39,8 @@ const MAX_ALLOC: usize = 10240;
 
 /// The flag to enable-disable including the RW set in the pushback response.
 const INCLUDE_RWSET: bool = true;
+
+const DEBUG: bool = true;
 
 /// This type is passed into the init method of every extension. The methods
 /// on this type form the interface allowing extensions to read and write
@@ -413,7 +416,23 @@ impl<'a> DB for Context<'a> {
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn debug_log(&self, _msg: &str) {}
+    fn debug_log(&self, _msg: &str) {
+        if DEBUG == true {
+            let table_id = 1;
+            if let Some(table) = self.tenant.lock_table().get(&table_id) {
+                let mut sum: u64 = 0;
+                let mut key = vec![0; 30];
+                let num: u32 = 120000;
+                for i in 1..(num + 1) {
+                    let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+                    &key[0..4].copy_from_slice(&temp);
+                    sum += self.heap.resolve(table.get(&key).unwrap().value).unwrap().1[0] as u64;
+                }
+                // This is used for YCSB+T validation.
+                assert_eq!(sum, (num * 255) as u64);
+            }
+        }
+    }
 
     /// Lookup the `DB` trait for documentation on this method.
     fn search_get_in_cache(&self, _table: u64, _key: &[u8]) -> (bool, bool, Option<ReadBuf>) {

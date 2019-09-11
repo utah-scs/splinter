@@ -60,16 +60,20 @@ impl YCSBT {
         let mut multikey_buf: Vec<u8> = Vec::with_capacity(2 * config.key_len);
         multikey_buf.resize(2 * config.value_len, 0);
 
+        let order = config.order as u32;
+
         // The payload on an invoke() based get request consists of the extensions name ("ycsbt"),
         // operation type, the table id to perform the lookup on, and the key to lookup.
         let payload_len = "ycsbt".as_bytes().len()
             + mem::size_of::<u64>()
             + config.key_len
+            + mem::size_of::<u32>()
             + mem::size_of::<u8>();
         let mut invoke_get: Vec<u8> = Vec::with_capacity(payload_len);
         invoke_get.extend_from_slice("ycsbt".as_bytes());
         invoke_get.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(table_id.to_le()) });
         invoke_get.extend_from_slice(&[0; 30]); // Placeholder for key
+        invoke_get.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(order.to_le()) });
         invoke_get.extend_from_slice(&[1]);
         invoke_get.resize(payload_len, 0);
 
@@ -79,12 +83,14 @@ impl YCSBT {
             + mem::size_of::<u64>()
             + config.key_len
             + config.key_len
+            + mem::size_of::<u32>()
             + mem::size_of::<u8>();
         let mut invoke_get_modify: Vec<u8> = Vec::with_capacity(payload_len);
         invoke_get_modify.extend_from_slice("ycsbt".as_bytes());
         invoke_get_modify
             .extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(table_id.to_le()) });
         invoke_get_modify.extend_from_slice(&[0; 60]); // Placeholder for 2 keys
+        invoke_get_modify.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(order.to_le()) });
         invoke_get_modify.extend_from_slice(&[2]);
         invoke_get_modify.resize(payload_len, 0);
 
@@ -220,10 +226,10 @@ impl Workload for YCSBT {
         let (key2, v2) = record2.split_at(9).1.split_at(30);
         value1.extend_from_slice(v1);
         value2.extend_from_slice(v2);
-        if value1[0] > 0 {
+        if value1[0] > 0 && value2[0] < 255 {
             value1[0] -= 1;
             value2[0] += 1;
-        } else if value2[0] > 0 {
+        } else if value2[0] > 0 && value1[0] < 255 {
             value1[0] += 1;
             value2[0] -= 1;
         }
