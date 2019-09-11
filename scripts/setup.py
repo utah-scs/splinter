@@ -36,22 +36,24 @@ def printColor(color, string):
 def setupCargo():
     printColor("bold", "=============== Fixing Deps ==========================")
     fix = "cargo generate-lockfile; " + \
-          "cargo update -p spin:0.4.10 --precise 0.4.7; " + \
-          "cargo update -p serde:1.0.99 --precise 1.0.67; " + \
-          "cargo update -p serde_derive:1.0.99 --precise 1.0.67; " + \
+          "cargo update -p spin --precise 0.4.7; " + \
+          "cargo update -p serde:1.0.100 --precise 1.0.67; " + \
+          "cargo update -p serde_derive:1.0.100 --precise 1.0.67; " + \
           "cargo update -p env_logger:0.5.13 --precise 0.5.3; " + \
-          "cargo update -p rustc-demangle:0.1.16 --precise 0.1.13; " + \
-          "cargo update -p twox-hash:1.5.0 --precise 1.1.1; " + \
-          "cargo update -p backtrace:0.3.35 --precise 0.3.20; " + \
-          "cargo update -p backtrace-sys:0.1.31 --precise 0.1.28; " + \
-          "cargo update -p atty:0.2.13 --precise 0.2.11; " + \
-          "cargo update -p getopts:0.2.21 --precise 0.2.19; " + \
-          "cargo update -p unicode-width:0.1.6 --precise 0.1.5; "
+          "cargo update -p rustc-demangle --precise 0.1.13; " + \
+          "cargo update -p twox-hash --precise 1.1.1; " + \
+          "cargo update -p backtrace --precise 0.3.20; " + \
+          "cargo update -p backtrace-sys --precise 0.1.28; " + \
+          "cargo update -p atty --precise 0.2.11; " + \
+          "cargo update -p getopts --precise 0.2.19; " + \
+          "cargo update -p unicode-width --precise 0.1.5; " +\
+          "cargo update -p proc-macro2 --precise 0.4.30; " + \
+          "cargo update -p cc --precise 1.0.40; "
 
     ext_fix = "cargo generate-lockfile; " + \
-          "cargo update -p spin:0.4.10 --precise 0.4.7; " + \
-          "cargo update -p serde:1.0.99 --precise 1.0.67; " + \
-          "cargo update -p serde_derive:1.0.99 --precise 1.0.67; "
+          "cargo update -p spin --precise 0.4.7; " + \
+          "cargo update -p serde:1.0.100 --precise 1.0.67; " + \
+          "cargo update -p serde_derive:1.0.100 --precise 1.0.67; "
 
     # Fix dependencies inside db.
     cmd = "cd db; " + fix + "cd ../"
