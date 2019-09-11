@@ -14,6 +14,7 @@
  */
 
 #![feature(use_extern_macros)]
+#![feature(generators, generator_trait)]
 
 extern crate db;
 extern crate rand;

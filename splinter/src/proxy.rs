@@ -280,17 +280,44 @@ impl DB for ProxyDB {
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn multiget(&self, _table: u64, _key_len: u16, _keys: &[u8]) -> Option<MultiReadBuf> {
-        unsafe { Some(MultiReadBuf::new(Vec::new())) }
+    fn multiget(&self, _table: u64, key_len: u16, keys: &[u8]) -> Option<MultiReadBuf> {
+        let mut objs = Vec::new();
+        for key in keys.chunks(key_len as usize) {
+            if key.len() != key_len as usize {
+                break;
+            }
+            let index = self.search_cache(self.readset.borrow().to_vec(), key);
+            if index != 1024 {
+                let value = self.readset.borrow()[index].value.clone();
+                objs.push(value);
+            } else {
+                info!("Multiget Failed");
+            }
+        }
+        unsafe { Some(MultiReadBuf::new(objs)) }
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn alloc(&self, table: u64, _key: &[u8], _val_len: u64) -> Option<WriteBuf> {
-        unsafe { Some(WriteBuf::new(table, BytesMut::with_capacity(0))) }
+    fn alloc(&self, table: u64, key: &[u8], val_len: u64) -> Option<WriteBuf> {
+        unsafe {
+            // Alloc for version, key and value.
+            let mut writebuf = WriteBuf::new(
+                table,
+                BytesMut::with_capacity(8 + key.len() + val_len as usize),
+            );
+            writebuf.write_slice(&[0; 8]);
+            writebuf.write_slice(key);
+            Some(writebuf)
+        }
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn put(&self, _buf: WriteBuf) -> bool {
+    fn put(&self, buf: WriteBuf) -> bool {
+        unsafe {
+            let (_table_id, buf) = buf.freeze();
+            assert_eq!(buf.len(), 138);
+            self.set_write_record(&buf, 30);
+        }
         return true;
     }
 

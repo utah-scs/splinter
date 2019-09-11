@@ -19,10 +19,12 @@ extern crate splinter;
 
 use std::mem;
 use std::mem::transmute;
+use std::ops::{Generator, GeneratorState};
 use std::slice;
 use std::sync::Arc;
 
 use db::config::ClientConfig;
+use db::cycles;
 use db::e2d2::common::EmptyMetadata;
 use db::e2d2::interface::*;
 use db::log::*;
@@ -47,6 +49,7 @@ pub struct YCSBT {
     invoke_get_modify: Vec<u8>,
     sender: Arc<Sender>,
     table_id: u64,
+    order: u32,
 }
 
 impl YCSBT {
@@ -112,6 +115,40 @@ impl YCSBT {
             invoke_get_modify: invoke_get_modify,
             sender: sender,
             table_id: table_id,
+            order: config.order as u32,
+        }
+    }
+
+    #[allow(unreachable_code)]
+    /// This method executes the task.
+    ///
+    /// # Arguments
+    /// *`order`: The amount of compute in each extension.
+    pub fn execute_task(&mut self, order: u32) {
+        let mut generator = move || {
+            // Compute part for this extension
+            let start = cycles::rdtsc();
+            while cycles::rdtsc() - start < order as u64 {}
+            return 0;
+
+            // XXX: This yield is required to get the compiler to compile this closure into a
+            // generator. It is unreachable and benign.
+            yield 0;
+        };
+
+        unsafe {
+            match generator.resume() {
+                GeneratorState::Yielded(val) => {
+                    if val != 0 {
+                        panic!("Pushback native execution is buggy");
+                    }
+                }
+                GeneratorState::Complete(val) => {
+                    if val != 0 {
+                        panic!("Pushback native execution is buggy");
+                    }
+                }
+            }
         }
     }
 }
@@ -246,6 +283,10 @@ impl Workload for YCSBT {
         commit_payload.extend_from_slice(&version);
         commit_payload.extend_from_slice(key2);
         commit_payload.extend_from_slice(&value2);
+
+        // Execute the compute part.
+        let order = self.order;
+        self.execute_task(order);
 
         self.sender.send_commit(
             header.common_header.tenant,
