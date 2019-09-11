@@ -63,27 +63,29 @@ impl YCSBT {
         // The payload on an invoke() based get request consists of the extensions name ("ycsbt"),
         // operation type, the table id to perform the lookup on, and the key to lookup.
         let payload_len = "ycsbt".as_bytes().len()
-            + mem::size_of::<u8>()
             + mem::size_of::<u64>()
-            + config.key_len;
+            + config.key_len
+            + mem::size_of::<u8>();
         let mut invoke_get: Vec<u8> = Vec::with_capacity(payload_len);
         invoke_get.extend_from_slice("ycsbt".as_bytes());
-        invoke_get.extend_from_slice(&[1]);
         invoke_get.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(table_id.to_le()) });
+        invoke_get.extend_from_slice(&[0; 30]); // Placeholder for key
+        invoke_get.extend_from_slice(&[1]);
         invoke_get.resize(payload_len, 0);
 
         // The payload on an invoke() based get request consists of the extensions name ("ycsbt"),
         // the table id to perform the lookup on, and the two keys to lookup and modify.
         let payload_len = "ycsbt".as_bytes().len()
-            + mem::size_of::<u8>()
             + mem::size_of::<u64>()
             + config.key_len
-            + config.key_len;
+            + config.key_len
+            + mem::size_of::<u8>();
         let mut invoke_get_modify: Vec<u8> = Vec::with_capacity(payload_len);
         invoke_get_modify.extend_from_slice("ycsbt".as_bytes());
-        invoke_get_modify.extend_from_slice(&[2]);
         invoke_get_modify
             .extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(table_id.to_le()) });
+        invoke_get_modify.extend_from_slice(&[0; 60]); // Placeholder for 2 keys
+        invoke_get_modify.extend_from_slice(&[2]);
         invoke_get_modify.resize(payload_len, 0);
 
         YCSBT {
@@ -131,16 +133,16 @@ impl Workload for YCSBT {
         if is_get == true {
             let k = self.key_rng.sample(&mut self.rng) as u32;
             let k: [u8; 4] = unsafe { transmute(k.to_le()) };
-            self.invoke_get[14..18].copy_from_slice(&k);
+            self.invoke_get[13..17].copy_from_slice(&k);
             (t, self.invoke_get.as_slice())
         } else {
             let k = self.key_rng.sample(&mut self.rng) as u32;
             let k: [u8; 4] = unsafe { transmute(k.to_le()) };
-            self.invoke_get_modify[14..18].copy_from_slice(&k);
+            self.invoke_get_modify[13..17].copy_from_slice(&k);
 
             let k = self.key_rng.sample(&mut self.rng) as u32;
             let k: [u8; 4] = unsafe { transmute(k.to_le()) };
-            self.invoke_get_modify[44..48].copy_from_slice(&k);
+            self.invoke_get_modify[43..47].copy_from_slice(&k);
             (t, self.invoke_get_modify.as_slice())
         }
     }

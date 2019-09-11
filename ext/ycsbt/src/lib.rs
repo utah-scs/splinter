@@ -58,13 +58,13 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
                 return 1;
             }
 
-            let (op, rest) = args.split_at(1);
-            optype = op[0];
+            optype = args[args.len() - 1];
 
             // Next, split the arguments into a view over the table identifier
             // (first eight bytes), and a view over the key to be looked up.
             // De-serialize the table identifier into a u64.
-            let (s_table, key) = rest.split_at(8);
+            let (s_table, key) = args.split_at(8);
+            let key = key.split_at(key.len() - 1).0;
             keys.extend_from_slice(key);
 
             // Get the table id from the unwrapped arguments.

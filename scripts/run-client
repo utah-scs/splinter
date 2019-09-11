@@ -35,10 +35,14 @@ RUST_LOG=debug ./target/release/client >> ../samples.temp
 cat ../samples.temp | grep "AUTH"
 thrpt=$(cat ../samples.temp | grep "Client Throughput" | \
         awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+abort=$(cat ../samples.temp | grep "Client Aborted" | \
+        awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+
 
 # Print out final numbers.
 m=$(cat ../samples.temp | grep ">>>" | awk '{ print $2 }')
 t=$(cat ../samples.temp | grep ">>>" | awk '{ print $3 }')
 echo ""
+echo "Median(ns): $m, Tail(ns): $t, Aborted-tp(op/s): $abort"
 echo "Median(ns): $m, Tail(ns): $t, Throughput(op/s): $thrpt"
 rm -f ../samples.temp

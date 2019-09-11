@@ -372,6 +372,14 @@ impl Table {
 
         COMMIT
     }
+
+    /// Allocate a new version with value 0.
+    ///
+    /// # Return
+    /// A new version with a value 0.
+    pub fn version(&self) -> Version {
+        Version(0)
+    }
 }
 
 // This module contains a few basic unit tests for Table. These tests are

@@ -49,6 +49,9 @@ use splinter::*;
 // Flag to indicate that the client has finished sending and receiving the packets.
 static mut FINISHED: bool = false;
 
+// The maximum outstanding requests a client can generate; and maximum number of push-back tasks.
+const MAX_CREDIT: usize = 32;
+
 ///
 struct Client<T>
 where
@@ -89,6 +92,9 @@ where
 
     // The total number of responses received so far.
     recvd: u64,
+
+    // The total number of aborted requests.
+    aborted: u64,
 
     // Vector of sampled request latencies. Required to calculate distributions once all responses
     // have been received.
@@ -148,6 +154,7 @@ where
             responses: resps,
             start: cycles::rdtsc(),
             recvd: 0,
+            aborted: 0,
             latencies: Vec::with_capacity(resps as usize),
             master: master,
             stop: 0,
@@ -189,6 +196,8 @@ where
                     &keys,
                     curr,
                 );
+                self.outstanding += 1;
+                self.sent += 1;
             }
 
             _ => {
@@ -227,20 +236,20 @@ where
                 } else {
                     // For invoke() mode, limit the pushback task-queue length to 32 to avoid
                     // sharp increase in latency.
-                    if self.manager.borrow().get_queue_len() < 32 {
+                    if self.manager.borrow().get_queue_len() < MAX_CREDIT {
                         self.send_invoke();
                     }
                 }
                 self.next = self.start + self.sent * self.rate_inv;
             }
         } else {
-            while self.outstanding < 32 {
+            while self.outstanding < MAX_CREDIT as u64 {
                 if self.native == true {
                     self.send_native();
                 } else {
                     // For invoke() mode, limit the pushback task-queue length to 32 to avoid
                     // sharp increase in latency.
-                    if self.manager.borrow().get_queue_len() < 32 {
+                    if self.manager.borrow().get_queue_len() < MAX_CREDIT {
                         self.send_invoke();
                     }
                 }
@@ -317,7 +326,14 @@ where
                         self.outstanding -= 1;
                     }
 
-                    _ => {}
+                    RpcStatus::StatusTxAbort => {
+                        self.aborted += 1;
+                        self.outstanding -= 1;
+                    }
+
+                    _ => {
+                        info!("Not sure about the response");
+                    }
                 }
                 p.free_packet();
             }
@@ -336,7 +352,9 @@ where
                 p.free_packet();
             }
 
-            _ => packet.free_packet(),
+            _ => {
+                packet.free_packet();
+            }
         }
     }
 
@@ -354,16 +372,17 @@ where
                         let timestamp = p.get_header().common_header.stamp;
                         match p.get_header().common_header.status {
                             RpcStatus::StatusTxAbort => {
-                                self.latencies.push(curr - timestamp);
+                                self.aborted += 1;
                             }
 
                             RpcStatus::StatusOk => {
+                                self.recvd += 1;
                                 self.latencies.push(curr - timestamp);
                             }
 
                             _ => {}
                         }
-                        self.recvd += 1;
+
                         p.free_packet();
                         continue;
                     }
@@ -402,8 +421,11 @@ where
             "Client Throughput {}",
             self.recvd as f64 / cycles::to_seconds(self.stop - self.start)
         );
-
-        info!("{}", self.recvd);
+        // Calculate & print the aborted for all client threads.
+        println!(
+            "Client Aborted {}",
+            self.aborted as f64 / cycles::to_seconds(self.stop - self.start)
+        );
 
         // Calculate & print median & tail latency only on the master thread.
         if self.master {
@@ -437,7 +459,9 @@ where
     fn execute(&mut self) {
         self.send();
         self.recv();
-        //self.manager.borrow_mut().execute_task();
+        for _i in 0..MAX_CREDIT {
+            self.manager.borrow_mut().execute_task();
+        }
         if self.stop > 0 {
             unsafe { FINISHED = true }
             return;
