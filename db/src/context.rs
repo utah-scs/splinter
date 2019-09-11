@@ -169,6 +169,11 @@ impl<'a> Context<'a> {
                         .borrow_mut()
                         .remove_from_payload_tail(payload_len);
 
+                    let _ = self.response.borrow_mut().add_to_payload_tail(
+                        self.request.get_payload().len(),
+                        self.request.get_payload(),
+                    );
+
                     // Modify status to Transaction Abort.
                     self.response
                         .borrow_mut()

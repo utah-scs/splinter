@@ -1709,6 +1709,18 @@ impl Master {
                                 }
 
                                 Err(()) => {
+                                    for record in records.chunks(record_len) {
+                                        let (optype, rem) = record.split_at(1);
+                                        let (_, rem) = rem.split_at(8);
+                                        let (key, _) = rem.split_at(key_len);
+                                        match parse_record_optype(optype) {
+                                            OpType::SandstormRead => {
+                                                let _ = res.add_to_payload_tail(key.len(), key);
+                                            },
+
+                                            _ => {}
+                                        }
+                                    }
                                     status = RpcStatus::StatusTxAbort;
                                     None
                                 }
