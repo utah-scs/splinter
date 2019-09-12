@@ -29,7 +29,7 @@ fi
 rm -f ../samples.temp
 
 # Run AUTH.
-RUST_LOG=debug ./target/release/client >> ../samples.temp
+RUST_LOG=debug ./target/release/ycsb-t >> ../samples.temp
 
 # Calculate the total throughput.
 cat ../samples.temp | grep "AUTH"

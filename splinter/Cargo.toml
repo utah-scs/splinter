@@ -52,6 +52,10 @@ path = "src/bin/client/auth.rs"
 name = "client"
 path = "src/bin/client/client.rs"
 
+[[bin]]
+name = "ycsb-t"
+path = "src/bin/client/ycsb-t.rs"
+
 [dependencies]
 bincode      = "1.0"
 rust-crypto  = "0.2.36"
