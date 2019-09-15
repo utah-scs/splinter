@@ -1,0 +1,11 @@
+[package]
+name = "checksum"
+version = "0.1.0"
+authors = ["Ankit Bhardwaj <bhrdwj.ankit@gmail.com>"]
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+crypto-hash = "0.3.4"
+sandstorm = { path = "../../sandstorm" }

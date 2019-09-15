@@ -53,7 +53,9 @@ def setupCargo():
     ext_fix = "cargo generate-lockfile; " + \
           "cargo update -p spin --precise 0.4.7; " + \
           "cargo update -p serde:1.0.100 --precise 1.0.67; " + \
-          "cargo update -p serde_derive:1.0.100 --precise 1.0.67; "
+          "cargo update -p serde_derive:1.0.100 --precise 1.0.67; " + \
+          "cargo update -p cc --precise 1.0.40; " + \
+          "cargo update -p pkg-config --precise 0.3.15; "
 
     # Fix dependencies inside db.
     cmd = "cd db; " + fix + "cd ../"
@@ -109,6 +111,10 @@ def setupCargo():
 
     # Fix dependencies inside ext/ycsbt.
     cmd = "cd ext/ycsbt; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/checksum.
+    cmd = "cd ext/checksum; " + ext_fix + "cd ../../"
     subprocess.check_call(cmd, shell=True)
 
     # Fix dependencies inside splinter.

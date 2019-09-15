@@ -40,7 +40,7 @@ const MAX_ALLOC: usize = 10240;
 /// The flag to enable-disable including the RW set in the pushback response.
 const INCLUDE_RWSET: bool = true;
 
-const DEBUG: bool = true;
+const DEBUG: bool = false;
 
 /// This type is passed into the init method of every extension. The methods
 /// on this type form the interface allowing extensions to read and write
