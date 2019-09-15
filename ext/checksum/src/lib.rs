@@ -79,13 +79,15 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
         let mut err = INVALIDARG;
         let mut num: u32 = 0;
         let mut aggr: u64 = 0;
+        let mut optype: u8 = 0;
         let mut obj: Option<ReadBuf> = None;
         let mut buf: Option<MultiReadBuf> = None;
         {
             let arg: &[u8] = db.args();
-            let (t, val) = arg.split_at(size_of::<u64>());
-            let (n, val) = val.split_at(size_of::<u32>());
-            let (o, key) = val.split_at(size_of::<u32>());
+            let (t, rem) = arg.split_at(size_of::<u64>());
+            let (n, rem) = rem.split_at(size_of::<u32>());
+            let (key, op) = rem.split_at(size_of::<u64>());
+            optype = op[0];
 
             // Get the table id from the unwrapped arguments.
             let mut table: u64 = 0;
@@ -94,13 +96,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             }
 
             // Get the number of keys to aggregate across.
-            let mut num_k: u32 = 0;
             for (idx, e) in n.iter().enumerate() {
-                num_k |= (*e as u32) << (idx << 3);
-            }
-
-            // Get the order.
-            for (idx, e) in o.iter().enumerate() {
                 num |= (*e as u32) << (idx << 3);
             }
 
@@ -110,38 +106,45 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
 
             // Try performing the aggregate if the key list was successfully retrieved.
             if let Some(val) = obj {
-                let value = val
-                    .read()
-                    .split_at((KEYLENGTH as usize) * (num_k as usize))
-                    .0;
+                let value = val.read().split_at((KEYLENGTH as usize) * (num as usize)).0;
 
                 MULTIGET1!(db, table, KEYLENGTH, value, buf);
-
-                match buf {
-                    Some(vals) => {
-                        let mut i = 0;
-                        while vals.next() {
-                            if i < num {
-                                let result = digest(Algorithm::MD5, vals.read());
-                                //let result = digest(Algorithm::SHA1, vals.read());
-                                //let result = digest(Algorithm::SHA256, vals.read());
-                                //let result = digest(Algorithm::SHA512, vals.read());
-                                aggr += result[0] as u64;
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-
-                    None => {
-                        err = INVALIDKEY;
-                        db.resp(pack(&err));
-                        return 0;
-                    }
-                }
             }
         }
-        yield 0;
+        match buf {
+            Some(vals) => {
+                let mut i = 0;
+                while vals.next() {
+                    if i < num {
+                        if optype == 1 {
+                            let result = digest(Algorithm::MD5, vals.read());
+                            aggr += result[0] as u64;
+                        }
+                        if optype == 2 {
+                            let result = digest(Algorithm::SHA1, vals.read());
+                            aggr += result[0] as u64;
+                        }
+                        if optype == 3 {
+                            let result = digest(Algorithm::SHA256, vals.read());
+                            aggr += result[0] as u64;
+                        }
+                        if optype == 4 {
+                            let result = digest(Algorithm::SHA512, vals.read());
+                            aggr += result[0] as u64;
+                        }
+                    } else {
+                        break;
+                    }
+                    yield 0;
+                }
+            }
+
+            None => {
+                err = INVALIDKEY;
+                db.resp(pack(&err));
+                return 0;
+            }
+        }
 
         err = SUCCESSFUL;
         // First write in the response code.

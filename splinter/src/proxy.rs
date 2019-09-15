@@ -255,6 +255,21 @@ impl ProxyDB {
                 key_len = self.writeset.borrow()[0].key.len();
                 val_len = self.writeset.borrow()[0].value.len();
             }
+            if cfg!(feature = "checksum") {
+                key_len = 30;
+                val_len = 100;
+                let commit_payload = self.commit_payload.borrow();
+                let payload = commit_payload.split_at(377).1;
+                self.sender.send_commit(
+                    self.tenant,
+                    table_id,
+                    payload,
+                    self.parent_id,
+                    key_len as u16,
+                    val_len as u16,
+                );
+                return;
+            }
 
             self.sender.send_commit(
                 self.tenant,

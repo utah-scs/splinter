@@ -657,6 +657,12 @@ impl Master {
         if self.extensions.load(name, tenant, "ycsbt") == false {
             panic!("Failed to load ycsbt() extension.");
         }
+
+        // Load the checksum() extension.
+        let name = "../ext/checksum/target/release/libchecksum.so";
+        if self.extensions.load(name, tenant, "checksum") == false {
+            panic!("Failed to load checksum() extension.");
+        }
     }
 
     /// Loads the get(), put(), and tao() extensions once, and shares them across multiple tenants.

@@ -48,7 +48,9 @@ def setupCargo():
           "cargo update -p getopts --precise 0.2.19; " + \
           "cargo update -p unicode-width --precise 0.1.5; " +\
           "cargo update -p proc-macro2 --precise 0.4.30; " + \
-          "cargo update -p cc --precise 1.0.40; "
+          "cargo update -p cc --precise 1.0.40; " + \
+          "cargo update -p pkg-config --precise 0.3.15; "
+
 
     ext_fix = "cargo generate-lockfile; " + \
           "cargo update -p spin --precise 0.4.7; " + \

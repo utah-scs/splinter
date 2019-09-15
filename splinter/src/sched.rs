@@ -141,8 +141,16 @@ impl TaskManager {
     ///             pushed back.
     pub fn update_rwset(&mut self, id: u64, records: &[u8], recordlen: usize, keylen: usize) {
         if let Some(mut task) = self.waiting.remove(&id) {
-            for record in records.chunks(recordlen) {
-                task.update_cache(record, keylen);
+            if cfg!(feature = "checksum") {
+                let (keys, records) = records.split_at(377);
+                task.update_cache(keys, 8);
+                for record in records.chunks(recordlen) {
+                    task.update_cache(record, keylen);
+                }
+            } else {
+                for record in records.chunks(recordlen) {
+                    task.update_cache(record, keylen);
+                }
             }
             self.ready.push_back(task);
         } else {
