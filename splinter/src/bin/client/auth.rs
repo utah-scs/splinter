@@ -17,12 +17,16 @@
 
 extern crate crypto;
 extern crate db;
+extern crate openssl;
 extern crate rand;
 extern crate sandstorm;
 extern crate spin;
 extern crate splinter;
 extern crate time;
 extern crate zipf;
+
+use openssl::aes::{aes_ige, AesKey};
+use openssl::symm::Mode;
 
 mod setup;
 
@@ -308,6 +312,12 @@ where
             return;
         }
 
+        let key = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F";
+        let mut iv = *b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F\
+                \x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F";
+        let ekey = AesKey::new_encrypt(key).unwrap();
+        let mut output = [0u8; 16];
+
         while self.outstanding < 32 && self.manager.borrow().get_queue_len() < 32 {
             // Get the current time stamp so that we can determine if it is time to issue the next RPC.
             let curr = cycles::rdtsc();
@@ -338,7 +348,8 @@ where
                         // extension name (4 bytes), the table id (8 bytes), Just write
                         // in the first 4 bytes of the key and first 4 bytes of value.
                         p_get[12..16].copy_from_slice(&key[0..4]);
-                        p_get[42..46].copy_from_slice(&key[0..4]);
+                        aes_ige(&key[0..16], &mut output, &ekey, &mut iv, Mode::Encrypt);
+                        p_get[42..58].copy_from_slice(&output[0..16]);
                         self.manager.borrow_mut().create_task(
                             curr,
                             &p_get,

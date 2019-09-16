@@ -20,6 +20,10 @@
 extern crate crypto;
 #[macro_use]
 extern crate sandstorm;
+extern crate openssl;
+
+use openssl::aes::{aes_ige, AesKey};
+use openssl::symm::Mode;
 
 use crypto::bcrypt::bcrypt;
 
@@ -55,6 +59,11 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
         let mut status = INVALIDARG;
         let mut username: Vec<u8> = Vec::with_capacity(30);
         let mut password: Vec<u8> = Vec::with_capacity(72);
+        let key = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F";
+        let mut iv = *b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F\
+                \x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F";
+        let ekey = AesKey::new_decrypt(key).unwrap();
+        let mut output = [0u8; 16];
 
         {
             // First off, retrieve the arguments to the extension.
@@ -76,6 +85,8 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
             let (userid, pass) = remain_args.split_at(30);
             username.extend_from_slice(userid);
             password.extend_from_slice(pass);
+            aes_ige(&password[0..16], &mut output, &ekey, &mut iv, Mode::Decrypt);
+            password[0..16].copy_from_slice(&output[0..16]);
 
             // Get the table id from the unwrapped arguments.
             for (idx, e) in s_table.iter().enumerate() {

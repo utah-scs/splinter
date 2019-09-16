@@ -300,7 +300,7 @@ impl Master {
         }
 
         // Next, populate the actual records.
-        for i in 1..records {
+        for i in 0..records {
             let mut key = vec![0; K_LEN as usize];
             let mut val = vec![0; V_LEN as usize];
 

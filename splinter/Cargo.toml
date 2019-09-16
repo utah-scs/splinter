@@ -73,6 +73,7 @@ spin         = "0.4.7"  # Consider using parking lot?
 bytes        = "0.4.7"
 env_logger   = "0.3"
 libloading   = "0.3"
+openssl      = "0.10.24"
 rustlearn    = "0.5.0"
 serde        = "1.0.37"
 serde_derive = "1.0.37"
