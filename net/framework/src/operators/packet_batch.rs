@@ -250,11 +250,11 @@ impl Act for PacketBatch {
         while self.available() > 0 {
             unsafe {
                 // let available = self.available() as i32;
-                try!(port.send(self.packet_ptr()).and_then(|sent| {
+                port.send(self.packet_ptr()).and_then(|sent| {
                     self.consume_batch_partial(sent as usize);
                     total_sent += sent;
                     Ok(sent)
-                }));
+                })?;
             }
             break;
         }

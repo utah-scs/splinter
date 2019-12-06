@@ -14,10 +14,10 @@
  */
 
 use time::PreciseTime;
-use std::sync::{Once, ONCE_INIT};
+use std::sync::{Once};
 
 static mut CYCLES_PER_SECOND: u64 = 0;
-static INIT: Once = ONCE_INIT;
+static INIT: Once = Once::new();
 
 /// Perform once-only overall initialization for the cycles module, such
 /// as calibrating the clock frequency.  This method is invoked automatically

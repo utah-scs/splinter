@@ -4,7 +4,7 @@
 #![feature(box_syntax)]
 #![feature(specialization)]
 #![feature(slice_concat_ext)]
-#![feature(fnbox)]
+//#![feature(fnbox)]
 //#![feature(alloc)]
 //#![feature(heap_api)]
 //#![feature(unique)]
