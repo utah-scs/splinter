@@ -14,8 +14,9 @@
  */
 
 #![crate_type = "dylib"]
-#![feature(no_unsafe)]
+#![forbid(unsafe_code)]
 #![feature(generators, generator_trait)]
+#![allow(bare_trait_objects)]
 
 extern crate crypto;
 #[macro_use]
@@ -29,6 +30,7 @@ use crypto::bcrypt::bcrypt;
 
 use std::ops::Generator;
 use std::rc::Rc;
+use std::pin::Pin;
 
 use sandstorm::db::DB;
 use sandstorm::pack::pack;
@@ -52,8 +54,8 @@ const ABSENTOBJECT: u8 = 0x4;
 #[no_mangle]
 #[allow(unreachable_code)]
 #[allow(unused_assignments)]
-pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
-    Box::new(move || {
+pub fn init(db: Rc<DB>) -> Pin<Box<Generator<Yield = u64, Return = u64>>> {
+    Box::pin(move || {
         let mut obj = None;
         let mut table: u64 = 0;
         let mut status = INVALIDARG;

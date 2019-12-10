@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
-
 extern crate db;
 extern crate rand;
 extern crate splinter;
@@ -54,7 +52,7 @@ use splinter::*;
 // The tests below give an example of how to use it and how to aggregate the results.
 pub struct Long {
     long_pct: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,

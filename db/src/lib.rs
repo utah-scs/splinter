@@ -13,6 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+
 //! This crate is useful in writing a new client and handling pushback
 //! extension on the client side.
 #![feature(
@@ -22,6 +23,7 @@
     integer_atomics,
     atomic_min_max
 )]
+#![allow(bare_trait_objects)]
 #![warn(missing_docs)]
 
 extern crate libloading;

@@ -16,11 +16,13 @@
 #![crate_type = "dylib"]
 #![forbid(unsafe_code)]
 #![feature(generators, generator_trait)]
+#![allow(bare_trait_objects)]
 
 extern crate sandstorm;
 
 use std::rc::Rc;
 use std::ops::Generator;
+use std::pin::Pin;
 
 use sandstorm::db::DB;
 
@@ -37,8 +39,8 @@ use sandstorm::db::DB;
 #[no_mangle]
 #[allow(unreachable_code)]
 #[allow(unused_assignments)]
-pub fn init(_db: Rc<DB>) -> Box<Generator<Yield=u64, Return=u64>> {
-    Box::new(move || {
+pub fn init(_db: Rc<DB>) -> Pin<Box<Generator<Yield=u64, Return=u64>>> {
+    Box::pin(move || {
         loop {}
         // let array: [i64; 5000000000000] = [0;5000000000000];
         // println!("{}", array[50000000]);

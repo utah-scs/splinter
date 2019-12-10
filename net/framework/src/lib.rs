@@ -4,10 +4,10 @@
 #![feature(box_syntax)]
 #![feature(specialization)]
 #![feature(slice_concat_ext)]
-#![feature(fnbox)]
-#![feature(alloc)]
-#![feature(heap_api)]
-#![feature(unique)]
+//#![feature(fnbox)]
+//#![feature(alloc)]
+//#![feature(heap_api)]
+//#![feature(unique)]
 #![feature(const_fn)]
 // Used for cache alignment.
 #![feature(allocator_api)]
@@ -16,6 +16,8 @@
 #![allow(unused_features)]
 #![feature(integer_atomics)]
 #![allow(unused_doc_comments)]
+#![allow(bare_trait_objects)]
+#![allow(unused_mut)]
 
 #![cfg_attr(feature = "dev", allow(unstable_features))]
 // Need this since PMD port construction triggers too many arguments.

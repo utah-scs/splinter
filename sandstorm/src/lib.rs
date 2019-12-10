@@ -18,6 +18,7 @@
 #![feature(type_ascription)]
 #![feature(generator_trait)]
 #![feature(rustc_private)]
+#![allow(bare_trait_objects)]
 #![warn(missing_docs)]
 
 /// Allocator/deallocator of heap memory for the table.
@@ -43,7 +44,6 @@ pub use std::boxed;
 pub use std::convert;
 pub use std::io;
 pub use std::mem::size_of;
-pub use std::ops::Generator;
 pub use std::rc;
 pub use std::result;
 pub use std::time;

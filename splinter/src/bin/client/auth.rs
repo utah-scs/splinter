@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
-
 extern crate crypto;
 extern crate db;
 extern crate openssl;
@@ -72,7 +70,7 @@ const RECORD_SIZE: usize = 79;
 // The tests below give an example of how to use it and how to aggregate the results.
 pub struct Auth {
     put_pct: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,

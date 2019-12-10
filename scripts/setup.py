@@ -36,28 +36,11 @@ def printColor(color, string):
 def setupCargo():
     printColor("bold", "=============== Fixing Deps ==========================")
     fix = "cargo generate-lockfile; " + \
-          "cargo update -p spin --precise 0.4.7; " + \
-          "cargo update -p serde:1.0.100 --precise 1.0.67; " + \
-          "cargo update -p serde_derive:1.0.100 --precise 1.0.67; " + \
+          "cargo update -p spin:0.4.10 --precise 0.4.9; " + \
+          "cargo update -p serde:1.0.90 --precise 1.0.37; " + \
+          "cargo update -p serde_derive:1.0.90 --precise 1.0.37; " + \
           "cargo update -p env_logger:0.5.13 --precise 0.5.3; " + \
-          "cargo update -p rustc-demangle --precise 0.1.13; " + \
-          "cargo update -p twox-hash --precise 1.1.1; " + \
-          "cargo update -p backtrace --precise 0.3.20; " + \
-          "cargo update -p backtrace-sys --precise 0.1.28; " + \
-          "cargo update -p atty --precise 0.2.11; " + \
-          "cargo update -p getopts --precise 0.2.19; " + \
-          "cargo update -p unicode-width --precise 0.1.5; " +\
-          "cargo update -p proc-macro2 --precise 0.4.30; " + \
-          "cargo update -p cc --precise 1.0.40; " + \
-          "cargo update -p pkg-config --precise 0.3.15; "
-
-
-    ext_fix = "cargo generate-lockfile; " + \
-          "cargo update -p spin --precise 0.4.7; " + \
-          "cargo update -p serde:1.0.100 --precise 1.0.67; " + \
-          "cargo update -p serde_derive:1.0.100 --precise 1.0.67; " + \
-          "cargo update -p cc --precise 1.0.40; " + \
-          "cargo update -p pkg-config --precise 0.3.15; "
+          "cargo update -p rustc-demangle:0.1.15 --precise 0.1.13; "
 
     # Fix dependencies inside db.
     cmd = "cd db; " + fix + "cd ../"
@@ -166,7 +149,7 @@ def setupDevEnvt():
 def installRust():
     printColor("bold", "=============== Installing Rust ======================")
     subprocess.check_call("curl -s https://sh.rustup.rs -sSf | " +\
-                          "sh -s -- --default-toolchain nightly-2018-08-02 -y",
+                          "sh -s -- --default-toolchain nightly-2019-12-05 -y",
                           shell=True)
     os.environ["PATH"] += ":" + os.environ["HOME"] + "/.cargo/bin"
     return
@@ -177,10 +160,10 @@ def setupVScode():
     subprocess.check_call("sudo apt -y install libnotify4 libnspr4 libnss3 libnss3-nssdb", shell=True)
     subprocess.check_call("sudo apt -y install libsecret-1-0 libsecret-common libxkbfile1", shell=True)
     subprocess.check_call("sudo apt -y install notification-daemon gitk git-gui", shell=True)
-    subprocess.check_call("wget https://az764295.vo.msecnd.net/stable/61122f88f0bf01e2ac16bdb9e1bc4571755f5bd8/code_1.30.2-1546901646_amd64.deb",
+    subprocess.check_call("wget https://az764295.vo.msecnd.net/stable/2213894ea0415ee8c85c5eea0d0ff81ecc191529/code_1.36.1-1562627527_amd64.deb",
                            shell=True)
-    subprocess.check_call("sudo dpkg -i code_1.30.2-1546901646_amd64.deb", shell=True)
-    subprocess.check_call("rm  code_1.30.2-1546901646_amd64.deb", shell=True)
+    subprocess.check_call("sudo dpkg -i code_1.36.1-1562627527_amd64.deb", shell=True)
+    subprocess.check_call("rm  code_1.36.1-1562627527_amd64.deb", shell=True)
     return
 
 if __name__ == "__main__":
@@ -212,8 +195,8 @@ if __name__ == "__main__":
     if args.full or args.installDpdk:
         setupDpdk()
 
-    # Finally, fix dependencies.
-    if args.full or args.fixCargoDep:
+    # Fix dependencies.
+    if args.fixCargoDep:
         setupCargo()
 
     if args.full or args.installIDE:

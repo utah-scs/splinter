@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
-
 extern crate bincode;
 extern crate db;
 extern crate rand;
@@ -76,7 +74,7 @@ static ML_MODEL: u8 = 1;
 // The tests below give an example of how to use it and how to aggregate the results.
 pub struct Analysis {
     put_pct: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     order_rng: Box<Normal>,

@@ -15,6 +15,7 @@
 
 use std::cell::Cell;
 use std::ops::{Generator, GeneratorState};
+use std::pin::Pin;
 
 use super::cycles;
 use super::task::TaskState::*;
@@ -28,7 +29,7 @@ use e2d2::common::EmptyMetadata;
 // value is an optional tuple consisting of a request and response packet parsed/deparsed upto
 // their UDP headers. This is to allow for operations that might not require a response packet
 // such as garbage collection, logging etc. to be run as generators too.
-type NativeGenerator = Box<
+type NativeGenerator = Pin<Box<
     Generator<
         Yield = u64,
         Return = Option<(
@@ -36,7 +37,7 @@ type NativeGenerator = Box<
             Packet<UdpHeader, EmptyMetadata>,
         )>,
     >,
->;
+>>;
 
 /// A task corresponding to a native operation (like get() and put() requests).
 pub struct Native {
@@ -101,18 +102,15 @@ impl Task for Native {
         if self.state == INITIALIZED || self.state == YIELDED {
             self.state = RUNNING;
 
-            // As of 04/02/2018, calling resume() on a generator requires an unsafe block.
-            unsafe {
-                match self.gen.resume() {
-                    GeneratorState::Yielded(time) => {
-                        self.db_time += time;
-                        self.state = YIELDED;
-                    }
+            match self.gen.as_mut().resume() {
+                GeneratorState::Yielded(time) => {
+                    self.db_time += time;
+                    self.state = YIELDED;
+                }
 
-                    GeneratorState::Complete(pkts) => {
-                        self.res.set(pkts);
-                        self.state = COMPLETED;
-                    }
+                GeneratorState::Complete(pkts) => {
+                    self.res.set(pkts);
+                    self.state = COMPLETED;
                 }
             }
         }
