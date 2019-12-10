@@ -67,5 +67,7 @@ pub mod sched;
 pub mod table;
 /// This modules has a trait which should be implemented by each task instance.
 pub mod task;
+/// This module contains the transaction related code.
+pub mod tx;
 /// This module contains the wireformat realted to the various functionalities.
 pub mod wireformat;

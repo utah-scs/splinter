@@ -13,7 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use super::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
+use super::buf::{MultiReadBuf, ReadBuf, WriteBuf};
 use std::sync::Arc;
 use util::model::Model;
 
@@ -118,10 +118,6 @@ pub trait DB {
     /// This method is meant for testing, and will not do anything in the real
     /// system.
     fn debug_log(&self, msg: &str);
-
-    /// This method populate the read/write set per extension and the read/write set is
-    /// trasmitted to the client is case of the extension pushback.
-    fn populate_read_write_set(&self, record: Record);
 
     /// This method will perform a lookup on a key-value pair inside the
     /// local cache, and return a handle that can be used to read the value

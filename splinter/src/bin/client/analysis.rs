@@ -27,14 +27,13 @@ extern crate zipf;
 mod setup;
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::mem;
 use std::mem::transmute;
 use std::sync::Arc;
 
 use db::config;
-use db::cyclecounter::CycleCounter;
 use db::cycles;
 use db::e2d2::allocators::*;
 use db::e2d2::interface::*;
@@ -42,14 +41,14 @@ use db::e2d2::scheduler::*;
 use db::log::*;
 use db::master::Master;
 use db::rpc::*;
-use db::task::TaskState::*;
 use db::wireformat::*;
 
 use rand::distributions::{Normal, Sample};
 use rand::{Rng, SeedableRng, XorShiftRng};
 use rustlearn::prelude::*;
 use rustlearn::traits::SupervisedModel;
-use splinter::manager::TaskManager;
+use splinter::nativestate::PushbackState;
+use splinter::sched::TaskManager;
 use splinter::*;
 use util::model::{insert_global_model, insert_model, run_ml_application, GLOBAL_MODEL, MODEL};
 use zipf::ZipfDistribution;
@@ -61,8 +60,8 @@ static mut FINISHED: bool = false;
 static ORDER: f64 = 2500.0;
 static STD_DEV: f64 = 500.0;
 
-// Type: 1, KeySize: 30, ValueSize:108
-const RECORD_SIZE: usize = 139;
+// This shows which model to use, 1 is for LR, 2 is for D-Tree, and 3 is for Random Forest.
+static ML_MODEL: u8 = 1;
 
 // Analysis benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
@@ -223,36 +222,26 @@ where
     // more than 32(XXX) outstanding packets.
     outstanding: u64,
 
-    /// A ref counted pointer to a master service. The master service
-    /// implements the primary interface to the database.
-    master_service: Arc<Master>,
-
     // To keep a mapping between each packet and request parameters. This information will be used
     // when the server pushes back the extension.
-    manager: RefCell<HashMap<u64, TaskManager>>,
-
-    // Run-queue of tasks waiting to execute. Tasks on this queue have either yielded, or have been
-    // recently enqueued and never run before.
-    waiting: VecDeque<TaskManager>,
-
-    // Number of tasks completed on the client, after server Analysis. Wraps around
-    // after each 1L such tasks.
-    analysis_completed: u64,
-
-    // Counts the number of CPU cycle spent on the task execution when client executes the
-    // extensions on its end.
-    cycle_counter: CycleCounter,
+    manager: RefCell<TaskManager>,
 
     // Keeps track of the state of a multi-operation request. For example, an extension performs
     // four get operations before performing aggregation and all these get operations are dependent
     // on the previous value.
-    native_state: RefCell<HashMap<u64, u8>>,
+    native_state: RefCell<HashMap<u64, PushbackState>>,
 
     //Name of the extension for which the client is generating the requests.
     extname: String,
 
     // The batch size for number of records used in the prediction function.
     number: u32,
+
+    // The length of the key.
+    key_len: usize,
+
+    // The length of the record.
+    record_len: usize,
 }
 
 // Implementation of methods on AnalysisRecv.
@@ -285,15 +274,17 @@ where
     ) -> AnalysisRecvSend<T> {
         let num = config.num_aggr as u32;
         // The payload on an invoke() based get request consists of the extensions name ("analysis"),
-        // the table id to perform the lookup on, number of get(), and the key to lookup.
+        // the table id to perform the lookup on, number of get(), ml model number, and the key to lookup.
         let payload_len = "analysis".as_bytes().len()
             + mem::size_of::<u64>()
             + mem::size_of::<u32>()
+            + mem::size_of::<u8>()
             + config.key_len;
         let mut payload_analysis = Vec::with_capacity(payload_len);
         payload_analysis.extend_from_slice("analysis".as_bytes());
         payload_analysis.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
         payload_analysis.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(num.to_le()) });
+        payload_analysis.extend_from_slice(&[ML_MODEL]);
         payload_analysis.resize(payload_len, 0);
 
         // The payload on an invoke() based put request consists of the extensions name ("put"),
@@ -336,36 +327,13 @@ where
             payload_put: RefCell::new(payload_put),
             finished: false,
             outstanding: 0,
-            master_service: Arc::clone(&masterservice),
-            manager: RefCell::new(HashMap::new()),
-            waiting: VecDeque::new(),
-            analysis_completed: 0,
-            cycle_counter: CycleCounter::new(),
+            manager: RefCell::new(TaskManager::new(Arc::clone(&masterservice))),
             native_state: RefCell::new(HashMap::with_capacity(32)),
             extname: String::from("analysis"),
             number: num,
+            key_len: config.key_len,
+            record_len: 1 + 8 + config.key_len + config.value_len,
         }
-    }
-
-    fn add_request(&self, req: &[u8], tenant: u32, name_length: u32, id: u64) {
-        let req = TaskManager::new(
-            Arc::clone(&self.master_service),
-            &req,
-            tenant,
-            name_length,
-            id,
-        );
-        match self.manager.borrow_mut().insert(id, req) {
-            Some(_) => {
-                info!("Already present in the Hashmap");
-            }
-
-            None => {}
-        }
-    }
-
-    fn remove_request(&self, id: u64) {
-        self.manager.borrow_mut().remove(&id);
     }
 
     fn send(&mut self) {
@@ -374,7 +342,7 @@ where
             return;
         }
 
-        while self.outstanding < 32 {
+        while self.outstanding < 32 && self.manager.borrow().get_queue_len() < 32 {
             // Get the current time stamp so that we can determine if it is time to issue the next RPC.
             let curr = cycles::rdtsc();
 
@@ -384,7 +352,9 @@ where
                     |tenant, key, _ord| self.sender.send_get(tenant, 1, key, curr),
                     |tenant, key, val, _ord| self.sender.send_put(tenant, 1, key, val, curr),
                 );
-                self.native_state.borrow_mut().entry(curr).or_insert(1);
+                self.native_state
+                    .borrow_mut()
+                    .insert(curr, PushbackState::new(self.number, self.record_len));
                 self.outstanding += 1;
             } else {
                 // Configured to issue invoke() RPCs.
@@ -398,8 +368,14 @@ where
                         // First 20 bytes on the payload were already pre-populated with the
                         // extension name (8 bytes), the table id (8 bytes), the number of
                         // gets(4 bytes). Just write in the first 4 bytes of the key.
-                        p_get[20..24].copy_from_slice(&key[0..4]);
-                        self.add_request(&p_get, tenant, 8, curr);
+                        p_get[21..25].copy_from_slice(&key[0..4]);
+                        self.manager.borrow_mut().create_task(
+                            curr,
+                            &p_get,
+                            tenant,
+                            8,
+                            Arc::clone(&self.sender),
+                        );
                         self.sender.send_invoke(tenant, 8, &p_get, curr)
                     },
                     |tenant, key, _val, _ord| {
@@ -407,8 +383,14 @@ where
                         // extension name (8 bytes), the table id (8 bytes), and the key length (2
                         // bytes). Just write in the first 4 bytes of the key. The value is anyway
                         // always zero.
-                        p_put[18..22].copy_from_slice(&key[0..4]);
-                        self.add_request(&p_put, tenant, 8, curr);
+                        p_put[19..23].copy_from_slice(&key[0..4]);
+                        self.manager.borrow_mut().create_task(
+                            curr,
+                            &p_put,
+                            tenant,
+                            8,
+                            Arc::clone(&self.sender),
+                        );
                         self.sender.send_invoke(tenant, 8, &p_put, curr)
                     },
                 );
@@ -418,19 +400,12 @@ where
             // Update the time stamp at which the next request should be generated, assuming that
             // the first request was sent out at self.start.
             self.sent += 1;
-
-            // When packets are sent in batches, server pushes back quickly. Restrict the number
-            // of pushed-back task to .1M and after that send 1 packet each iteration, which will
-            // execute on the server side as it stop triggering the Analysis mechanism.
-            if self.waiting.len() >= 100000 {
-                break;
-            }
         }
     }
 
     fn recv(&mut self) {
         // Don't do anything after all responses have been received.
-        if self.finished == true {
+        if self.finished == true && self.stop > 0 {
             return;
         }
 
@@ -438,9 +413,34 @@ where
         // If there are packets, sample the latency of the server.
         if let Some(mut packets) = self.receiver.recv_res() {
             while let Some(packet) = packets.pop() {
-                if self.native == false {
-                    let curr = cycles::rdtsc();
+                let curr = cycles::rdtsc();
+                match parse_rpc_opcode(&packet) {
+                    OpCode::SandstormCommitRpc => {
+                        let p = packet.parse_header::<CommitResponse>();
+                        let timestamp = p.get_header().common_header.stamp;
+                        match p.get_header().common_header.status {
+                            RpcStatus::StatusTxAbort => {
+                                info!("Abort");
+                            }
 
+                            RpcStatus::StatusOk => {
+                                self.latencies.push(curr - timestamp);
+                            }
+
+                            _ => {}
+                        }
+                        self.recvd += 1;
+                        p.free_packet();
+                        if self.native == true {
+                            self.native_state.borrow_mut().remove(&timestamp);
+                        }
+                        continue;
+                    }
+
+                    _ => {}
+                }
+
+                if self.native == false {
                     match parse_rpc_opcode(&packet) {
                         // The response corresponds to an invoke() RPC.
                         OpCode::SandstormInvokeRpc => {
@@ -453,29 +453,23 @@ where
                                     self.latencies
                                         .push(curr - p.get_header().common_header.stamp);
                                     self.outstanding -= 1;
-                                    self.remove_request(p.get_header().common_header.stamp);
+                                    self.manager
+                                        .borrow_mut()
+                                        .delete_task(p.get_header().common_header.stamp);
                                 }
 
-                                // If the status is StatusAnalysis then compelete the task, add the
+                                // If the status is StatusPushback then compelete the task, add the
                                 // stamp to the latencies, and free the packet.
                                 RpcStatus::StatusPushback => {
                                     let records = p.get_payload();
                                     let hdr = &p.get_header();
                                     let timestamp = hdr.common_header.stamp;
-
-                                    // Create task and run the generator.
-                                    match self.manager.borrow_mut().remove(&timestamp) {
-                                        Some(mut manager) => {
-                                            manager.create_generator(Arc::clone(&self.sender));
-                                            manager.update_rwset(records, RECORD_SIZE, 30);
-                                            self.waiting.push_back(manager);
-                                        }
-
-                                        None => {
-                                            info!("No manager with {} timestamp", timestamp);
-                                        }
-                                    }
-                                    self.latencies.push(cycles::rdtsc() - timestamp);
+                                    self.manager.borrow_mut().update_rwset(
+                                        timestamp,
+                                        records,
+                                        self.record_len,
+                                        self.key_len,
+                                    );
                                     self.outstanding -= 1;
                                 }
 
@@ -523,24 +517,39 @@ where
                         OpCode::SandstormGetRpc => {
                             let p = packet.parse_header::<GetResponse>();
                             let timestamp = p.get_header().common_header.stamp;
-                            let count = *self.native_state.borrow().get(&timestamp).unwrap();
-                            if count == self.number as u8 {
-                                self.recvd += 1;
-                                self.outstanding -= 1;
-                                self.native_state.borrow_mut().remove(&timestamp);
-                            } else {
-                                self.workload.borrow_mut().abc(
-                                    |tenant, key, _ord| {
-                                        self.sender.send_get(tenant, 1, key, timestamp)
-                                    },
-                                    |tenant, key, val, _ord| {
-                                        self.sender.send_put(tenant, 1, key, val, timestamp)
-                                    },
-                                );
-                                if let Some(count) =
-                                    self.native_state.borrow_mut().get_mut(&timestamp)
-                                {
-                                    *count += 1;
+                            let tenant = p.get_header().common_header.tenant;
+                            let val_len = self.record_len - self.key_len - 9;
+                            if let Some(ref mut state) =
+                                self.native_state.borrow_mut().get_mut(&timestamp)
+                            {
+                                match p.get_header().common_header.status {
+                                    RpcStatus::StatusOk => {
+                                        let record = p.get_payload();
+                                        state.update_rwset(&record, self.key_len);
+                                        if state.op_num == self.number as u8 {
+                                            self.outstanding -= 1;
+                                            self.sender.send_commit(
+                                                tenant,
+                                                1,
+                                                &state.commit_payload,
+                                                timestamp,
+                                                self.key_len as u16,
+                                                val_len as u16,
+                                            );
+                                        } else {
+                                            self.workload.borrow_mut().abc(
+                                                |tenant, key, _ord| {
+                                                    self.sender.send_get(tenant, 1, key, timestamp)
+                                                },
+                                                |tenant, key, val, _ord| {
+                                                    self.sender
+                                                        .send_put(tenant, 1, key, val, timestamp)
+                                                },
+                                            );
+                                            state.op_num += 1;
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
 
@@ -549,16 +558,30 @@ where
                                 // free the packet.
                                 RpcStatus::StatusOk => {
                                     let mut response: f32 = 0.0;
-                                    let value = p.get_payload();
+                                    let value = p.get_payload().split_at(self.key_len + 9).1;
                                     let predict: Vec<f32> = bincode::deserialize(value).unwrap();
                                     GLOBAL_MODEL.with(|a_model| {
                                         if let Some(model) = (*a_model).borrow().get(&self.extname)
                                         {
-                                            response = model
-                                                .deserialized
-                                                .predict(&Array::from(&vec![predict]))
-                                                .unwrap()
-                                                .data()[0];
+                                            if ML_MODEL == 1 {
+                                                response = model
+                                                    .lr_deserialized
+                                                    .predict(&Array::from(&vec![predict]))
+                                                    .unwrap()
+                                                    .data()[0];
+                                            } else if ML_MODEL == 2 {
+                                                response = model
+                                                    .dr_deserialized
+                                                    .predict(&Array::from(&vec![predict]))
+                                                    .unwrap()
+                                                    .data()[0];
+                                            } else if ML_MODEL == 3 {
+                                                response = model
+                                                    .rf_deserialized
+                                                    .predict(&Array::from(&vec![predict]))
+                                                    .unwrap()
+                                                    .data()[0];
+                                            }
                                         }
                                     });
                                     self.latencies
@@ -586,44 +609,6 @@ where
             self.finished = true;
         }
     }
-
-    fn execute_task(&mut self) {
-        // Don't do anything after all responses have been received.
-        if self.finished == true && self.waiting.len() == 0 {
-            return;
-        }
-
-        //Execute the pushed-back task.
-        let manager = self.waiting.pop_front();
-        if let Some(mut manager) = manager {
-            let (taskstate, _time) = manager.execute_task();
-            if taskstate == YIELDED {
-                self.waiting.push_back(manager);
-            } else if taskstate == WAITING {
-                self.manager.borrow_mut().insert(manager.get_id(), manager);
-            } else if taskstate == COMPLETED {
-                self.recvd += 1;
-                if cfg!(feature = "execution") {
-                    self.cycle_counter.total_cycles(_time, 1);
-                    self.analysis_completed += 1;
-                    if self.analysis_completed == 100000 {
-                        info!(
-                            "Completion time per extension {}",
-                            self.cycle_counter.get_average()
-                        );
-                        self.analysis_completed = 0;
-                    }
-                }
-            }
-        }
-
-        // The moment all response packets have been received, set the value of the
-        // stop timestamp so that throughput can be estimated later.
-        if self.responses <= self.recvd && self.waiting.len() == 0 {
-            self.stop = cycles::rdtsc();
-            self.finished = true;
-        }
-    }
 }
 
 // Implementation of the `Drop` trait on AnalysisRecv.
@@ -632,15 +617,16 @@ where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
     fn drop(&mut self) {
+        if self.stop == 0 {
+            self.stop = cycles::rdtsc();
+            info!("The client thread received only {} packets", self.recvd);
+        }
+
         // Calculate & print the throughput for all client threads.
         println!(
             "Analysis Throughput {}",
             self.recvd as f64 / cycles::to_seconds(self.stop - self.start)
         );
-
-        if self.stop == 0 {
-            panic!("The client thread received only {} packets", self.recvd);
-        }
 
         // Calculate & print median & tail latency only on the master thread.
         if self.master {
@@ -675,7 +661,9 @@ where
     fn execute(&mut self) {
         self.send();
         self.recv();
-        self.execute_task();
+        for _i in 0..8 {
+            self.manager.borrow_mut().execute_task();
+        }
         if self.finished == true {
             unsafe { FINISHED = true }
             return;
@@ -703,7 +691,12 @@ fn setup_send_recv<S>(
     }
 
     if let Some(a_model) = MODEL.lock().unwrap().get(&String::from("analysis")) {
-        insert_model(String::from("analysis"), a_model.serialized.clone());
+        insert_model(
+            String::from("analysis"),
+            a_model.lr_serialized.clone(),
+            a_model.dr_serialized.clone(),
+            a_model.rf_serialized.clone(),
+        );
     }
 
     // Add the receiver to a netbricks pipeline.
@@ -749,8 +742,13 @@ fn main() {
 
     // Run the ML model required for the extension and store the serialized version
     // and deserialized version of the model, which will be used in the extension.
-    let (sgd, _d_tree, _r_forest) = run_ml_application();
-    insert_global_model(String::from("analysis"), sgd.clone());
+    let (sgd, d_tree, r_forest) = run_ml_application();
+    insert_global_model(
+        String::from("analysis"),
+        sgd.clone(),
+        d_tree.clone(),
+        r_forest.clone(),
+    );
 
     // Setup Netbricks.
     let mut net_context = setup::config_and_init_netbricks(&config);

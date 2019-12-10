@@ -129,4 +129,11 @@ pub trait Task {
     ///
     /// * `record`: The record, which will be added to the RW set.
     fn update_cache(&mut self, record: &[u8], keylen: usize);
+
+    /// This method returns the unique task identifier.
+    ///
+    /// # Return
+    ///
+    /// Task id to identifiy the task uniquely.
+    fn get_id(&self) -> u64;
 }

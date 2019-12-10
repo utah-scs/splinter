@@ -45,10 +45,22 @@ pub fn rdtsc() -> u64 {
 /// Store the model for each extension.
 pub struct Model {
     /// This is used to store the serialized version of the model.
-    pub serialized: Vec<u8>,
+    pub lr_serialized: Vec<u8>,
 
     /// This is used to store the deserialized version of the model.
-    pub deserialized: sgdclassifier::SGDClassifier,
+    pub lr_deserialized: sgdclassifier::SGDClassifier,
+
+    /// This is used to store the serialized version of the model.
+    pub dr_serialized: Vec<u8>,
+
+    /// This is used to store the deserialized version of the model.
+    pub dr_deserialized: decision_tree::DecisionTree,
+
+    /// This is used to store the serialized version of the model.
+    pub rf_serialized: Vec<u8>,
+
+    /// This is used to store the deserialized version of the model.
+    pub rf_deserialized: random_forest::RandomForest,
 }
 
 /// Add some methods to Model which can be used to use Model struct.
@@ -63,10 +75,14 @@ impl Model {
     ///
     /// A new Model which stores the serialized version and deserialized version of
     /// a machine learning model.
-    pub fn new(serialized: Vec<u8>) -> Model {
+    pub fn new(lr_serial: Vec<u8>, dr_serial: Vec<u8>, rf_serial: Vec<u8>) -> Model {
         Model {
-            deserialized: deserialize(&serialized).unwrap(),
-            serialized: serialized,
+            lr_deserialized: deserialize(&lr_serial).unwrap(),
+            dr_deserialized: deserialize(&dr_serial).unwrap(),
+            rf_deserialized: deserialize(&rf_serial).unwrap(),
+            lr_serialized: lr_serial,
+            dr_serialized: dr_serial,
+            rf_serialized: rf_serial,
         }
     }
 }
@@ -77,9 +93,9 @@ impl Model {
 ///
 /// * `name`: The name of extension which needs the ML model.
 /// * `serialized`: The serialized version of the ML model.
-pub fn insert_model(name: String, serialized: Vec<u8>) {
+pub fn insert_model(name: String, lr_serial: Vec<u8>, dr_serial: Vec<u8>, rf_serial: Vec<u8>) {
     GLOBAL_MODEL.with(|a_model| {
-        let model = Model::new(serialized);
+        let model = Model::new(lr_serial, dr_serial, rf_serial);
         (*a_model).borrow_mut().insert(name, Arc::new(model));
     });
 }
@@ -95,8 +111,13 @@ thread_local!(
 ///
 /// * `name`: The name of extension which needs the ML model.
 /// * `serialized`: The serialized version of the ML model.
-pub fn insert_global_model(name: String, serialized: Vec<u8>) {
-    let model = Model::new(serialized);
+pub fn insert_global_model(
+    name: String,
+    lr_serial: Vec<u8>,
+    dr_serial: Vec<u8>,
+    rf_serial: Vec<u8>,
+) {
+    let model = Model::new(lr_serial, dr_serial, rf_serial);
     MODEL.lock().unwrap().insert(name, Arc::new(model));
 }
 

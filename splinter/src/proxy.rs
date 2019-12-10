@@ -15,10 +15,12 @@
 
 use std::cell::RefCell;
 use std::sync::Arc;
+use std::{mem, slice};
 
 use db::cycles::*;
+use db::wireformat::*;
 
-use sandstorm::buf::{MultiReadBuf, ReadBuf, Record, WriteBuf};
+use sandstorm::buf::{MultiReadBuf, ReadBuf, WriteBuf};
 use sandstorm::db::DB;
 
 use super::dispatch::*;
@@ -31,6 +33,9 @@ use util::model::Model;
 /// be of this type.
 #[derive(Clone)]
 pub struct KV {
+    /// This variable stores the Version for the record.
+    pub version: Bytes,
+
     /// This variable stores the Key for the record.
     pub key: Bytes,
 
@@ -42,14 +47,16 @@ impl KV {
     /// This method creates and returns a record consists of key and value.
     ///
     /// # Arguments
+    /// * `rversion`: The version in the record.
     /// * `rkey`: The key in the record.
     /// * `rvalue`: The value in the record.
     ///
     /// # Return
     ///
     /// A record with a key and a value.
-    fn new(rkey: Bytes, rvalue: Bytes) -> KV {
+    pub fn new(rversion: Bytes, rkey: Bytes, rvalue: Bytes) -> KV {
         KV {
+            version: rversion,
             key: rkey,
             value: rvalue,
         }
@@ -69,7 +76,7 @@ pub struct ProxyDB {
     // The buffer consisting of the RPC payload that invoked the extension. This is required
     // to potentially pass in arguments to an extension. For example, a get() extension might
     // require a key and table identifier to be passed in.
-    req: Arc<Vec<u8>>,
+    req: Vec<u8>,
 
     // The offset inside the request packet/buffer's payload at which the
     // arguments to the extension begin.
@@ -93,6 +100,9 @@ pub struct ProxyDB {
 
     // The model for a given extension which is stored based on the name of the extension.
     model: Option<Arc<Model>>,
+
+    // This maintains the read-write records accessed by the extension.
+    commit_payload: RefCell<Vec<u8>>,
 }
 
 impl ProxyDB {
@@ -114,7 +124,7 @@ impl ProxyDB {
     pub fn new(
         tenant_id: u32,
         id: u64,
-        request: Arc<Vec<u8>>,
+        request: Vec<u8>,
         name_length: usize,
         sender_service: Arc<Sender>,
         model: Option<Arc<Model>>,
@@ -130,6 +140,7 @@ impl ProxyDB {
             writeset: RefCell::new(Vec::with_capacity(4)),
             db_credit: RefCell::new(0),
             model: model,
+            commit_payload: RefCell::new(Vec::new()),
         }
     }
 
@@ -155,10 +166,17 @@ impl ProxyDB {
     /// # Arguments
     /// * `record`: A reference to a record with a key and a value.
     pub fn set_read_record(&self, record: &[u8], keylen: usize) {
-        let (key, value) = record.split_at(keylen);
-        self.readset
-            .borrow_mut()
-            .push(KV::new(Bytes::from(key), Bytes::from(value)));
+        let ptr = &OpType::SandstormRead as *const _ as *const u8;
+        let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+        self.commit_payload.borrow_mut().extend_from_slice(optype);
+        self.commit_payload.borrow_mut().extend_from_slice(record);
+        let (version, entry) = record.split_at(8);
+        let (key, value) = entry.split_at(keylen);
+        self.readset.borrow_mut().push(KV::new(
+            Bytes::from(version),
+            Bytes::from(key),
+            Bytes::from(value),
+        ));
     }
 
     /// This method is used to add a record to the write set. The return value of put()
@@ -167,10 +185,17 @@ impl ProxyDB {
     /// # Arguments
     /// * `record`: A reference to a record with a key and a value.
     pub fn set_write_record(&self, record: &[u8], keylen: usize) {
-        let (key, value) = record.split_at(keylen);
-        self.writeset
-            .borrow_mut()
-            .push(KV::new(Bytes::from(key), Bytes::from(value)));
+        let ptr = &OpType::SandstormWrite as *const _ as *const u8;
+        let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+        self.commit_payload.borrow_mut().extend_from_slice(optype);
+        self.commit_payload.borrow_mut().extend_from_slice(record);
+        let (version, entry) = record.split_at(8);
+        let (key, value) = entry.split_at(keylen);
+        self.writeset.borrow_mut().push(KV::new(
+            Bytes::from(version),
+            Bytes::from(key),
+            Bytes::from(value),
+        ));
     }
 
     /// This method search the a list of records to find if a record with the given key
@@ -205,6 +230,57 @@ impl ProxyDB {
     pub fn db_credit(&self) -> u64 {
         self.db_credit.borrow().clone()
     }
+
+    /// This method send a request to the server to commit the transaction.
+    pub fn commit(&self) {
+        if self.readset.borrow().len() > 0 || self.writeset.borrow().len() > 0 {
+            let mut table_id = 0;
+            let mut key_len = 0;
+            let mut val_len = 0;
+
+            // find the table_id for the transaction.
+            let args = self.args();
+            let (table, _) = args.split_at(8);
+            for (idx, e) in table.iter().enumerate() {
+                table_id |= (*e as u64) << (idx << 3);
+            }
+
+            // Find the key length and value length for records in RWset.
+            if self.readset.borrow().len() > 0 {
+                key_len = self.readset.borrow()[0].key.len();
+                val_len = self.readset.borrow()[0].value.len();
+            }
+
+            if key_len == 0 && self.writeset.borrow().len() > 0 {
+                key_len = self.writeset.borrow()[0].key.len();
+                val_len = self.writeset.borrow()[0].value.len();
+            }
+            if cfg!(feature = "checksum") {
+                key_len = 30;
+                val_len = 100;
+                let commit_payload = self.commit_payload.borrow();
+                let payload = commit_payload.split_at(377).1;
+                self.sender.send_commit(
+                    self.tenant,
+                    table_id,
+                    payload,
+                    self.parent_id,
+                    key_len as u16,
+                    val_len as u16,
+                );
+                return;
+            }
+
+            self.sender.send_commit(
+                self.tenant,
+                table_id,
+                &self.commit_payload.borrow(),
+                self.parent_id,
+                key_len as u16,
+                val_len as u16,
+            );
+        }
+    }
 }
 
 impl DB for ProxyDB {
@@ -219,17 +295,44 @@ impl DB for ProxyDB {
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn multiget(&self, _table: u64, _key_len: u16, _keys: &[u8]) -> Option<MultiReadBuf> {
-        unsafe { Some(MultiReadBuf::new(Vec::new())) }
+    fn multiget(&self, _table: u64, key_len: u16, keys: &[u8]) -> Option<MultiReadBuf> {
+        let mut objs = Vec::new();
+        for key in keys.chunks(key_len as usize) {
+            if key.len() != key_len as usize {
+                break;
+            }
+            let index = self.search_cache(self.readset.borrow().to_vec(), key);
+            if index != 1024 {
+                let value = self.readset.borrow()[index].value.clone();
+                objs.push(value);
+            } else {
+                info!("Multiget Failed");
+            }
+        }
+        unsafe { Some(MultiReadBuf::new(objs)) }
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn alloc(&self, table: u64, _key: &[u8], _val_len: u64) -> Option<WriteBuf> {
-        unsafe { Some(WriteBuf::new(table, BytesMut::with_capacity(0))) }
+    fn alloc(&self, table: u64, key: &[u8], val_len: u64) -> Option<WriteBuf> {
+        unsafe {
+            // Alloc for version, key and value.
+            let mut writebuf = WriteBuf::new(
+                table,
+                BytesMut::with_capacity(8 + key.len() + val_len as usize),
+            );
+            writebuf.write_slice(&[0; 8]);
+            writebuf.write_slice(key);
+            Some(writebuf)
+        }
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn put(&self, _buf: WriteBuf) -> bool {
+    fn put(&self, buf: WriteBuf) -> bool {
+        unsafe {
+            let (_table_id, buf) = buf.freeze();
+            assert_eq!(buf.len(), 138);
+            self.set_write_record(&buf, 30);
+        }
         return true;
     }
 
@@ -246,9 +349,6 @@ impl DB for ProxyDB {
 
     /// Lookup the `DB` trait for documentation on this method.
     fn debug_log(&self, _message: &str) {}
-
-    /// Lookup the `DB` trait for documentation on this method.
-    fn populate_read_write_set(&self, _record: Record) {}
 
     /// Lookup the `DB` trait for documentation on this method.
     fn search_get_in_cache(&self, table: u64, key: &[u8]) -> (bool, bool, Option<ReadBuf>) {

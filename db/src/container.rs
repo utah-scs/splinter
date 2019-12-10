@@ -188,15 +188,18 @@ impl<'a> Task for Container<'a> {
             Ok(db) => {
                 // If the task is stopped without completion, set the status as StatusPushback.
                 if self.state == STOPPED {
-                    db.prepare_for_pushback();
+                    let (req, mut res) = db.prepare_for_pushback();
+
+                    let req = req.deparse_header(PACKET_UDP_LEN as usize);
+                    let res = res.deparse_header(PACKET_UDP_LEN as usize);
+
+                    let (req, res) = db.commit();
+
+                    let req = req.deparse_header(PACKET_UDP_LEN as usize);
+                    let res = res.deparse_header(PACKET_UDP_LEN as usize);
+
+                    return Some((req, res));
                 }
-
-                let (req, res) = db.commit();
-
-                let req = req.deparse_header(PACKET_UDP_LEN as usize);
-                let res = res.deparse_header(PACKET_UDP_LEN as usize);
-
-                return Some((req, res));
             }
 
             Err(_) => {
@@ -212,4 +215,9 @@ impl<'a> Task for Container<'a> {
 
     /// Refer to the `Task` trait for Documentation.
     fn update_cache(&mut self, _record: &[u8], _keylen: usize) {}
+
+    /// Refer to the `Task` trait for Documentation.
+    fn get_id(&self) -> u64 {
+        0
+    }
 }

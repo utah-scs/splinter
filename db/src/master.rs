@@ -26,12 +26,16 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use super::alloc::Allocator;
+use super::bytes::Bytes;
 use super::container::Container;
 use super::context::Context;
 use super::native::Native;
+use super::rpc::parse_record_optype;
 use super::service::Service;
+use super::table::Version;
 use super::task::{Task, TaskPriority};
 use super::tenant::Tenant;
+use super::tx::TX;
 use super::wireformat::*;
 
 use util::common::TESTING_DATASET;
@@ -46,6 +50,7 @@ use sandstorm::common::{TableId, TenantId, PACKET_UDP_LEN};
 use sandstorm::db::DB;
 use sandstorm::ext::*;
 use sandstorm::pack::pack;
+use sandstorm::{LittleEndian, ReadBytesExt};
 
 /// Convert a raw pointer for Allocator into a Allocator reference. This can be used to pass
 /// the allocator reference across closures without cloning the allocator object.
@@ -146,9 +151,10 @@ impl Master {
         // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
         // and a 100 Byte value.
         for i in 1..(num + 1) {
+            let value: [u8; 4] = unsafe { transmute(((i + 1) % (num + 1)).to_le()) };
             let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
             &key[0..4].copy_from_slice(&temp);
-            &val[0..4].copy_from_slice(&temp);
+            &val[0..4].copy_from_slice(&value);
 
             let obj = self
                 .heap
@@ -294,7 +300,7 @@ impl Master {
         }
 
         // Next, populate the actual records.
-        for i in 1..records {
+        for i in 0..records {
             let mut key = vec![0; K_LEN as usize];
             let mut val = vec![0; V_LEN as usize];
 
@@ -320,8 +326,13 @@ impl Master {
     pub fn fill_analysis(&self, num_tenants: u32) {
         // Run the ML model required for the extension and store the serialized version
         // and deserialized version of the model, which will be used in the extension.
-        let (sgd, _d_tree, _r_forest) = run_ml_application();
-        insert_global_model(String::from("analysis"), sgd.clone());
+        let (sgd, d_tree, r_forest) = run_ml_application();
+        insert_global_model(
+            String::from("analysis"),
+            sgd.clone(),
+            d_tree.clone(),
+            r_forest.clone(),
+        );
 
         let table_id = 1;
         let data = get_raw_data(TESTING_DATASET);
@@ -409,139 +420,164 @@ impl Master {
         self.insert_tenant(tenant);
     }
 
-    /// Populates the TAO, AUTH, and PUSHBACK OR YCSB dataset.
+    /// Populates the ANALYSIS, AUTH, and PUSHBACK OR YCSB dataset.
+    ///
+    /// # Arguments
+    ///
+    /// * `num_tenants`: The number of tenants for this workload.
+    /// * `num`:       The number of objects to be added to the data table.
+    pub fn fill_mix(&self, num_tenants: u32, num: u32) {
+        let tao_table_id1 = 1;
+        let tao_table_id2 = 2;
+        let ml_table_id = 3;
+
+        // Run the ML model required for the extension and store the serialized version
+        // and deserialized version of the model, which will be used in the extension.
+        let (sgd, d_tree, r_forest) = run_ml_application();
+        insert_global_model(
+            String::from("analysis"),
+            sgd.clone(),
+            d_tree.clone(),
+            r_forest.clone(),
+        );
+
+        let data = get_raw_data(TESTING_DATASET);
+
+        for tenant_id in 1..(num_tenants + 1) {
+            // Create a tenant containing the table.
+            let tenant = Tenant::new(tenant_id);
+            tenant.create_table(tao_table_id1);
+            tenant.create_table(tao_table_id2);
+            tenant.create_table(ml_table_id);
+
+            //-----------------------Fill TAO----------------------------------------------------------//
+            // First, fill up the object table.
+            let table = tenant
+                .get_table(tao_table_id1)
+                .expect("Failed to init test table.");
+
+            // Objects are identified by an 8 byte key.
+            let mut key = vec![0; 8];
+            // Objects contain a 4 byte otype, 8 byte version, 4 byte update time, and
+            // 16 byte payload, all of which are zero.
+            let val = vec![0; 32];
+
+            // Setup the object table with num objects.
+            for i in 1..(num + 1) {
+                let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+                &key[0..4].copy_from_slice(&temp);
+
+                let obj = self
+                    .heap
+                    .object(tenant_id, tao_table_id1, &key, &val)
+                    .expect("Failed to create test object.");
+                table.put(obj.0, obj.1);
+            }
+
+            // Next, fill up the assoc table.
+            let table = tenant
+                .get_table(tao_table_id2)
+                .expect("Failed to init test table.");
+
+            // Assocs are identified by an 8 byte object 1 id, 2 byte association
+            // type (always zero), and 8 byte object 2 id.
+            let mut key = vec![0; 18];
+            // Assocs have a 22 byte value (all zeros).
+            let val = vec![0; 22];
+
+            // Populate the assoc table. Each object gets four assocs to it's
+            // neighbours.
+            for i in 1..(num + 1) {
+                let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+                &key[0..4].copy_from_slice(&temp);
+
+                // Assoc list for this particular object.
+                let mut list: Vec<u8> = Vec::new();
+
+                for a in 1u32..5u32 {
+                    let temp: [u8; 4] = unsafe { transmute(((i + a) % num).to_le()) };
+                    &key[10..14].copy_from_slice(&temp);
+                    list.extend_from_slice(&temp);
+                    list.extend_from_slice(&[0; 12]);
+
+                    // Add this assoc to the assoc table.
+                    let obj = self
+                        .heap
+                        .object(tenant_id, tao_table_id2, &key, &val)
+                        .expect("Failed to create test object.");
+                    table.put(obj.0, obj.1);
+                }
+
+                // Add the assoc list to the table too.
+                let obj = self
+                    .heap
+                    .object(tenant_id, tao_table_id2, &key[0..10], &list)
+                    .expect("Failed to create test object.");
+                table.put(obj.0, obj.1);
+            }
+
+            //-----------------------Fill ANALYSIS----------------------------------------------------------//
+            let table = tenant
+                .get_table(ml_table_id)
+                .expect("Failed to init test table.");
+
+            let mut key = vec![0; 30];
+            for (row, line) in data.lines().enumerate() {
+                // Prepare the key for the record.
+                let temp: [u8; 4] = unsafe { transmute(((row + 1) as u32).to_le()) };
+                &key[0..4].copy_from_slice(&temp);
+
+                // Prepare the value for the record.
+                let mut value: Vec<f32> = Vec::new();
+                for col_str in line.split_whitespace() {
+                    value.push(f32::from_str(col_str).unwrap());
+                }
+                let serialized = serialize(&value).unwrap();
+
+                // Insert the key-value in the table.
+                let obj = self
+                    .heap
+                    .object(tenant_id, ml_table_id, &key, &serialized)
+                    .expect("Failed to create test object.");
+                table.put(obj.0, obj.1);
+            }
+            // Add the tenant.
+            self.insert_tenant(tenant);
+        }
+    }
+
+    /// Adds a tenant and a table full of objects.
     ///
     /// # Arguments
     ///
     /// * `tenant_id`: Identifier of the tenant to be added. Any existing tenant with the same
     ///                identifier will be overwritten.
+    /// * `table_id`:  Identifier of the table to be added to the tenant. This table will contain
+    ///                all the objects.
     /// * `num`:       The number of objects to be added to the data table.
-    pub fn fill_mix(&self, tenant_id: TenantId, num: u32) {
-        let tao_table_id1 = 1;
-        let tao_table_id2 = 2;
-        let auth_table_id = 3;
-        let fake_table_id = 4;
-
+    pub fn fill_ycsb(&self, tenant_id: TenantId, table_id: TableId, num: u32) {
+        // Create a tenant containing the table.
         let tenant = Tenant::new(tenant_id);
-        tenant.create_table(tao_table_id1);
-        tenant.create_table(tao_table_id2);
-        tenant.create_table(auth_table_id);
-        tenant.create_table(fake_table_id);
+        tenant.create_table(table_id);
 
-        //-----------------------Fill TAO----------------------------------------------------------//
-        // First, fill up the object table.
         let table = tenant
-            .get_table(tao_table_id1)
+            .get_table(table_id)
             .expect("Failed to init test table.");
 
-        // Objects are identified by an 8 byte key.
-        let mut key = vec![0; 8];
-        // Objects contain a 4 byte otype, 8 byte version, 4 byte update time, and
-        // 16 byte payload, all of which are zero.
-        let val = vec![0; 32];
-
-        // Setup the object table with num objects.
-        for i in 1..(num + 1) {
-            let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
-            &key[0..4].copy_from_slice(&temp);
-
-            let obj = self
-                .heap
-                .object(tenant_id, tao_table_id1, &key, &val)
-                .expect("Failed to create test object.");
-            table.put(obj.0, obj.1);
-        }
-
-        // Next, fill up the assoc table.
-        let table = tenant
-            .get_table(tao_table_id2)
-            .expect("Failed to init test table.");
-
-        // Assocs are identified by an 8 byte object 1 id, 2 byte association
-        // type (always zero), and 8 byte object 2 id.
-        let mut key = vec![0; 18];
-        // Assocs have a 22 byte value (all zeros).
-        let val = vec![0; 22];
-
-        // Populate the assoc table. Each object gets four assocs to it's
-        // neighbours.
-        for i in 1..(num + 1) {
-            let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
-            &key[0..4].copy_from_slice(&temp);
-
-            // Assoc list for this particular object.
-            let mut list: Vec<u8> = Vec::new();
-
-            for a in 1u32..5u32 {
-                let temp: [u8; 4] = unsafe { transmute(((i + a) % num).to_le()) };
-                &key[10..14].copy_from_slice(&temp);
-                list.extend_from_slice(&temp);
-                list.extend_from_slice(&[0; 12]);
-
-                // Add this assoc to the assoc table.
-                let obj = self
-                    .heap
-                    .object(tenant_id, tao_table_id2, &key, &val)
-                    .expect("Failed to create test object.");
-                table.put(obj.0, obj.1);
-            }
-
-            // Add the assoc list to the table too.
-            let obj = self
-                .heap
-                .object(tenant_id, tao_table_id2, &key[0..10], &list)
-                .expect("Failed to create test object.");
-            table.put(obj.0, obj.1);
-        }
-
-        //----------------------------Fill Auth--------------------------------------------------//
-        let num_records_auth: u32 = 1000;
-        let table = tenant
-            .get_table(auth_table_id)
-            .expect("Failed to init test table.");
-        let mut username = vec![0; 30];
-        let mut password = vec![0; 72];
-        let mut hash_salt = vec![0; 40];
-        let mut salt = vec![0; 16];
-
-        // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
-        // and a 40 Byte value(24 byte HASH followed by 16 byte SALT).
-        for i in 1..(num_records_auth + 1) {
-            let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
-            &username[0..4].copy_from_slice(&temp);
-            &password[0..4].copy_from_slice(&temp);
-            &hash_salt[24..28].copy_from_slice(&temp);
-            &salt[0..4].copy_from_slice(&temp);
-
-            let output: &mut [u8] = &mut [0; 24];
-            bcrypt(1, &salt, &password, output);
-            &hash_salt[0..24].copy_from_slice(&output);
-
-            // Add a mapping of the username and (HASH+SALT) in the table.
-            let obj = self
-                .heap
-                .object(tenant_id, auth_table_id, &username, &hash_salt)
-                .expect("Failed to create test object.");
-            table.put(obj.0, obj.1);
-        }
-
-        //-------------------------------Fill Test-----------------------------------------------//
-        let table = tenant
-            .get_table(fake_table_id)
-            .expect("Failed to init test table.");
         let mut key = vec![0; 30];
         let mut val = vec![0; 100];
 
         // Allocate objects, and fill up the above table. Each object consists of a 30 Byte key
         // and a 100 Byte value.
         for i in 1..(num + 1) {
+            let value: [u8; 4] = unsafe { transmute(255u32.to_le()) };
             let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
             &key[0..4].copy_from_slice(&temp);
-            &val[0..4].copy_from_slice(&temp);
+            &val[0..4].copy_from_slice(&value);
 
             let obj = self
                 .heap
-                .object(tenant_id, fake_table_id, &key, &val)
+                .object(tenant_id, table_id, &key, &val)
                 .expect("Failed to create test object.");
             table.put(obj.0, obj.1);
         }
@@ -610,10 +646,22 @@ impl Master {
             panic!("Failed to load analysis() extension.");
         }
 
-        // Load the pushback() extension.
+        // Load the auth() extension.
         let name = "../ext/auth/target/release/libauth.so";
         if self.extensions.load(name, tenant, "auth") == false {
             panic!("Failed to load auth() extension.");
+        }
+
+        // Load the ycsbt() extension.
+        let name = "../ext/ycsbt/target/release/libycsbt.so";
+        if self.extensions.load(name, tenant, "ycsbt") == false {
+            panic!("Failed to load ycsbt() extension.");
+        }
+
+        // Load the checksum() extension.
+        let name = "../ext/checksum/target/release/libchecksum.so";
+        if self.extensions.load(name, tenant, "checksum") == false {
+            panic!("Failed to load checksum() extension.");
         }
     }
 
@@ -717,7 +765,6 @@ impl Master {
         let mut table_id: TableId = 0;
         let mut key_length = 0;
         let mut rpc_stamp = 0;
-        let mut req_generator = GetGenerator::InvalidGenerator;
 
         {
             let hdr = req.get_header();
@@ -725,7 +772,6 @@ impl Master {
             table_id = hdr.table_id as TableId;
             key_length = hdr.key_length;
             rpc_stamp = hdr.common_header.stamp;
-            req_generator = hdr.generator.clone();
         }
 
         // Next, add a header to the response packet.
@@ -771,20 +817,20 @@ impl Master {
                             })
                 // If the lookup succeeded, obtain the value, and update the
                 // status of the rpc.
-                .and_then(| object | {
+                .and_then(| entry | {
                                 status = RpcStatus::StatusInternalError;
                                 let alloc: &Allocator = accessor(alloc);
-                                alloc.resolve(object)
+                                Some((alloc.resolve(entry.value), entry.version))
                             })
                 // If the value was obtained, then write to the response packet
                 // and update the status of the rpc.
-                .and_then(| (k, value) | {
-                                let mut result = Ok(());
+                .and_then(| (opt, version) | {
+                    if let Some(opt) = opt {
+                                let (k, value) = &opt;
                                 status = RpcStatus::StatusInternalError;
-                                if req_generator == GetGenerator::SandstormExtension {
-                                    let _result = res.add_to_payload_tail(1, pack(&optype));
-                                    result = res.add_to_payload_tail(k.len(), &k[..]);
-                                }
+                                let _result = res.add_to_payload_tail(1, pack(&optype));
+                                let _ = res.add_to_payload_tail(size_of::<Version>(), &unsafe { transmute::<Version, [u8; 8]>(version) });
+                                let result = res.add_to_payload_tail(k.len(), &k[..]);
                                 match result {
                                     Ok(()) => {
                                         res.add_to_payload_tail(value.len(), &value[..]).ok()
@@ -794,6 +840,9 @@ impl Master {
                                         Some(())
                                     }
                                 }
+                            } else {
+                                None
+                            }
                             })
                 // If the value was written to the response payload,
                 // update the status of the rpc.
@@ -912,7 +961,7 @@ impl Master {
                 // status of the rpc.
                 .and_then(| object | {
                                 status = RpcStatus::StatusInternalError;
-                                self.heap.resolve(object)
+                                self.heap.resolve(object.value)
                             })
                 // If the value was obtained, then write to the response packet
                 // and update the status of the rpc.
@@ -1249,6 +1298,7 @@ impl Master {
         let gen = Box::pin(move || {
             let mut n_recs: u32 = 0;
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
+            let optype: u8 = 0x1;
 
             let outcome =
                 // Check if the tenant exists. If it does, then check if the
@@ -1277,9 +1327,19 @@ impl Master {
                     let alloc: &Allocator = accessor(alloc);
                     let res = table
                         .get(key)
-                        .and_then(|object| alloc.resolve(object))
-                        .and_then(|(_k, value)| {
-                            res.add_to_payload_tail(value.len(), &value[..]).ok()
+                        .and_then(|entry| Some((alloc.resolve(entry.value), entry.version)))
+                        .and_then(|(opt, version)| {
+                            if let Some(opt) = opt {
+                                let (k, value) = &opt;
+                                res.add_to_payload_tail(1, pack(&optype)).ok();
+                                res.add_to_payload_tail(size_of::<Version>(), &unsafe {
+                                    transmute::<Version, [u8; 8]>(version)
+                                }).ok();
+                                res.add_to_payload_tail(k.len(), &k[..]).ok();
+                                res.add_to_payload_tail(value.len(), &value[..]).ok()
+                            } else {
+                                None
+                            }
                         });
 
                     // If the current lookup failed, then stop all lookups.
@@ -1407,7 +1467,7 @@ impl Master {
                 // Lookup the key, and add it to the response payload.
                 let res = table
                     .get(key)
-                    .and_then(|object| self.heap.resolve(object))
+                    .and_then(|object| self.heap.resolve(object.value))
                     .and_then(|(_k, value)| res.add_to_payload_tail(value.len(), &value[..]).ok());
 
                 // If the current lookup failed, then stop all lookups.
@@ -1550,6 +1610,153 @@ impl Master {
         ));
     }
 
+    /// Handles the Commit() RPC request.
+    ///
+    /// The read-write set is added to
+    ///
+    /// # Arguments
+    ///
+    /// * `req`: The RPC request packet sent by the client, parsed upto it's UDP header.
+    /// * `res`: The RPC response packet, with pre-allocated headers upto UDP.
+    ///
+    /// # Return
+    ///
+    /// A Native task that can be scheduled by the database. In the case of an error, the passed
+    /// in request and response packets are returned with the response status appropriately set.
+    #[allow(unreachable_code)]
+    #[allow(unused_assignments)]
+    fn commit(
+        &self,
+        req: Packet<UdpHeader, EmptyMetadata>,
+        res: Packet<UdpHeader, EmptyMetadata>,
+    ) -> Result<
+        Box<Task>,
+        (
+            Packet<UdpHeader, EmptyMetadata>,
+            Packet<UdpHeader, EmptyMetadata>,
+        ),
+    > {
+        // First, parse the request packet.
+        let req = req.parse_header::<CommitRequest>();
+
+        // Read fields off the request header.
+        let mut tenant_id: TenantId = 0;
+        let mut rpc_stamp = 0;
+        let mut table_id: TableId = 0;
+        let mut key_len = 0;
+        let mut val_len = 0;
+        let mut record_len = 0;
+
+        {
+            let hdr = req.get_header();
+            tenant_id = hdr.common_header.tenant as TenantId;
+            rpc_stamp = hdr.common_header.stamp;
+            table_id = hdr.table_id as TableId;
+            key_len = hdr.key_length as usize;
+            val_len = hdr.value_length as usize;
+            record_len = 1 + 8 + key_len + val_len;
+        }
+
+        // Next, add a header to the response packet.
+        let mut res = res
+            .push_header(&CommitResponse::new(
+                rpc_stamp,
+                OpCode::SandstormCommitRpc,
+                tenant_id,
+            )).expect("Failed to setup GetResponse");
+
+        // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
+        // reference to Master in the generator below.
+        let tenant = self.get_tenant(tenant_id);
+        let alloc: *const Allocator = &self.heap;
+
+        // Create a generator for this request.
+        let gen = Box::new(move || {
+            let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
+
+            let _outcome =
+                // Check if the tenant exists. If it does, then check if the
+                // table exists, and update the status of the rpc.
+                if let Some(tenant) = tenant {
+                    if let Some(table) = tenant.lock_table().get(&table_id) {
+                        // If the payload size is less than the name length, return an error.
+                        if req.get_payload().len() < record_len {
+                            status = RpcStatus::StatusMalformedRequest;
+                            None
+                        } else {
+                            // TODO: Improve the code to avoid so much of deserialization.
+                            let alloc: &Allocator = accessor(alloc);
+                            let mut tx = TX::new(alloc);
+                            let records = req.get_payload();
+                            for record in records.chunks(record_len) {
+                                let (optype, rem) = record.split_at(1);
+                                let (mut version, rem) = rem.split_at(8);
+                                let (key, value) = rem.split_at(key_len);
+                                let version: Version = unsafe { transmute(version.read_u64::<LittleEndian>().unwrap()) };
+                                match parse_record_optype(optype) {
+                                    OpType::SandstormRead => {
+                                        tx.record_get(Record::new(OpType::SandstormRead, version, Bytes::from(key), Bytes::from(value)));
+                                    },
+
+                                    OpType::SandstormWrite => {
+                                        tx.record_put(Record::new(OpType::SandstormWrite, version, Bytes::from(key), Bytes::from(value)));
+                                    }
+
+                                    _ => {
+                                        info!("Commit: The type of a record can only be read or write");
+                                    }
+                                }
+                            }
+
+                            match table.validate(tenant_id, table_id, &mut tx) {
+                                Ok(()) => {
+                                    status = RpcStatus::StatusOk;
+                                    Some(())
+                                }
+
+                                Err(()) => {
+                                    for record in records.chunks(record_len) {
+                                        let (optype, rem) = record.split_at(1);
+                                        let (_, rem) = rem.split_at(8);
+                                        let (key, _) = rem.split_at(key_len);
+                                        match parse_record_optype(optype) {
+                                            OpType::SandstormRead => {
+                                                let _ = res.add_to_payload_tail(key.len(), key);
+                                            },
+
+                                            _ => {}
+                                        }
+                                    }
+                                    status = RpcStatus::StatusTxAbort;
+                                    None
+                                }
+                            }
+                        }
+                    } else {
+                        status = RpcStatus::StatusTableDoesNotExist;
+                        None
+                    }
+                } else{
+                    None
+                };
+
+            res.get_mut_header().common_header.status = status;
+
+            // Deparse request and response packets down to UDP, and return from the generator.
+            return Some((
+                req.deparse_header(PACKET_UDP_LEN as usize),
+                res.deparse_header(PACKET_UDP_LEN as usize),
+            ));
+
+            // XXX: This yield is required to get the compiler to compile this closure into a
+            // generator. It is unreachable and benign.
+            yield 0;
+        });
+
+        // Return a native task.
+        return Ok(Box::new(Native::new(TaskPriority::REQUEST, gen)));
+    }
+
     /// Handles the install() RPC request.
     ///
     /// If issued by a valid tenant, installs (loads) an extension into the database.
@@ -1654,6 +1861,10 @@ impl Service for Master {
 
             OpCode::SandstormInvokeRpc => {
                 return self.invoke(req, res);
+            }
+
+            OpCode::SandstormCommitRpc => {
+                return self.commit(req, res);
             }
 
             _ => {

@@ -39,7 +39,7 @@ then
     rm -f ../samples.temp
 
     # Run PUSHBACK.
-    RUST_LOG=debug ./target/release/pushback >> ../samples.temp
+    RUST_LOG=debug ./target/release/pushback 2>&1 | tee -a ../samples.temp
 
     # Calculate the total throughput.
     cat ../samples.temp | grep "PUSHBACK"

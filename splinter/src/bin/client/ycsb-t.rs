@@ -13,9 +13,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-extern crate crypto;
+#![feature(use_extern_macros)]
+#![feature(generators, generator_trait)]
+
+extern crate bytes;
 extern crate db;
-extern crate openssl;
 extern crate rand;
 extern crate sandstorm;
 extern crate spin;
@@ -23,23 +25,21 @@ extern crate splinter;
 extern crate time;
 extern crate zipf;
 
-use openssl::aes::{aes_ige, AesKey};
-use openssl::symm::Mode;
-
 mod setup;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::mem;
 use std::mem::transmute;
+use std::ops::{Generator, GeneratorState};
+use std::slice;
 use std::sync::Arc;
-
-use crypto::bcrypt::bcrypt;
 
 use db::config;
 use db::cycles;
 use db::e2d2::allocators::*;
+use db::e2d2::common::EmptyMetadata;
+use db::e2d2::headers::UdpHeader;
 use db::e2d2::interface::*;
 use db::e2d2::scheduler::*;
 use db::log::*;
@@ -56,10 +56,10 @@ use zipf::ZipfDistribution;
 // Flag to indicate that the client has finished sending and receiving the packets.
 static mut FINISHED: bool = false;
 
-// Type: 1, KeySize: 30, ValueSize:40
-const RECORD_SIZE: usize = 79;
+// The maximum outstanding requests a client can generate; and maximum number of push-back tasks.
+const MAX_CREDIT: usize = 32;
 
-// AUTH benchmark.
+// PUSHBACK benchmark.
 // The benchmark is created and parameterized with `new()`. Many threads
 // share the same benchmark instance. Each thread can call `abc()` which
 // runs the benchmark until another thread calls `stop()`. Each thread
@@ -68,16 +68,16 @@ const RECORD_SIZE: usize = 79;
 // function pointers to get/put on `new()` and just calls those as it runs.
 //
 // The tests below give an example of how to use it and how to aggregate the results.
-pub struct Auth {
+pub struct YCSBT {
     put_pct: usize,
-    rng: Box<dyn Rng>,
+    rng: Box<Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,
-    value_buf: Vec<u8>,
+    multikey_buf: Vec<u8>,
 }
 
-impl Auth {
+impl YCSBT {
     // Create a new benchmark instance.
     //
     // # Arguments
@@ -86,28 +86,28 @@ impl Auth {
     //  - value_len: Length of the values to store per put. Always all zero bytes.
     //  - n_keys: Number of keys from which random keys are drawn.
     //  - put_pct: Number between 0 and 100 indicating percent of ops that are sets.
-    //  - skew: Zipfian skew parameter. 0.99 is AUTH default.
+    //  - skew: Zipfian skew parameter. 0.99 is PUSHBACK default.
     //  - n_tenants: The number of tenants from which the tenant id is chosen.
     //  - tenant_skew: The skew in the Zipfian distribution from which tenant id's are drawn.
     // # Return
-    //  A new instance of AUTH that threads can call `abc()` on to run.
+    //  A new instance of PUSHBACK that threads can call `abc()` on to run.
     fn new(
         key_len: usize,
-        value_len: usize,
+        _value_len: usize,
         n_keys: usize,
         put_pct: usize,
         skew: f64,
         n_tenants: u32,
         tenant_skew: f64,
-    ) -> Auth {
+    ) -> YCSBT {
         let seed: [u32; 4] = rand::random::<[u32; 4]>();
 
         let mut key_buf: Vec<u8> = Vec::with_capacity(key_len);
         key_buf.resize(key_len, 0);
-        let mut value_buf: Vec<u8> = Vec::with_capacity(value_len);
-        value_buf.resize(value_len, 0);
+        let mut multikey_buf: Vec<u8> = Vec::with_capacity(2 * key_len);
+        multikey_buf.resize(2 * key_len, 0);
 
-        Auth {
+        YCSBT {
             put_pct: put_pct,
             rng: Box::new(XorShiftRng::from_seed(seed)),
             key_rng: Box::new(
@@ -118,12 +118,12 @@ impl Auth {
                     .expect("Couldn't create tenant RNG."),
             ),
             key_buf: key_buf,
-            value_buf: value_buf,
+            multikey_buf: multikey_buf,
         }
     }
 
-    // Run AUTH A, B, or C (depending on `new()` parameters).
-    // The calling thread will not return until `done()` is called on this `Auth` instance.
+    // Run PUSHBACK A, B, or C (depending on `new()` parameters).
+    // The calling thread will not return until `done()` is called on this `YCSBT` instance.
     //
     // # Arguments
     //  - get: A function that fetches the data stored under a bytestring key of `self.key_len` bytes.
@@ -135,7 +135,7 @@ impl Auth {
     pub fn abc<G, P, R>(&mut self, mut get: G, mut put: P) -> R
     where
         G: FnMut(u32, &[u8]) -> R,
-        P: FnMut(u32, &[u8], &[u8]) -> R,
+        P: FnMut(u32, &[u8]) -> R,
     {
         let is_get = (self.rng.gen::<u32>() % 100) >= self.put_pct as u32;
 
@@ -145,18 +145,22 @@ impl Auth {
         // Sample a key, and convert into a little endian byte array.
         let k = self.key_rng.sample(&mut self.rng) as u32;
         let k: [u8; 4] = unsafe { transmute(k.to_le()) };
-        self.key_buf[0..mem::size_of::<u32>()].copy_from_slice(&k);
+        self.key_buf[0..4].copy_from_slice(&k);
 
         if is_get {
             get(t, self.key_buf.as_slice())
         } else {
-            put(t, self.key_buf.as_slice(), self.value_buf.as_slice())
+            self.multikey_buf[0..4].copy_from_slice(&k);
+            let k = self.key_rng.sample(&mut self.rng) as u32;
+            let k: [u8; 4] = unsafe { transmute(k.to_le()) };
+            self.multikey_buf[30..34].copy_from_slice(&k);
+            put(t, self.multikey_buf.as_slice())
         }
     }
 }
 
-/// Receives responses to AUTH requests sent out by AuthSend.
-struct AuthRecvSend<T>
+/// Receives responses to PUSHBACK requests sent out by PushbackSend.
+struct PushbackRecvSend<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
@@ -173,6 +177,9 @@ where
     // The total number of responses received so far.
     recvd: u64,
 
+    // The total number of abort responses received so far.
+    aborted: u64,
+
     // Vector of sampled request latencies. Required to calculate distributions once all responses
     // have been received.
     latencies: Vec<u64>,
@@ -183,8 +190,8 @@ where
     // Time stamp in cycles at which measurement stopped.
     stop: u64,
 
-    // The actual AUTH workload. Required to generate keys and values for get() and put() requests.
-    workload: RefCell<Auth>,
+    // The actual PUSHBACK workload. Required to generate keys and values for get() and put() requests.
+    workload: RefCell<YCSBT>,
 
     // Network stack required to actually send RPC requests out the network.
     sender: Arc<dispatch::Sender>,
@@ -201,11 +208,11 @@ where
 
     // Payload for an invoke() based get operation. Required in order to avoid making intermediate
     // copies of the extension name, table id, and key.
-    payload_auth: RefCell<Vec<u8>>,
+    invoke_get: RefCell<Vec<u8>>,
 
     // Payload for an invoke() based put operation. Required in order to avoid making intermediate
     // copies of the extension name, table id, key length, key, and value.
-    payload_put: RefCell<Vec<u8>>,
+    invoke_get_modify: RefCell<Vec<u8>>,
 
     // Flag to indicate if the procedure is finished or not.
     finished: bool,
@@ -218,21 +225,28 @@ where
     // when the server pushes back the extension.
     manager: RefCell<TaskManager>,
 
-    // Keeps track of the state of a multi-operation request. For example, an extension performs
-    // four get operations before performing aggregation and all these get operations are dependent
-    // on the previous value.
-    native_state: RefCell<HashMap<u64, Vec<u8>>>,
+    /// Order of the final polynomial to be computed.
+    ord: u32,
 
     // The length of the key.
     key_len: usize,
+
+    // The length of the record.
+    record_len: usize,
+
+    // The table-id used for the requests.
+    table_id: u64,
+
+    // The length of the extension name; used for parsing the request payload.
+    name_length: u32,
 }
 
-// Implementation of methods on AuthRecv.
-impl<T> AuthRecvSend<T>
+// Implementation of methods on PushbackRecv.
+impl<T> PushbackRecvSend<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
-    /// Constructs a AuthRecv.
+    /// Constructs a PushbackRecv.
     ///
     /// # Arguments
     ///
@@ -243,7 +257,7 @@ where
     ///
     /// # Return
     ///
-    /// A AUTH response receiver that measures the median latency and throughput of a Sandstorm
+    /// A PUSHBACK response receiver that measures the median latency and throughput of a Sandstorm
     /// server.
     fn new(
         rx_port: T,
@@ -254,38 +268,55 @@ where
         reqs: u64,
         dst_ports: u16,
         masterservice: Arc<Master>,
-    ) -> AuthRecvSend<T> {
-        // The payload on an invoke() based get request consists of the extensions name ("auth"),
-        // the table id to perform the lookup on, key to lookup and value to compare the password.
-        let payload_len =
-            "auth".as_bytes().len() + mem::size_of::<u64>() + config.key_len + config.value_len;
-        let mut payload_auth = Vec::with_capacity(payload_len);
-        payload_auth.extend_from_slice("auth".as_bytes());
-        payload_auth.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
-        payload_auth.resize(payload_len, 0);
-
-        // Ignore this as put_pct = 0.
-        let payload_len = "auth".as_bytes().len()
+        order: u32,
+    ) -> PushbackRecvSend<T> {
+        let table_id: u64 = 1;
+        // The payload on an invoke() based get request consists of the extensions name ("ycsbt"),
+        // operation type, the table id to perform the lookup on, and the key to lookup.
+        let payload_len = "ycsbt".as_bytes().len()
             + mem::size_of::<u64>()
-            + mem::size_of::<u16>()
             + config.key_len
-            + config.value_len;
-        let mut payload_put = Vec::with_capacity(payload_len);
-        payload_put.resize(payload_len, 0);
+            + mem::size_of::<u32>()
+            + mem::size_of::<u8>();
+        let mut invoke_get: Vec<u8> = Vec::with_capacity(payload_len);
+        invoke_get.extend_from_slice("ycsbt".as_bytes());
+        invoke_get.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(table_id.to_le()) });
+        invoke_get.extend_from_slice(&[0; 30]); // Placeholder for key
+        invoke_get.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(order.to_le()) });
+        invoke_get.extend_from_slice(&[1]);
+        invoke_get.resize(payload_len, 0);
 
-        AuthRecvSend {
+        // The payload on an invoke() based get request consists of the extensions name ("ycsbt"),
+        // the table id to perform the lookup on, and the two keys to lookup and modify.
+        let payload_len = "ycsbt".as_bytes().len()
+            + mem::size_of::<u64>()
+            + config.key_len
+            + config.key_len
+            + mem::size_of::<u32>()
+            + mem::size_of::<u8>();
+        let mut invoke_get_modify: Vec<u8> = Vec::with_capacity(payload_len);
+        invoke_get_modify.extend_from_slice("ycsbt".as_bytes());
+        invoke_get_modify
+            .extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(table_id.to_le()) });
+        invoke_get_modify.extend_from_slice(&[0; 60]); // Placeholder for 2 keys
+        invoke_get_modify.extend_from_slice(&unsafe { transmute::<u32, [u8; 4]>(order.to_le()) });
+        invoke_get_modify.extend_from_slice(&[2]);
+        invoke_get_modify.resize(payload_len, 0);
+
+        PushbackRecvSend {
             receiver: dispatch::Receiver::new(rx_port),
             responses: resps,
             start: cycles::rdtsc(),
             recvd: 0,
+            aborted: 0,
             latencies: Vec::with_capacity(resps as usize),
             master: master,
             stop: 0,
-            workload: RefCell::new(Auth::new(
+            workload: RefCell::new(YCSBT::new(
                 config.key_len,
                 config.value_len,
-                config.n_keys,
-                0, //config.put_pct,
+                config.n_keys - config.num_aggr as usize,
+                config.put_pct,
                 config.skew,
                 config.num_tenants,
                 config.tenant_skew,
@@ -294,13 +325,16 @@ where
             requests: reqs,
             sent: 0,
             native: !config.use_invoke,
-            payload_auth: RefCell::new(payload_auth),
-            payload_put: RefCell::new(payload_put),
+            invoke_get: RefCell::new(invoke_get),
+            invoke_get_modify: RefCell::new(invoke_get_modify),
             finished: false,
             outstanding: 0,
             manager: RefCell::new(TaskManager::new(Arc::clone(&masterservice))),
-            native_state: RefCell::new(HashMap::with_capacity(32)),
+            ord: order,
             key_len: config.key_len,
+            record_len: 1 + 8 + config.key_len + config.value_len,
+            table_id: 1,
+            name_length: "ycsbt".len() as u32,
         }
     }
 
@@ -310,64 +344,57 @@ where
             return;
         }
 
-        let key = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F";
-        let mut iv = *b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F\
-                \x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F";
-        let ekey = AesKey::new_encrypt(key).unwrap();
-        let mut output = [0u8; 16];
-
-        while self.outstanding < 32 && self.manager.borrow().get_queue_len() < 32 {
-            // Get the current time stamp so that we can determine if it is time to issue the next RPC.
+        while self.outstanding < MAX_CREDIT as u64
+            && self.manager.borrow().get_queue_len() < MAX_CREDIT
+        {
             let curr = cycles::rdtsc();
 
             if self.native == true {
                 // Configured to issue native RPCs, issue a regular get()/put() operation.
                 self.workload.borrow_mut().abc(
-                    |tenant, key| {
-                        self.sender.send_get(tenant, 1, key, curr);
-                        self.native_state.borrow_mut().insert(curr, key.to_vec());
-                    },
-                    |tenant, key, val| {
-                        self.sender.send_put(tenant, 1, key, val, curr);
-                        self.native_state.borrow_mut().insert(curr, key.to_vec());
+                    |tenant, key| self.sender.send_get(tenant, self.table_id, key, curr),
+                    |tenant, multikey| {
+                        self.sender.send_multiget(
+                            tenant,
+                            self.table_id,
+                            self.key_len as u16,
+                            2,
+                            multikey,
+                            curr,
+                        )
                     },
                 );
                 self.outstanding += 1;
             } else {
                 // Configured to issue invoke() RPCs.
-                let mut p_get = self.payload_auth.borrow_mut();
-                let mut p_put = self.payload_put.borrow_mut();
+                let mut p_get = self.invoke_get.borrow_mut();
+                let mut p_put = self.invoke_get_modify.borrow_mut();
 
-                // XXX Heavily dependent on how `Auth` creates a key. Only the first four
-                // bytes of the key matter, the rest are zero. The value is always zero.
                 self.workload.borrow_mut().abc(
                     |tenant, key| {
-                        // First 12 bytes on the payload were already pre-populated with the
-                        // extension name (4 bytes), the table id (8 bytes), Just write
-                        // in the first 4 bytes of the key and first 4 bytes of value.
-                        p_get[12..16].copy_from_slice(&key[0..4]);
-                        aes_ige(&key[0..16], &mut output, &ekey, &mut iv, Mode::Encrypt);
-                        p_get[42..58].copy_from_slice(&output[0..16]);
+                        p_get[13..17].copy_from_slice(&key[0..4]);
                         self.manager.borrow_mut().create_task(
                             curr,
                             &p_get,
                             tenant,
-                            4,
+                            self.name_length as usize,
                             Arc::clone(&self.sender),
                         );
-                        self.sender.send_invoke(tenant, 4, &p_get, curr)
+                        self.sender
+                            .send_invoke(tenant, self.name_length, &p_get, curr)
                     },
-                    |tenant, key, _val| {
-                        // Ignore this as put_pct = 0.
-                        p_put[18..22].copy_from_slice(&key[0..4]);
+                    |tenant, multiget| {
+                        p_put[13..17].copy_from_slice(&multiget[0..4]);
+                        p_put[43..47].copy_from_slice(&multiget[30..34]);
                         self.manager.borrow_mut().create_task(
                             curr,
                             &p_put,
                             tenant,
-                            4,
+                            self.name_length as usize,
                             Arc::clone(&self.sender),
                         );
-                        self.sender.send_invoke(tenant, 4, &p_put, curr)
+                        self.sender
+                            .send_invoke(tenant, self.name_length, &p_put, curr)
                     },
                 );
                 self.outstanding += 1;
@@ -390,184 +417,310 @@ where
         if let Some(mut packets) = self.receiver.recv_res() {
             let curr = cycles::rdtsc();
             while let Some(packet) = packets.pop() {
+                // Process the commit response and continue.
                 match parse_rpc_opcode(&packet) {
                     OpCode::SandstormCommitRpc => {
                         let p = packet.parse_header::<CommitResponse>();
+                        let timestamp = p.get_header().common_header.stamp;
+                        let tenant = p.get_header().common_header.tenant;
                         match p.get_header().common_header.status {
                             RpcStatus::StatusTxAbort => {
-                                info!("Abort");
+                                if self.native == true {
+                                    // For native commit response.
+                                    if p.get_payload().len() == self.key_len {
+                                        self.sender.send_get(
+                                            tenant,
+                                            self.table_id,
+                                            p.get_payload(),
+                                            timestamp,
+                                        )
+                                    } else {
+                                        let n_keys: u32 =
+                                            (p.get_payload().len() / self.key_len) as u32;
+                                        self.sender.send_multiget(
+                                            tenant,
+                                            self.table_id,
+                                            self.key_len as u16,
+                                            n_keys,
+                                            p.get_payload(),
+                                            timestamp,
+                                        );
+                                    }
+                                } else {
+                                    // For Pushback commit response.
+                                    let mut invoke_get_modify = self.invoke_get_modify.borrow_mut();
+                                    let name_length = self.name_length;
+                                    let mut start_index = 13;
+                                    let mut end_index = start_index + 4;
+                                    let records = p.get_payload();
+                                    for key in records.chunks(self.key_len) {
+                                        invoke_get_modify[start_index..end_index]
+                                            .copy_from_slice(&key[0..4]);
+                                        start_index += 30;
+                                        end_index += 30;
+                                    }
+
+                                    self.sender.send_invoke(
+                                        tenant,
+                                        name_length,
+                                        &invoke_get_modify,
+                                        timestamp,
+                                    );
+                                    self.manager.borrow_mut().create_task(
+                                        timestamp,
+                                        &invoke_get_modify,
+                                        tenant,
+                                        name_length as usize,
+                                        Arc::clone(&self.sender),
+                                    );
+                                }
+                                self.aborted += 1;
+                                self.outstanding += 1;
                             }
 
                             RpcStatus::StatusOk => {
-                                self.latencies
-                                    .push(curr - p.get_header().common_header.stamp);
+                                self.recvd += 1;
+                                self.latencies.push(curr - timestamp);
                             }
 
                             _ => {}
                         }
-                        self.recvd += 1;
+
                         p.free_packet();
                         continue;
                     }
+
                     _ => {}
                 }
 
-                if self.native == false {
-                    match parse_rpc_opcode(&packet) {
-                        // The response corresponds to an invoke() RPC.
-                        OpCode::SandstormInvokeRpc => {
-                            let p = packet.parse_header::<InvokeResponse>();
-                            match p.get_header().common_header.status {
-                                // If the status is StatusOk then add the stamp to the latencies and
-                                // free the packet.
-                                RpcStatus::StatusOk => {
-                                    self.recvd += 1;
-                                    self.latencies
-                                        .push(curr - p.get_header().common_header.stamp);
-                                    self.outstanding -= 1;
-                                    self.manager
-                                        .borrow_mut()
-                                        .delete_task(p.get_header().common_header.stamp);
-                                }
-
-                                // If the status is StatusPushback then compelete the task, add the
-                                // stamp to the latencies, and free the packet.
-                                RpcStatus::StatusPushback => {
-                                    let records = p.get_payload();
-                                    let hdr = &p.get_header();
-                                    let timestamp = hdr.common_header.stamp;
-                                    self.manager.borrow_mut().update_rwset(
-                                        timestamp,
-                                        records,
-                                        RECORD_SIZE,
-                                        self.key_len,
-                                    );
-                                    self.outstanding -= 1;
-                                }
-
-                                _ => {}
-                            }
-                            p.free_packet();
-                        }
-
-                        // The response corresponds to a get() or put() RPC.
-                        // The opcode on the response identifies the RPC type.
-                        OpCode::SandstormGetRpc => {
-                            let p = packet.parse_header::<GetResponse>();
-                            self.latencies
-                                .push(curr - p.get_header().common_header.stamp);
-                            unsafe {
-                                if self
-                                    .manager
-                                    .borrow()
-                                    .contains_key(&p.get_header().common_header.stamp)
-                                {
-                                    let manager = self
-                                        .manager
-                                        .borrow_mut()
-                                        .remove(&p.get_header().common_header.stamp);
-                                    if let Some(manager) = manager {
-                                        self.waiting.push_back(manager);
-                                    }
-                                }
-                            }
-                            p.free_packet();
-                        }
-
-                        OpCode::SandstormPutRpc => {
-                            let p = packet.parse_header::<PutResponse>();
-                            self.latencies
-                                .push(curr - p.get_header().common_header.stamp);
-                            p.free_packet();
-                        }
-
-                        _ => packet.free_packet(),
-                    }
+                if self.native == true {
+                    self.recv_native(curr, packet);
                 } else {
-                    //The extension is executed locally on the client side.
-                    match parse_rpc_opcode(&packet) {
-                        OpCode::SandstormGetRpc => {
-                            let p = packet.parse_header::<GetResponse>();
-                            match p.get_header().common_header.status {
-                                // If the status is StatusOk then add the stamp to the latencies and
-                                // free the packet.
-                                RpcStatus::StatusOk => {
-                                    let timestamp = p.get_header().common_header.stamp;
-                                    let value = p.get_payload().split_at(self.key_len + 9).1;;
-                                    if value.len() != 40 {
-                                        info!("Something is wrong with the size of the response");
-                                    } else {
-                                        let mut password: Vec<
-                                            u8,
-                                        > = vec![0; 72];
-                                        if let Some(key) =
-                                            self.native_state.borrow().get(&timestamp)
-                                        {
-                                            password[0..30].copy_from_slice(&key);
-                                        }
-                                        let hash = &value[0..24];
-                                        let salt = &value[24..40];
-
-                                        let output: &mut [u8] = &mut [0; 24];
-                                        bcrypt(1, salt, &password, output);
-
-                                        // Compare the calculated hash and DB stored hash.
-                                        let status: u64;
-                                        if output == hash {
-                                            _status = 1;
-                                        } else {
-                                            _status = 0;
-                                        }
-                                        self.sender.send_commit(
-                                            p.get_header().common_header.tenant,
-                                            1,
-                                            p.get_payload(),
-                                            timestamp,
-                                            30,
-                                            40,
-                                        );
-                                        self.native_state.borrow_mut().remove(&timestamp);
-                                        self.outstanding -= 1;
-                                    }
-                                }
-                                _ => {
-                                    self.outstanding -= 1;
-                                    info!("Couldn't parse the response");
-                                }
-                            }
-                            p.free_packet();
-                        }
-
-                        _ => packet.free_packet(),
-                    }
+                    self.recv_invoke(curr, packet);
                 }
             }
         }
 
         // The moment all response packets have been received, set the value of the
         // stop timestamp so that throughput can be estimated later.
-        if self.responses <= self.recvd {
+        if self.responses <= (self.recvd + self.aborted) {
             self.stop = cycles::rdtsc();
             self.finished = true;
         }
     }
+
+    #[inline]
+    fn recv_native(&mut self, _curr: u64, packet: Packet<UdpHeader, EmptyMetadata>) {
+        //TODO: Make it generic for each type of client, maybe forward
+        // packet to client specific code for some processing.
+        match parse_rpc_opcode(&packet) {
+            OpCode::SandstormGetRpc => {
+                let p = packet.parse_header::<GetResponse>();
+                match p.get_header().common_header.status {
+                    RpcStatus::StatusOk => {
+                        self.process_get_response(&p);
+                    }
+
+                    _ => {
+                        info!("Invalid native get() response");
+                    }
+                }
+                p.free_packet();
+            }
+
+            OpCode::SandstormMultiGetRpc => {
+                let p = packet.parse_header::<MultiGetResponse>();
+                match p.get_header().common_header.status {
+                    RpcStatus::StatusOk => {
+                        self.process_multiget_response(&p);
+                    }
+
+                    _ => {
+                        info!("Invalid native Multiget() response");
+                    }
+                }
+                p.free_packet();
+            }
+
+            _ => {
+                info!("Invalid native response");
+                packet.free_packet();
+            }
+        }
+        self.outstanding -= 1;
+    }
+
+    #[inline]
+    fn recv_invoke(&mut self, curr: u64, packet: Packet<UdpHeader, EmptyMetadata>) {
+        match parse_rpc_opcode(&packet) {
+            OpCode::SandstormInvokeRpc => {
+                let p = packet.parse_header::<InvokeResponse>();
+                let timestamp = p.get_header().common_header.stamp;
+                match p.get_header().common_header.status {
+                    // If the status is StatusOk then add the stamp to the latencies and
+                    // free the packet.
+                    RpcStatus::StatusOk => {
+                        self.latencies.push(curr - timestamp);
+                        self.manager.borrow_mut().delete_task(timestamp);
+                        self.recvd += 1;
+                        self.outstanding -= 1;
+                    }
+
+                    // If the status is StatusPushback then compelete the task, add the
+                    // stamp to the latencies, and free the packet.
+                    RpcStatus::StatusPushback => {
+                        let records = p.get_payload();
+                        self.manager.borrow_mut().update_rwset(
+                            timestamp,
+                            records,
+                            self.record_len,
+                            self.key_len,
+                        );
+                        self.outstanding -= 1;
+                    }
+
+                    RpcStatus::StatusTxAbort => {
+                        // No self.outstanding += 1, as this is in response to a previous request.
+                        // No subtract and addition.
+                        self.aborted += 1;
+                        self.sender.send_invoke(
+                            p.get_header().common_header.tenant,
+                            self.name_length,
+                            p.get_payload(),
+                            timestamp,
+                        );
+                    }
+
+                    _ => {
+                        info!("Not sure about the response");
+                    }
+                }
+                p.free_packet();
+            }
+
+            _ => {
+                info!("Shouldn't for this application");
+                packet.free_packet();
+            }
+        }
+    }
+
+    /// Lookup the `Workload` trait for documentation on this method.
+    fn process_get_response(&mut self, packet: &Packet<GetResponse, EmptyMetadata>) {
+        let header = packet.get_header();
+        let record = packet.get_payload();
+        self.sender.send_commit(
+            header.common_header.tenant,
+            self.table_id,
+            record,
+            header.common_header.stamp,
+            30,
+            100,
+        );
+    }
+
+    /// Lookup the `Workload` trait for documentation on this method.
+    fn process_multiget_response(&mut self, packet: &Packet<MultiGetResponse, EmptyMetadata>) {
+        let mut value1: Vec<u8> = Vec::with_capacity(100);
+        let mut value2: Vec<u8> = Vec::with_capacity(100);
+        let mut commit_payload = Vec::with_capacity(4 * 139);
+        commit_payload.extend_from_slice(packet.get_payload());
+
+        let header = packet.get_header();
+        let records = packet.get_payload();
+        let (record1, record2) = records.split_at(139);
+        let (key1, v1) = record1.split_at(9).1.split_at(30);
+        let (key2, v2) = record2.split_at(9).1.split_at(30);
+        value1.extend_from_slice(v1);
+        value2.extend_from_slice(v2);
+        if value1[0] > 0 && value2[0] < 255 {
+            value1[0] -= 1;
+            value2[0] += 1;
+        } else if value2[0] > 0 && value1[0] < 255 {
+            value1[0] += 1;
+            value2[0] -= 1;
+        }
+
+        let ptr = &OpType::SandstormWrite as *const _ as *const u8;
+        let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+        let version: [u8; 8] = unsafe { transmute(0u64.to_le()) };
+        commit_payload.extend_from_slice(optype);
+        commit_payload.extend_from_slice(&version);
+        commit_payload.extend_from_slice(key1);
+        commit_payload.extend_from_slice(&value1);
+
+        commit_payload.extend_from_slice(optype);
+        commit_payload.extend_from_slice(&version);
+        commit_payload.extend_from_slice(key2);
+        commit_payload.extend_from_slice(&value2);
+
+        // Execute the compute part.
+        let order = self.ord;
+        self.execute_task(order);
+
+        self.sender.send_commit(
+            header.common_header.tenant,
+            self.table_id,
+            &commit_payload,
+            header.common_header.stamp,
+            30,
+            100,
+        );
+    }
+
+    #[allow(unreachable_code)]
+    /// This method executes the task.
+    ///
+    /// # Arguments
+    /// *`order`: The amount of compute in each extension.
+    pub fn execute_task(&mut self, order: u32) {
+        let mut generator = move || {
+            // Compute part for this extension
+            let start = cycles::rdtsc();
+            while cycles::rdtsc() - start < order as u64 {}
+            return 0;
+
+            // XXX: This yield is required to get the compiler to compile this closure into a
+            // generator. It is unreachable and benign.
+            yield 0;
+        };
+
+        unsafe {
+            match generator.resume() {
+                GeneratorState::Yielded(val) => {
+                    if val != 0 {
+                        panic!("Pushback native execution is buggy");
+                    }
+                }
+                GeneratorState::Complete(val) => {
+                    if val != 0 {
+                        panic!("Pushback native execution is buggy");
+                    }
+                }
+            }
+        }
+    }
 }
 
-// Implementation of the `Drop` trait on AuthRecv.
-impl<T> Drop for AuthRecvSend<T>
+// Implementation of the `Drop` trait on PushbackRecv.
+impl<T> Drop for PushbackRecvSend<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
     fn drop(&mut self) {
+        if self.stop == 0 {
+            self.stop = cycles::rdtsc();
+        }
         // Calculate & print the throughput for all client threads.
         println!(
-            "AUTH Throughput {}",
+            "Client Throughput {}",
             self.recvd as f64 / cycles::to_seconds(self.stop - self.start)
         );
-
-        if self.stop == 0 {
-            panic!("The client thread received only {} packets", self.recvd);
-        }
+        // Calculate & print the aborted for all client threads.
+        println!(
+            "Client Aborted {}",
+            self.aborted as f64 / cycles::to_seconds(self.stop - self.start)
+        );
 
         // Calculate & print median & tail latency only on the master thread.
         if self.master {
@@ -593,8 +746,8 @@ where
     }
 }
 
-// Executable trait allowing AuthRecv to be scheduled by Netbricks.
-impl<T> Executable for AuthRecvSend<T>
+// Executable trait allowing PushbackRecv to be scheduled by Netbricks.
+impl<T> Executable for PushbackRecvSend<T>
 where
     T: PacketTx + PacketRx + Display + Clone + 'static,
 {
@@ -602,7 +755,9 @@ where
     fn execute(&mut self) {
         self.send();
         self.recv();
-        self.manager.borrow_mut().execute_task();
+        for _i in 0..MAX_CREDIT {
+            self.manager.borrow_mut().execute_task();
+        }
         if self.finished == true {
             unsafe { FINISHED = true }
             return;
@@ -629,20 +784,24 @@ fn setup_send_recv<S>(
         std::process::exit(1);
     }
 
+    // YCSBT compute size.
+    let ord = config.order as u32;
+
     // Add the receiver to a netbricks pipeline.
-    match scheduler.add_task(AuthRecvSend::new(
+    match scheduler.add_task(PushbackRecvSend::new(
         ports[0].clone(),
-        4 * 1000 * 1000 as u64,
+        34 * 1000 * 1000 as u64,
         master,
         config,
         ports[0].clone(),
         config.num_reqs as u64,
         config.server_udp_ports as u16,
         masterservice,
+        ord,
     )) {
         Ok(_) => {
             info!(
-                "Successfully added AuthRecvSend with rx-tx queue {}.",
+                "Successfully added PushbackRecvSend with rx-tx queue {}.",
                 ports[0].rxq()
             );
         }
@@ -743,7 +902,7 @@ mod test {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn auth_abc_basic() {
+    fn pushback_abc_basic() {
         let n_threads = 1;
         let mut threads = Vec::with_capacity(n_threads);
         let done = Arc::new(AtomicBool::new(false));
@@ -751,7 +910,7 @@ mod test {
         for _ in 0..n_threads {
             let done = done.clone();
             threads.push(thread::spawn(move || {
-                let mut b = super::Auth::new(10, 100, 1000000, 5, 0.99, 1024, 0.1);
+                let mut b = super::YCSBT::new(10, 100, 1000000, 5, 0.99, 1024, 0.1);
                 let mut n_gets = 0u64;
                 let mut n_puts = 0u64;
                 let start = Instant::now();
@@ -804,7 +963,7 @@ mod test {
     }
 
     #[test]
-    fn auth_abc_histogram() {
+    fn pushback_abc_histogram() {
         let hist = Arc::new(Mutex::new(HashMap::new()));
 
         let n_keys = 20;
@@ -816,7 +975,7 @@ mod test {
             let hist = hist.clone();
             let done = done.clone();
             threads.push(thread::spawn(move || {
-                let mut b = super::Auth::new(4, 100, n_keys, 5, 0.99, 1024, 0.1);
+                let mut b = super::YCSBT::new(4, 100, n_keys, 5, 0.99, 1024, 0.1);
                 let mut n_gets = 0u64;
                 let mut n_puts = 0u64;
                 let start = Instant::now();

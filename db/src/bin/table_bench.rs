@@ -204,7 +204,7 @@ fn parallel_bench_db(n_threads: usize) -> (Duration, u32) {
                 };
 
                 if READ_ONLY || (i & 1 == 0) {
-                    let _s = db.get(key).unwrap()[0] as u64;
+                    let _s = db.get(key).unwrap().value[0] as u64;
                 } else {
                     let mut object = BytesMut::with_capacity(key.len() +
                                                              value.len());

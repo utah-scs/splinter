@@ -48,8 +48,21 @@ path = "src/bin/client/analysis.rs"
 name = "auth"
 path = "src/bin/client/auth.rs"
 
+[[bin]]
+name = "client"
+path = "src/bin/client/client.rs"
+
+[[bin]]
+name = "ycsb-t"
+path = "src/bin/client/ycsb-t.rs"
+
+[[bin]]
+name = "checksum"
+path = "src/bin/client/checksum.rs"
+
 [dependencies]
 bincode      = "1.0"
+crypto-hash  = "0.3.4"
 rust-crypto  = "0.2.36"
 libc         = "0.2.43"
 nix          = "0.11.0"
@@ -60,6 +73,7 @@ spin         = "0.4.7"  # Consider using parking lot?
 bytes        = "0.4.7"
 env_logger   = "0.3"
 libloading   = "0.3"
+openssl      = "0.10.24"
 rustlearn    = "0.5.0"
 serde        = "1.0.37"
 serde_derive = "1.0.37"
@@ -73,6 +87,7 @@ util         = {path = "../util"}
 # Add feature name in default features to enable cyclecounter for the given stage,
 # where stage name can be ["execution"].
 [features]
-default = ["ml-model"]
+default = ["ml-model", "checksum"]
 execution = []
 ml-model = []
+checksum = []

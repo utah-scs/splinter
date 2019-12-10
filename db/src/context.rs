@@ -14,16 +14,19 @@
  */
 
 use std::cell::{Cell, RefCell};
+use std::mem::transmute;
 use std::sync::Arc;
 use std::{mem, slice, str};
 
 use super::alloc::Allocator;
 use super::cycles::*;
+use super::table::Version;
 use super::tenant::Tenant;
-use super::wireformat::{InvokeRequest, InvokeResponse, RpcStatus};
+use super::tx::TX;
+use super::wireformat::{InvokeRequest, InvokeResponse, OpType, Record, RpcStatus};
 use util::model::Model;
 
-use sandstorm::buf::{MultiReadBuf, OpType, ReadBuf, Record, WriteBuf};
+use sandstorm::buf::{MultiReadBuf, ReadBuf, WriteBuf};
 use sandstorm::common::*;
 use sandstorm::db::DB;
 
@@ -36,6 +39,8 @@ const MAX_ALLOC: usize = 10240;
 
 /// The flag to enable-disable including the RW set in the pushback response.
 const INCLUDE_RWSET: bool = true;
+
+const DEBUG: bool = false;
 
 /// This type is passed into the init method of every extension. The methods
 /// on this type form the interface allowing extensions to read and write
@@ -75,7 +80,7 @@ pub struct Context<'a> {
     allocs: Cell<usize>,
 
     // The buffer which maintains the read/write set per extension.
-    readwriteset: RefCell<Vec<Record>>,
+    tx: RefCell<TX<'a>>,
 
     // The credit which the extension has earned by making the db calls.
     db_credit: RefCell<u64>,
@@ -121,7 +126,7 @@ impl<'a> Context<'a> {
             tenant: tenant,
             heap: alloc,
             allocs: Cell::new(0),
-            readwriteset: RefCell::new(Vec::new()),
+            tx: RefCell::new(TX::new(alloc)),
             db_credit: RefCell::new(0),
             model: model,
         }
@@ -141,6 +146,46 @@ impl<'a> Context<'a> {
         Packet<InvokeRequest, EmptyMetadata>,
         Packet<InvokeResponse, EmptyMetadata>,
     ) {
+        let mut table_id: u64 = 0;
+        {
+            let args = self.args();
+            let (table, _) = args.split_at(8);
+            for (idx, e) in table.iter().enumerate() {
+                table_id |= (*e as u64) << (idx << 3);
+            }
+        }
+
+        if let Some(table) = self.tenant.lock_table().get(&table_id) {
+            match table.validate(self.tenant.id(), table_id, &mut *self.tx.borrow_mut()) {
+                Ok(()) => {
+                    return (self.request, self.response.into_inner());
+                }
+
+                Err(()) => {
+                    let payload_len = self.response.borrow().get_payload().len();
+                    // Remove the already added payload.
+                    let _ = self
+                        .response
+                        .borrow_mut()
+                        .remove_from_payload_tail(payload_len);
+
+                    let _ = self.response.borrow_mut().add_to_payload_tail(
+                        self.request.get_payload().len(),
+                        self.request.get_payload(),
+                    );
+
+                    // Modify status to Transaction Abort.
+                    self.response
+                        .borrow_mut()
+                        .get_mut_header()
+                        .common_header
+                        .status = RpcStatus::StatusTxAbort;
+                    return (self.request, self.response.into_inner());
+                }
+            }
+        } else {
+            info!("No table-id {} for commit", table_id);
+        }
         return (self.request, self.response.into_inner());
     }
 
@@ -148,40 +193,73 @@ impl<'a> Context<'a> {
     /// from StatusOk to StatusPushback. Besides that the function also modifies the response
     /// packet to remove the old response and attach the records which the extension has read or
     /// written(Read Write Set), so that the client can resume the execution on its end.
-    pub fn prepare_for_pushback(&self) {
-        self.response
-            .borrow_mut()
-            .get_mut_header()
-            .common_header
-            .status = RpcStatus::StatusPushback;
+    ///
+    /// # Return
+    ///
+    /// A tupule whose first member is the request packet/buffer for the extension, and whose second
+    /// member is the response packet/buffer that can be sent back to the tenant.
+    pub fn prepare_for_pushback(
+        self,
+    ) -> (
+        Packet<InvokeRequest, EmptyMetadata>,
+        Packet<InvokeResponse, EmptyMetadata>,
+    ) {
+        {
+            let mut response = self.response.borrow_mut();
+            response.get_mut_header().common_header.status = RpcStatus::StatusPushback;
 
-        if INCLUDE_RWSET {
-            // Remove the original payload and append the read-write set to the response payload.
-            let payload_len = self.response.borrow().get_payload().len();
-            match self
-                .response
-                .borrow_mut()
-                .remove_from_payload_tail(payload_len)
-            {
-                Ok(_) => {}
+            if INCLUDE_RWSET {
+                // Remove the original payload and append the read-write set to the response payload.
+                let payload_len = response.get_payload().len();
+                match response.remove_from_payload_tail(payload_len) {
+                    Ok(_) => {}
 
-                Err(ref err) => {
-                    error!(
-                        "Unable to delete previous payload while doing pushback {}",
-                        err
-                    );
+                    Err(ref err) => {
+                        error!(
+                            "Unable to delete previous payload while doing pushback {}",
+                            err
+                        );
+                    }
+                }
+
+                // Add the read-set to the pushback response.
+                for record in self.tx.borrow_mut().reads().iter() {
+                    let ptr = &record.optype as *const _ as *const u8;
+                    let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+                    response.add_to_payload_tail(optype.len(), optype).unwrap();
+                    let ptr = &record.version as *const _ as *const u8;
+                    let version = unsafe { slice::from_raw_parts(ptr, mem::size_of::<Version>()) };
+                    response
+                        .add_to_payload_tail(version.len(), version)
+                        .unwrap();
+                    response
+                        .add_to_payload_tail(record.key.len(), record.key.as_ref())
+                        .unwrap();
+                    response
+                        .add_to_payload_tail(record.object.len(), record.object.as_ref())
+                        .unwrap();
+                }
+
+                // Add the write-set to the pushback response.
+                for record in self.tx.borrow_mut().writes().iter() {
+                    let ptr = &record.optype as *const _ as *const u8;
+                    let optype = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
+                    response.add_to_payload_tail(optype.len(), optype).unwrap();
+                    let ptr = &record.version as *const _ as *const u8;
+                    let version = unsafe { slice::from_raw_parts(ptr, mem::size_of::<Version>()) };
+                    response
+                        .add_to_payload_tail(version.len(), version)
+                        .unwrap();
+                    response
+                        .add_to_payload_tail(record.key.len(), record.key.as_ref())
+                        .unwrap();
+                    response
+                        .add_to_payload_tail(record.object.len(), record.object.as_ref())
+                        .unwrap();
                 }
             }
-
-            let rwset = &self.readwriteset.borrow_mut();
-            for record in rwset.iter() {
-                let ptr = &record.get_optype() as *const _ as *const u8;
-                let slice = unsafe { slice::from_raw_parts(ptr, mem::size_of::<OpType>()) };
-                self.resp(slice);
-                self.resp(record.get_key().as_ref());
-                self.resp(record.get_object().as_ref());
-            }
         }
+        return (self.request, self.response.into_inner());
     }
 
     /// This method returns the value of the credit which an extension has accumulated over time.
@@ -208,13 +286,19 @@ impl<'a> DB for Context<'a> {
                     .and_then(| table | { table.get(key) })
                     // The object exists in the database. Get a handle to it's
                     // key and value.
-                    .and_then(| object | { self.heap.resolve(object) })
+                    .and_then(| entry | { Some((self.heap.resolve(entry.value), entry.version)) })
                     // Return the value wrapped up inside a safe type.
-                    .and_then(| (k, v) | {
-                        self.populate_read_write_set(Record::new(OpType::SandstormRead, k.clone(), v.clone()));
-                        *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
-                        unsafe { Some(ReadBuf::new(v)) }
-                        })
+                    .and_then(| (opt, version) | {
+                        if let Some(opt) = opt {
+                            let (k, v) = opt;
+                            self.tx.borrow_mut().record_get(Record::new(OpType::SandstormRead, version, k, v.clone()));
+                            *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
+                            unsafe { Some(ReadBuf::new(v)) }
+                        } else{
+                            *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
+                            None
+                        }
+                    })
     }
 
     /// Lookup the `DB` trait for documentation on this method.
@@ -233,15 +317,21 @@ impl<'a> DB for Context<'a> {
 
                 let r = table
                     .get(key)
-                    .and_then(|obj| self.heap.resolve(obj))
-                    .and_then(|(k, v)| {
-                        self.populate_read_write_set(Record::new(
-                            OpType::SandstormRead,
-                            k.clone(),
-                            v.clone(),
-                        ));
-                        objs.push(v);
-                        Some(())
+                    .and_then(|entry| Some((self.heap.resolve(entry.value), entry.version)))
+                    .and_then(|(opt, version)| {
+                        if let Some(opt) = opt {
+                            let (k, v) = opt;
+                            self.tx.borrow_mut().record_get(Record::new(
+                                OpType::SandstormRead,
+                                version,
+                                k,
+                                v.clone(),
+                            ));
+                            objs.push(v);
+                            Some(())
+                        } else {
+                            None
+                        }
                     });
 
                 if r.is_none() {
@@ -285,13 +375,13 @@ impl<'a> DB for Context<'a> {
 
         // If the table exists, write to the database.
         if let Some(table) = self.tenant.get_table(table_id) {
-            return self.heap.resolve(buf.clone()).map_or(false, |(k, _v)| {
-                self.populate_read_write_set(Record::new(
-                    OpType::SandstormRead,
-                    k.clone(),
-                    buf.clone(),
+            return self.heap.resolve(buf.clone()).map_or(false, |(k, v)| {
+                self.tx.borrow_mut().record_put(Record::new(
+                    OpType::SandstormWrite,
+                    table.version(),
+                    k,
+                    v,
                 ));
-                table.put(k, buf);
                 *self.db_credit.borrow_mut() += rdtsc() - start + PUT_CREDIT;
                 true
             });
@@ -331,11 +421,22 @@ impl<'a> DB for Context<'a> {
     }
 
     /// Lookup the `DB` trait for documentation on this method.
-    fn debug_log(&self, _msg: &str) {}
-
-    /// Lookup the `DB` trait for documentation on this method.
-    fn populate_read_write_set(&self, record: Record) {
-        self.readwriteset.borrow_mut().push(record);
+    fn debug_log(&self, _msg: &str) {
+        if DEBUG == true {
+            let table_id = 1;
+            if let Some(table) = self.tenant.lock_table().get(&table_id) {
+                let mut sum: u64 = 0;
+                let mut key = vec![0; 30];
+                let num: u32 = 120000;
+                for i in 1..(num + 1) {
+                    let temp: [u8; 4] = unsafe { transmute(i.to_le()) };
+                    &key[0..4].copy_from_slice(&temp);
+                    sum += self.heap.resolve(table.get(&key).unwrap().value).unwrap().1[0] as u64;
+                }
+                // This is used for YCSB+T validation.
+                assert_eq!(sum, (num * 255) as u64);
+            }
+        }
     }
 
     /// Lookup the `DB` trait for documentation on this method.

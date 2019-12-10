@@ -54,6 +54,53 @@ def setupCargo():
     cmd = "cd ext/pushback; " + fix + "cd ../../"
     subprocess.check_call(cmd, shell=True)
 
+    # Fix dependencies inside ext/bad.
+    cmd = "cd ext/bad; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/tao.
+    cmd = "cd ext/tao; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/get.
+    cmd = "cd ext/get; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/put.
+    cmd = "cd ext/put; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/err.
+    cmd = "cd ext/err; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/long.
+    cmd = "cd ext/long; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/aggregate.
+    cmd = "cd ext/aggregate; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/scan.
+    cmd = "cd ext/scan; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/analysis.
+    cmd = "cd ext/analysis; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/auth.
+    cmd = "cd ext/auth; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/ycsbt.
+    cmd = "cd ext/ycsbt; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
+
+    # Fix dependencies inside ext/checksum.
+    cmd = "cd ext/checksum; " + ext_fix + "cd ../../"
+    subprocess.check_call(cmd, shell=True)
 
     # Fix dependencies inside splinter.
     cmd = "cd splinter; " + fix + "cd ../"

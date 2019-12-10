@@ -1,12 +1,10 @@
 [package]
-name = "auth"
+name = "ycsbt"
 version = "0.1.0"
-authors = ["Jacob Barzee <jmbarzee@gmail.com>"]
+authors = ["Ankit Bhardwaj <bhrdwj.ankit@gmail.com>"]
 
 [lib]
 crate-type = ["dylib"]
 
 [dependencies]
 sandstorm = { path = "../../sandstorm" }
-rust-crypto = "0.2.36"
-openssl = "0.10.24"

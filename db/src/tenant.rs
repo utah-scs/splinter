@@ -18,7 +18,7 @@ use hashbrown::HashMap;
 
 use super::table::Table;
 
-use spin::RwLock;
+use spin::{RwLock, RwLockWriteGuard};
 
 use sandstorm::common::{TableId, TenantId};
 
@@ -93,5 +93,15 @@ impl Tenant {
 
         // Lookup on table_id and return.
         map.get(&table_id).and_then(| table | { Some(Arc::clone(&table)) })
+    }
+
+    /// This method acquire a write lock on the tenant table.
+    ///
+    /// # Return
+    ///
+    /// A write lock on the tenant table.
+    pub fn lock_table(&self) -> RwLockWriteGuard<HashMap<TableId, Arc<Table>>> {
+        // Acquire a write lock.
+        self.tables.write()
     }
 }

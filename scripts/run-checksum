@@ -1,0 +1,83 @@
+#!/bin/bash
+#
+# Copyright (c) 2019 University of Utah
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+# Export DPDK bindings to the current shell.
+export LD_LIBRARY_PATH=$(pwd)/net/target/native
+
+cd splinter
+
+# Check for a TOML file with client related configuration.
+if [[ ! -f client.toml ]]; then
+    echo "Missing client.toml file (in splinter directory)."
+    exit -1
+fi
+
+# If a command line argument was provided, use it as a request rate for PUSHBACK.
+if [ $# -eq 2 ]
+then
+	# The number of records per operation.
+	sed -i "s/num_aggr = [1-9][0-9]*/num_aggr = $1/g" client.toml
+
+	# The amount of compute per operation.
+	sed -i "s/order = [0-9][0-9]*/order = $2/g" client.toml
+
+
+	# Remove any preexisting temp files.
+	rm -f ../samples.temp
+
+	# Run PUSHBACK.
+	RUST_LOG=debug ./target/release/checksum 2>&1 | tee -a ../samples.temp
+
+	# Calculate the total throughput.
+	thrpt=$(cat ../samples.temp | grep "Client Throughput" | \
+		awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+	abort=$(cat ../samples.temp | grep "Client Aborted" | \
+		awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+
+
+	# Print out final numbers.
+	m=$(cat ../samples.temp | grep ">>>" | awk '{ print $2 }')
+	t=$(cat ../samples.temp | grep ">>>" | awk '{ print $3 }')
+	echo ""
+	echo "Median(ns): $m, Tail(ns): $t, Aborted-tp(op/s): $abort"
+	echo "Median(ns): $m, Tail(ns): $t, Throughput(op/s): $thrpt"
+
+	rm -f ../samples.temp
+
+	exit 0
+fi
+
+# Remove any preexisting temp files.
+rm -f ../samples.temp
+
+# Run AUTH.
+RUST_LOG=debug ./target/release/checksum >> ../samples.temp
+
+# Calculate the total throughput.
+cat ../samples.temp | grep "Client"
+thrpt=$(cat ../samples.temp | grep "Client Throughput" | \
+        awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+abort=$(cat ../samples.temp | grep "Client Aborted" | \
+        awk 'BEGIN { sum = 0 } { sum += $3 } END { print sum }')
+
+
+# Print out final numbers.
+m=$(cat ../samples.temp | grep ">>>" | awk '{ print $2 }')
+t=$(cat ../samples.temp | grep ">>>" | awk '{ print $3 }')
+echo ""
+echo "Median(ns): $m, Tail(ns): $t, Aborted-tp(op/s): $abort"
+echo "Median(ns): $m, Tail(ns): $t, Throughput(op/s): $thrpt"
+rm -f ../samples.temp

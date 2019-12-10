@@ -191,12 +191,12 @@ impl RoundRobin {
             let task = self.waiting.write().pop_front();
 
             if let Some(mut task) = task {
-                let mut is_scheduler: bool = false;
+                let mut is_dispatcher: bool = false;
                 let mut queue_length: usize = 0;
                 let mut difference: u64 = 0;
                 match task.priority() {
                     TaskPriority::DISPATCH => {
-                        is_scheduler = true;
+                        is_dispatcher = true;
                         queue_length = self.waiting.read().len();
 
                         // The time difference include the dispatcher time to account the native
@@ -239,9 +239,9 @@ impl RoundRobin {
                     // if two dispatcher invocations are 2000 us apart, AND
                     // if the current dispatcher invocation received MAX_RX_PACKETS /4 new tasks.
                     if cfg!(feature = "pushback")
-                        && is_scheduler == true
-                        && (queue_length >= MAX_RX_PACKETS / 4 || difference > time_trigger)
-                        && ((self.waiting.read().len() - queue_length) >= MAX_RX_PACKETS / 4)
+                        && is_dispatcher == true
+                        && (queue_length >= MAX_RX_PACKETS / 8 || difference > time_trigger)
+                        && ((self.waiting.read().len() - queue_length) > 0)
                     {
                         for _i in 0..queue_length {
                             let mut yeilded_task = self.waiting.write().pop_front().unwrap();
@@ -259,8 +259,7 @@ impl RoundRobin {
                                         .push(rpc::fixup_header_length_fields(res));
                                 }
                             } else {
-                                // Not fair with the already yielded tasks, as being pushed at the end.
-                                self.waiting.write().push_back(yeilded_task);
+                                self.waiting.write().push_front(yeilded_task);
                             }
                         }
                     }

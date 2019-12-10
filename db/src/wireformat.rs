@@ -13,9 +13,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::mem::size_of;
-
+use super::bytes::Bytes;
+use super::table::Version;
 use e2d2::headers::{EndOffset, UdpHeader};
+use std::mem::size_of;
 
 /// This enum represents the different sets of services that a Sandstorm server
 /// can provide, and helps identify the service an incoming remote procedure
@@ -65,8 +66,11 @@ pub enum OpCode {
     /// This operation fetches multiple records in a single round trip.
     SandstormMultiGetRpc = 0x05,
 
+    /// This operation commits an invoke procedure run on the client-side.
+    SandstormCommitRpc = 0x6,
+
     /// Any value beyond this represents an invalid rpc.
-    InvalidOperation = 0x06,
+    InvalidOperation = 0x07,
 }
 
 /// This enum represents the status of a completed RPC. A status of 'StatusOk'
@@ -110,6 +114,9 @@ pub enum RpcStatus {
     /// The RPC was spending too much time on CPU, so the server pushed-back
     /// the extension without completing it.
     StatusPushback = 0x09,
+
+    /// This indicates that the invocation fails at transaction commit time.
+    StatusTxAbort = 0x10,
 }
 
 /// This enum represents the Generator value in the GetRequest header type.
@@ -858,5 +865,203 @@ impl EndOffset for MultiGetResponse {
 
     fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
         true
+    }
+}
+
+/// This type represents the request header corresponding to an invoke() RPC.
+#[repr(C, packed)]
+pub struct CommitRequest {
+    /// The common RPC header identifying the opcode, service, and tenant.
+    pub common_header: RpcRequestHeader,
+
+    /// An identifier for the table to commit the transaction to.
+    pub table_id: u64,
+
+    /// The length of the key; needed to parse the payload.
+    pub key_length: u16,
+
+    /// The length of the value; needed to parse the payload.
+    pub value_length: u16,
+}
+
+impl CommitRequest {
+    /// This method returns a header corresponding to an invoke() RPC request.
+    /// The returned header can be appended onto a request packet.
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant`:      An identifier for the tenant issuing this RPC.
+    /// * `name_length`: The length of the name of the procedure to be invoked.
+    ///                  Required so that the name can be read from the request
+    ///                  packet by the server.
+    /// * `table_id`: An identifier for the table to commit the transaction to.
+    /// * `req_stamp`:   RPC identifier.
+    ///
+    /// # Return
+    ///
+    /// An RPC request header of type `CommitRequest`.
+    pub fn new(
+        tenant: u32,
+        req_stamp: u64,
+        table_id: u64,
+        key_len: u16,
+        val_len: u16,
+    ) -> CommitRequest {
+        CommitRequest {
+            common_header: RpcRequestHeader::new(
+                Service::MasterService,
+                OpCode::SandstormCommitRpc,
+                tenant,
+                req_stamp,
+            ),
+            table_id: table_id,
+            key_length: key_len,
+            value_length: val_len,
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for CommitRequest. Refer to
+// GetRequest's implementation of this trait to understand what the methods
+// and types mean.
+impl EndOffset for CommitRequest {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<CommitRequest>()
+    }
+
+    fn size() -> usize {
+        size_of::<CommitRequest>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This type represents the response header for an invoke() RPC request.
+#[repr(C, packed)]
+pub struct CommitResponse {
+    /// A common RPC response header containing the status of the RPC.
+    pub common_header: RpcResponseHeader,
+}
+
+impl CommitResponse {
+    /// This method returns a header that can be appended to the response
+    /// packet for an invoke() RPC request.
+    ///
+    /// # Arguments
+    ///
+    /// * `req_stamp`: RPC identifier.
+    /// * `opcode`:    The opcode on the original RPC request.
+    /// * `tenant`:    The tenant this response should be sent to.
+    pub fn new(req_stamp: u64, opcode: OpCode, tenant: u32) -> CommitResponse {
+        CommitResponse {
+            common_header: RpcResponseHeader::new(req_stamp, opcode, tenant),
+        }
+    }
+}
+
+// Implementation of the EndOffset trait for CommitResponse. Refer to
+// GetRequest's implementation of this trait to understand what the methods
+// and types mean.
+impl EndOffset for CommitResponse {
+    type PreviousHeader = UdpHeader;
+
+    fn offset(&self) -> usize {
+        size_of::<CommitResponse>()
+    }
+
+    fn size() -> usize {
+        size_of::<CommitResponse>()
+    }
+
+    fn payload_size(&self, hint: usize) -> usize {
+        hint - self.offset()
+    }
+
+    fn check_correct(&self, _prev: &Self::PreviousHeader) -> bool {
+        true
+    }
+}
+
+/// This enum represents the type of a completed database operation. A value 'SandstormRead'
+/// means that the operation was a get() operation  and a value 'SandstormWrite' means that the
+/// operation was a put() operation. The value is used in the response to represent if the record
+/// belongs to read set or the write set.
+#[repr(u8)]
+#[derive(PartialEq, Clone, Debug)]
+pub enum OpType {
+    /// When the value if SandstormRead, the record encapsulated in the response will be added to
+    /// the read set corresponding to that extension.
+    SandstormRead = 0x1,
+
+    /// When the value if SandstormWrite, the record encapsulated in the response will be added to
+    /// the write set corresponding to that extension.
+    SandstormWrite = 0x2,
+
+    /// Any value beyond this represents an invalid record.
+    InvalidRecord = 0x3,
+}
+
+/// This struct represents a record for a read/write set. Each record in the read/write set will
+/// be of this type.
+pub struct Record {
+    /// This variable shows the type of operation for the record, Read or Write.
+    pub optype: OpType,
+
+    /// The version number for the record.
+    pub version: Version,
+
+    /// This variable stores the Key for the record.
+    pub key: Bytes,
+
+    /// This variable stores the Value for the record.
+    pub object: Bytes,
+}
+
+impl Record {
+    /// This method returns a new record which can be transferred to the client as a read/write set
+    /// which server decides to pushback the extension to the client.
+    ///
+    /// # Arguments
+    /// * `r_optype`: The type of the record, either a Read or a Write.
+    /// * `r_key`: The key for the record.
+    /// * `r_object`: The value for the record.
+    ///
+    /// # Return
+    /// A read-write set record with the operation type, a key and a value.
+    pub fn new(r_optype: OpType, version: Version, r_key: Bytes, r_object: Bytes) -> Record {
+        Record {
+            optype: r_optype,
+            version: version,
+            key: r_key,
+            object: r_object,
+        }
+    }
+
+    /// Return the optype(Read/Write) for the operation.
+    pub fn get_optype(&self) -> OpType {
+        self.optype.clone()
+    }
+
+    /// Return the version for the performed operation.
+    pub fn get_version(&self) -> Version {
+        self.version.clone()
+    }
+
+    /// Return the key for the performed operation.
+    pub fn get_key(&self) -> Bytes {
+        self.key.clone()
+    }
+
+    /// Return the object for the performed operation.
+    pub fn get_object(&self) -> Bytes {
+        self.object.clone()
     }
 }

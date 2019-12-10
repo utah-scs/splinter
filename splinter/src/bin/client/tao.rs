@@ -146,25 +146,27 @@ impl TaoSendRecv {
         config: &config::ClientConfig,
     ) -> TaoSendRecv {
         // Allocate a vector for the obj_get invoke() RPC's payload. The payload consists of the
-        // name of the extension, an opcode, the table id (8 bytes) and the key length.
-        let len = "tao".as_bytes().len() + 1 + size_of::<u64>() + 8;
+        // name of the extension, the table id (8 bytes) and the key length, an opcode.
+        let len = "tao".as_bytes().len() + size_of::<u64>() + 8 + 1;
         let mut io_buff = Vec::with_capacity(len);
 
-        // Pre-populate the extension name, opcode, and table id.
+        // Pre-populate the extension name, table id, and opcode.
         io_buff.extend_from_slice("tao".as_bytes());
-        io_buff.extend_from_slice(&[0u8]);
         io_buff.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
+        io_buff.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(0u64.to_le()) }); // placeholder for key
+        io_buff.extend_from_slice(&[0u8]);
         io_buff.resize(len, 0);
 
         // Allocate a vector for the assoc_get invoke() RPC's payload. The payload consists of the
         // name of the extension, an opcode, the table id (8 bytes) and the key length.
-        let len = "tao".as_bytes().len() + 1 + size_of::<u64>() + 18;
+        let len = "tao".as_bytes().len() + size_of::<u64>() + 18 + 1;
         let mut ia_buff = Vec::with_capacity(len);
 
         // Pre-populate the extension name, opcode, and table id.
         ia_buff.extend_from_slice("tao".as_bytes());
-        ia_buff.extend_from_slice(&[4u8]);
         ia_buff.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(2u64.to_le()) });
+        ia_buff.extend_from_slice(&[0; 18]); // placeholder for id1 = 8, assoc_type = 2, id2 = 8.
+        ia_buff.extend_from_slice(&[4u8]);
         ia_buff.resize(len, 0);
 
         // Allocate and init a buffer into which keys for a native obj_get will be generated.
@@ -258,13 +260,13 @@ impl TaoSendRecv {
                     }
 
                     false => {
-                        self.io_buff[12..16].copy_from_slice(&k);
+                        self.io_buff[11..15].copy_from_slice(&k);
                         self.sender.send_invoke(t, 3, &self.io_buff, curr);
                     }
                 },
 
                 false => {
-                    self.ia_buff[12..16].copy_from_slice(&k);
+                    self.ia_buff[11..15].copy_from_slice(&k);
                     self.sender.send_invoke(t, 3, &self.ia_buff, curr);
                 }
             },
@@ -292,6 +294,9 @@ impl TaoSendRecv {
     }
 
     fn assoc_keys(&mut self, list: &[u8]) {
+        // Remove Optype, version and key from the payload.
+        let list = list.split_at(19).1;
+
         let mut left: u64 = 0;
         for (idx, e) in list[0..8].iter().enumerate() {
             left |= (*e as u64) << (idx << 3);
@@ -320,7 +325,7 @@ impl TaoSendRecv {
     // Receive packets in response to the requests generated from send() function.
     fn recv(&mut self) {
         // Free incoming packets if all responses have been received.
-        if self.responses <= self.recvd {
+        if self.responses <= self.recvd && self.finished == true {
             // Free single operation responses.
             if let Some(mut resps) = self.receiver.recv_res() {
                 while let Some(packet) = resps.pop() {
@@ -358,11 +363,32 @@ impl TaoSendRecv {
             while let Some(packet) = resps.pop() {
                 if self.native {
                     match parse_rpc_opcode(&packet) {
+                        OpCode::SandstormCommitRpc => {
+                            let p = packet.parse_header::<CommitResponse>();
+                            let timestamp = p.get_header().common_header.stamp;
+                            match p.get_header().common_header.status {
+                                RpcStatus::StatusTxAbort => {
+                                    info!("Abort");
+                                }
+
+                                RpcStatus::StatusOk => {
+                                    self.recvd += 1;
+                                    if self.recvd & 0xf == 0 {
+                                        self.a_latencies.push(cycles::rdtsc() - timestamp);
+                                    }
+                                }
+
+                                _ => {}
+                            }
+                            p.free_packet();
+                            continue;
+                        }
+
                         OpCode::SandstormGetRpc => {
                             let p = packet.parse_header::<GetResponse>();
 
                             // Response to obj_get.
-                            if p.get_payload().len() < 50 {
+                            if p.get_payload().len() < 67 {
                                 self.recvd += 1;
                                 self.outstanding -= 1;
 
@@ -389,14 +415,23 @@ impl TaoSendRecv {
                         }
 
                         OpCode::SandstormMultiGetRpc => {
-                            self.recvd += 1;
-                            self.outstanding -= 1;
-
                             let p = packet.parse_header::<MultiGetResponse>();
-                            if self.recvd & 0xf == 0 {
-                                self.a_latencies
-                                    .push(cycles::rdtsc() - p.get_header().common_header.stamp);
+                            match p.get_header().common_header.status {
+                                RpcStatus::StatusOk => {
+                                    self.sender.send_commit(
+                                        p.get_header().common_header.tenant,
+                                        2,
+                                        p.get_payload(),
+                                        p.get_header().common_header.stamp,
+                                        18,
+                                        22,
+                                    );
+                                }
+
+                                _ => {}
                             }
+
+                            self.outstanding -= 1;
                             p.free_packet();
                         }
 
@@ -421,7 +456,7 @@ impl TaoSendRecv {
 
                     let p = packet.parse_header::<InvokeResponse>();
                     if self.recvd & 0xf == 0 {
-                        if p.get_payload().len() < 50 {
+                        if p.get_payload().len() < 67 {
                             self.o_latencies
                                 .push(cycles::rdtsc() - p.get_header().common_header.stamp);
                         } else {
@@ -437,6 +472,7 @@ impl TaoSendRecv {
         // Print out measurements after all responses have been received.
         if self.responses <= self.recvd {
             self.stop = cycles::rdtsc();
+            self.finished = true;
         }
     }
 }
@@ -590,6 +626,8 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
     }
+
+    std::thread::sleep(std::time::Duration::from_secs(10));
 
     // Stop the client.
     net_context.stop();
