@@ -1671,7 +1671,7 @@ impl Master {
         let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
-        let gen = Box::new(move || {
+        let gen = Box::pin(move || {
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
 
             let _outcome =

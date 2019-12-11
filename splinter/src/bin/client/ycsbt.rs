@@ -17,6 +17,7 @@ extern crate db;
 extern crate rand;
 extern crate splinter;
 
+use std::pin::Pin;
 use std::mem;
 use std::mem::transmute;
 use std::ops::{Generator, GeneratorState};
@@ -137,7 +138,7 @@ impl YCSBT {
         };
 
         unsafe {
-            match generator.resume() {
+            match Pin::new(&mut generator).resume() {
                 GeneratorState::Yielded(val) => {
                     if val != 0 {
                         panic!("Pushback native execution is buggy");

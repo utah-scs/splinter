@@ -27,6 +27,7 @@ extern crate zipf;
 
 mod setup;
 
+use std::pin::Pin;
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::mem;
@@ -686,7 +687,7 @@ where
         };
 
         unsafe {
-            match generator.resume() {
+            match Pin::new(&mut generator).resume() {
                 GeneratorState::Yielded(val) => {
                     if val != 0 {
                         panic!("Pushback native execution is buggy");

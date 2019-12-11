@@ -15,6 +15,7 @@
 
 extern crate bytes;
 
+use std::pin::Pin;
 use self::bytes::Bytes;
 use db::cycles;
 use proxy::KV;
@@ -119,7 +120,7 @@ impl PushbackState {
         };
 
         unsafe {
-            match generator.resume() {
+           match Pin::new(&mut generator).resume() {
                 GeneratorState::Yielded(val) => {
                     panic!("Pushback native execution is buggy");
                 }
