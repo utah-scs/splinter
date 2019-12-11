@@ -572,7 +572,8 @@ fn main() {
                         )
                     },
                 ),
-            ).expect("Failed to initialize receive/transmit side.");
+            )
+            .expect("Failed to initialize receive/transmit side.");
     }
 
     // Allow the system to bootup fully.

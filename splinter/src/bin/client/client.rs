@@ -13,7 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
 #![feature(generators, generator_trait)]
 
 extern crate db;
@@ -67,7 +66,7 @@ where
     sender: Arc<dispatch::Sender>,
 
     //
-    workload: Box<Workload>,
+    workload: Box<dyn Workload>,
 
     // This parameter decides the type of load the client generates; closed loop or open loop load.
     open_load: bool,
@@ -142,7 +141,7 @@ where
         rx_port: T,
         config: &config::ClientConfig,
         sender: Arc<dispatch::Sender>,
-        workload: Box<Workload>,
+        workload: Box<dyn Workload>,
         master: bool,
         masterservice: Arc<Master>,
         table_id: u64,
@@ -564,7 +563,7 @@ fn pick_client(
     table_id: u64,
     config: &config::ClientConfig,
     sender: Arc<dispatch::Sender>,
-) -> Box<Workload> {
+) -> Box<dyn Workload> {
     match config.workload.as_str() {
         "YCSBT" => Box::new(ycsbt::YCSBT::new(table_id, config, Arc::clone(&sender))),
         _ => Box::new(ycsbt::YCSBT::new(table_id, config, Arc::clone(&sender))),
@@ -676,7 +675,8 @@ fn main() {
                         )
                     },
                 ),
-            ).expect("Failed to initialize receive/transmit side.");
+            )
+            .expect("Failed to initialize receive/transmit side.");
     }
 
     // Allow the system to bootup fully.

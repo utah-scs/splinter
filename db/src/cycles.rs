@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::sync::Once;
 use time::PreciseTime;
-use std::sync::{Once};
 
 static mut CYCLES_PER_SECOND: u64 = 0;
 static INIT: Once = Once::new();
@@ -46,7 +46,8 @@ fn init() -> u64 {
             }
         }
         let delta = cycles_per_second / 1000.0;
-        if (old_cycles > (cycles_per_second - delta)) && (old_cycles < (cycles_per_second + delta)) {
+        if (old_cycles > (cycles_per_second - delta)) && (old_cycles < (cycles_per_second + delta))
+        {
             return cycles_per_second as u64;
         }
         old_cycles = cycles_per_second;

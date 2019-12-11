@@ -13,7 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
 #![feature(generators, generator_trait)]
 
 extern crate bytes;
@@ -28,12 +27,12 @@ extern crate zipf;
 
 mod setup;
 
-use std::pin::Pin;
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::mem;
 use std::mem::transmute;
 use std::ops::{Generator, GeneratorState};
+use std::pin::Pin;
 use std::sync::Arc;
 
 use crypto_hash::{digest, Algorithm};
@@ -76,7 +75,7 @@ static CHECKSUM_ALGO: u8 = 1;
 // The tests below give an example of how to use it and how to aggregate the results.
 pub struct CHECKSUM {
     put_pct: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,
@@ -583,17 +582,15 @@ where
             yield 0;
         };
 
-        unsafe {
-            match Pin::new(&mut generator).resume() {
-                GeneratorState::Yielded(val) => {
-                    if val != 0 {
-                        panic!("Checksum native execution is buggy");
-                    }
+        match Pin::new(&mut generator).resume() {
+            GeneratorState::Yielded(val) => {
+                if val != 0 {
+                    panic!("Checksum native execution is buggy");
                 }
-                GeneratorState::Complete(val) => {
-                    if val != 0 {
-                        panic!("Checksum native execution is buggy");
-                    }
+            }
+            GeneratorState::Complete(val) => {
+                if val != 0 {
+                    panic!("Checksum native execution is buggy");
                 }
             }
         }
@@ -768,7 +765,8 @@ fn main() {
                         )
                     },
                 ),
-            ).expect("Failed to initialize receive/transmit side.");
+            )
+            .expect("Failed to initialize receive/transmit side.");
     }
 
     // Allow the system to bootup fully.

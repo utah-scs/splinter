@@ -21,23 +21,25 @@ use super::cycles;
 use super::task::TaskState::*;
 use super::task::{Task, TaskPriority, TaskState};
 
-use e2d2::interface::Packet;
-use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
+use e2d2::headers::UdpHeader;
+use e2d2::interface::Packet;
 
 // The expected type signature on a generator for a native operation (ex: get()). The return
 // value is an optional tuple consisting of a request and response packet parsed/deparsed upto
 // their UDP headers. This is to allow for operations that might not require a response packet
 // such as garbage collection, logging etc. to be run as generators too.
-type NativeGenerator = Pin<Box<
-    Generator<
-        Yield = u64,
-        Return = Option<(
-            Packet<UdpHeader, EmptyMetadata>,
-            Packet<UdpHeader, EmptyMetadata>,
-        )>,
+type NativeGenerator = Pin<
+    Box<
+        Generator<
+            Yield = u64,
+            Return = Option<(
+                Packet<UdpHeader, EmptyMetadata>,
+                Packet<UdpHeader, EmptyMetadata>,
+            )>,
+        >,
     >,
->>;
+>;
 
 /// A task corresponding to a native operation (like get() and put() requests).
 pub struct Native {

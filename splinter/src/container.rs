@@ -132,31 +132,31 @@ impl Task for Container {
         if self.state == INITIALIZED || self.state == YIELDED || self.state == WAITING {
             self.state = RUNNING;
 
-                // Catch any panics thrown from within the extension.
-                let res = catch_unwind(AssertUnwindSafe(|| match self.gen.as_mut().resume() {
-                    GeneratorState::Yielded(_) => {
-                        self.state = YIELDED;
-                        if let Some(proxydb) = self.db.get_mut() {
-                            self.db_time = proxydb.db_credit();
-                            if proxydb.get_waiting() == true {
-                                self.state = WAITING;
-                            }
+            // Catch any panics thrown from within the extension.
+            let res = catch_unwind(AssertUnwindSafe(|| match self.gen.as_mut().resume() {
+                GeneratorState::Yielded(_) => {
+                    self.state = YIELDED;
+                    if let Some(proxydb) = self.db.get_mut() {
+                        self.db_time = proxydb.db_credit();
+                        if proxydb.get_waiting() == true {
+                            self.state = WAITING;
                         }
                     }
+                }
 
-                    GeneratorState::Complete(_) => {
-                        if let Some(proxydb) = self.db.get_mut() {
-                            self.db_time = proxydb.db_credit();
-                        }
-                        self.state = COMPLETED;
+                GeneratorState::Complete(_) => {
+                    if let Some(proxydb) = self.db.get_mut() {
+                        self.db_time = proxydb.db_credit();
                     }
-                }));
-
-                // If there was a panic thrown, then mark the container as COMPLETED so that it
-                // does not get run again.
-                if let Err(_) = res {
                     self.state = COMPLETED;
                 }
+            }));
+
+            // If there was a panic thrown, then mark the container as COMPLETED so that it
+            // does not get run again.
+            if let Err(_) = res {
+                self.state = COMPLETED;
+            }
         }
 
         // Calculate the amount of time the task executed for in cycles.

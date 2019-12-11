@@ -15,8 +15,8 @@
 
 use std::cell::Cell;
 use std::ops::{Generator, GeneratorState};
-use std::pin::Pin;
 use std::panic::*;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::thread;
 
@@ -188,14 +188,14 @@ impl<'a> Task for Container<'a> {
             Ok(db) => {
                 // If the task is stopped without completion, set the status as StatusPushback.
                 if self.state == STOPPED {
-                    let (req, mut res) = db.prepare_for_pushback();
+                    let (req, res) = db.prepare_for_pushback();
 
                     let req = req.deparse_header(PACKET_UDP_LEN as usize);
                     let res = res.deparse_header(PACKET_UDP_LEN as usize);
 
                     return Some((req, res));
                 } else {
-                    let (req, mut res) = db.commit();
+                    let (req, res) = db.commit();
 
                     let req = req.deparse_header(PACKET_UDP_LEN as usize);
                     let res = res.deparse_header(PACKET_UDP_LEN as usize);

@@ -631,6 +631,7 @@ impl ObjectHeader {
         bytes.write_u16(self.otype, true)
     }
 
+    #[allow(dead_code)]
     fn deserialize(mut bytes: &[u8]) -> Result<ObjectHeader, sandstorm::io::Error> {
         let obj_type = match bytes.read_u16::<LittleEndian>() {
             Ok(v) => v,

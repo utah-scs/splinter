@@ -45,6 +45,7 @@ pub use std::convert;
 pub use std::io;
 pub use std::ops::Generator;
 pub use std::mem::size_of;
+pub use std::pin::Pin;
 pub use std::rc;
 pub use std::result;
 pub use std::time;

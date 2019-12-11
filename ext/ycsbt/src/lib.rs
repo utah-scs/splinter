@@ -23,6 +23,7 @@ use std::ops::Generator;
 use std::rc::Rc;
 
 use sandstorm::db::DB;
+use sandstorm::Pin;
 
 /// Return a 64-bit timestamp using the rdtsc instruction.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -48,8 +49,8 @@ pub fn rdtsc() -> u64 {
 #[no_mangle]
 #[allow(unreachable_code)]
 #[allow(unused_assignments)]
-pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
-    Box::new(move || {
+pub fn init(db: Rc<dyn DB>) -> Pin<Box<dyn Generator<Yield = u64, Return = u64>>> {
+    Box::pin(move || {
         let key_len = 30;
         let mut table: u64 = 0;
         let mut optype = 0;

@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
-
 extern crate bytes;
 extern crate db;
 extern crate rand;
@@ -751,7 +749,8 @@ fn main() {
                         )
                     },
                 ),
-            ).expect("Failed to initialize receive/transmit side.");
+            )
+            .expect("Failed to initialize receive/transmit side.");
     }
 
     // Allow the system to bootup fully.

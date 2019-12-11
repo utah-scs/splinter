@@ -533,7 +533,8 @@ fn main() {
                         )
                     },
                 ),
-            ).expect("Failed to initialize receive side.");
+            )
+            .expect("Failed to initialize receive side.");
     }
 
     // Allow the system to bootup fully.

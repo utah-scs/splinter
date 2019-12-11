@@ -214,7 +214,8 @@ pub fn create_get_rpc(
             key.len() as u16,
             id,
             generator,
-        )).expect("Failed to push RPC header into request!");
+        ))
+        .expect("Failed to push RPC header into request!");
 
     request
         .add_to_payload_tail(key.len(), &key)
@@ -316,7 +317,8 @@ pub fn create_multiget_rpc(
     let mut request = create_request(mac, ip, udp, dst)
         .push_header(&MultiGetRequest::new(
             tenant, table_id, key_len, num_keys, id,
-        )).expect("Failed to push RPC header into request!");
+        ))
+        .expect("Failed to push RPC header into request!");
 
     request
         .add_to_payload_tail(keys.len(), &keys)
@@ -375,7 +377,8 @@ pub fn create_invoke_rpc(
             name_len,
             (payload.len() - name_len as usize) as u32,
             id,
-        )).expect("Failed to push RPC header into request!");
+        ))
+        .expect("Failed to push RPC header into request!");
 
     request
         .add_to_payload_tail(payload.len(), &payload)

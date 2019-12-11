@@ -613,7 +613,8 @@ fn main() {
                         )
                     },
                 ),
-            ).expect("Failed to initialize receive side.");
+            )
+            .expect("Failed to initialize receive side.");
     }
 
     // Run the client.

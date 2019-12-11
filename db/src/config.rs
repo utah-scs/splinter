@@ -43,11 +43,13 @@ pub fn parse_mac(mac: &str) -> Result<MacAddress, ParseError> {
     let bytes: Result<Vec<_>, _> = mac.split(':').map(|s| u8::from_str_radix(s, 16)).collect();
 
     match bytes {
-        Ok(bytes) => if bytes.len() == 6 {
-            Ok(MacAddress::new_from_slice(&bytes))
-        } else {
-            Err(ParseError {})
-        },
+        Ok(bytes) => {
+            if bytes.len() == 6 {
+                Ok(MacAddress::new_from_slice(&bytes))
+            } else {
+                Err(ParseError {})
+            }
+        }
         Err(_) => Err(ParseError {}),
     }
 }
@@ -272,5 +274,4 @@ mod tests {
         } else {
         }
     }
-
 }

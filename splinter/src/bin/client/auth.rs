@@ -462,13 +462,11 @@ where
                                 // free the packet.
                                 RpcStatus::StatusOk => {
                                     let timestamp = p.get_header().common_header.stamp;
-                                    let value = p.get_payload().split_at(self.key_len + 9).1;;
+                                    let value = p.get_payload().split_at(self.key_len + 9).1;
                                     if value.len() != 40 {
                                         info!("Something is wrong with the size of the response");
                                     } else {
-                                        let mut password: Vec<
-                                            u8,
-                                        > = vec![0; 72];
+                                        let mut password: Vec<u8> = vec![0; 72];
                                         if let Some(key) =
                                             self.native_state.borrow().get(&timestamp)
                                         {
@@ -680,7 +678,8 @@ fn main() {
                         )
                     },
                 ),
-            ).expect("Failed to initialize receive/transmit side.");
+            )
+            .expect("Failed to initialize receive/transmit side.");
     }
 
     // Allow the system to bootup fully.

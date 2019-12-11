@@ -16,9 +16,9 @@
 use super::task::Task;
 use super::wireformat::OpCode;
 
-use e2d2::interface::Packet;
-use e2d2::headers::UdpHeader;
 use e2d2::common::EmptyMetadata;
+use e2d2::headers::UdpHeader;
+use e2d2::interface::Packet;
 
 /// The Service trait. When implemented, it allows for servicing of RPC requests sent by clients.
 pub trait Service {
