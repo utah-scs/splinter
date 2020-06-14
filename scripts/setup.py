@@ -31,81 +31,6 @@ colors = {
 def printColor(color, string):
     print colors[color] + string + colors["end"]
 
-"""This function fixes dependencies inside the db and ext/test crates.
-"""
-def setupCargo():
-    printColor("bold", "=============== Fixing Deps ==========================")
-    fix = "cargo generate-lockfile; " + \
-          "cargo update -p spin:0.4.10 --precise 0.4.9; " + \
-          "cargo update -p serde:1.0.90 --precise 1.0.37; " + \
-          "cargo update -p serde_derive:1.0.90 --precise 1.0.37; " + \
-          "cargo update -p env_logger:0.5.13 --precise 0.5.3; " + \
-          "cargo update -p rustc-demangle:0.1.15 --precise 0.1.13; "
-
-    # Fix dependencies inside db.
-    cmd = "cd db; " + fix + "cd ../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/test.
-    cmd = "cd ext/test; " + fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/pushback.
-    cmd = "cd ext/pushback; " + fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/bad.
-    cmd = "cd ext/bad; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/tao.
-    cmd = "cd ext/tao; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/get.
-    cmd = "cd ext/get; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/put.
-    cmd = "cd ext/put; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/err.
-    cmd = "cd ext/err; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/long.
-    cmd = "cd ext/long; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/aggregate.
-    cmd = "cd ext/aggregate; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/scan.
-    cmd = "cd ext/scan; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/analysis.
-    cmd = "cd ext/analysis; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/auth.
-    cmd = "cd ext/auth; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/ycsbt.
-    cmd = "cd ext/ycsbt; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside ext/checksum.
-    cmd = "cd ext/checksum; " + ext_fix + "cd ../../"
-    subprocess.check_call(cmd, shell=True)
-
-    # Fix dependencies inside splinter.
-    cmd = "cd splinter; " + fix + "cd ../"
-    subprocess.check_call(cmd, shell=True)
-
 """This function first compiles DPDK using Netbricks scripts on CloudLab's xl170.
 """
 def setupDpdk():
@@ -149,7 +74,7 @@ def setupDevEnvt():
 def installRust():
     printColor("bold", "=============== Installing Rust ======================")
     subprocess.check_call("curl -s https://sh.rustup.rs -sSf | " +\
-                          "sh -s -- --default-toolchain nightly-2019-12-05 -y",
+                          "sh -s -- --default-toolchain nightly-2020-04-19 -y",
                           shell=True)
     os.environ["PATH"] += ":" + os.environ["HOME"] + "/.cargo/bin"
     return
@@ -194,10 +119,6 @@ if __name__ == "__main__":
     # Next, setup DPDK.
     if args.full or args.installDpdk:
         setupDpdk()
-
-    # Fix dependencies.
-    if args.fixCargoDep:
-        setupCargo()
 
     if args.full or args.installIDE:
         setupVScode()

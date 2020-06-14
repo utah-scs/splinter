@@ -185,16 +185,17 @@ impl ExtensionManager {
     pub fn load(&self, path: &str, tenant: TenantId, name: &str) -> bool {
         // Try to load the extension from the supplied path.
         Extension::load(path)
-                    // If the extension was loaded successfully, write it into
-                    // the extension manager. The bucket is determined by the
-                    // least significant byte of the tenant id.
-                    .and_then(| ext | {
-                        let bucket = (tenant & 0xff) as usize & (EXT_BUCKETS - 1);
-                        self.extensions[bucket].write()
-                                        .insert((tenant, String::from(name)),
-                                                Arc::new(ext));
-                        Some(()) })
-                    .is_some()
+            // If the extension was loaded successfully, write it into
+            // the extension manager. The bucket is determined by the
+            // least significant byte of the tenant id.
+            .and_then(|ext| {
+                let bucket = (tenant & 0xff) as usize & (EXT_BUCKETS - 1);
+                self.extensions[bucket]
+                    .write()
+                    .insert((tenant, String::from(name)), Arc::new(ext));
+                Some(())
+            })
+            .is_some()
     }
 
     /// This method retrieves an extension that was previously loaded into the
@@ -240,7 +241,8 @@ impl ExtensionManager {
                     .write()
                     .insert((share, String::from(name)), ext);
                 Some(())
-            }).is_some()
+            })
+            .is_some()
     }
 }
 
@@ -250,8 +252,8 @@ mod tests {
     use std::ops::GeneratorState;
     use std::rc::Rc;
 
-    use super::{Extension, ExtensionManager};
     use super::super::null::NullDB;
+    use super::{Extension, ExtensionManager};
 
     // This function attempts to load and run a test extension, and asserts
     // that both operations were successfull.
