@@ -133,7 +133,7 @@ impl Task for Container {
             self.state = RUNNING;
 
             // Catch any panics thrown from within the extension.
-            let res = catch_unwind(AssertUnwindSafe(|| match self.gen.as_mut().resume() {
+            let res = catch_unwind(AssertUnwindSafe(|| match self.gen.as_mut().resume(()) {
                 GeneratorState::Yielded(_) => {
                     self.state = YIELDED;
                     if let Some(proxydb) = self.db.get_mut() {

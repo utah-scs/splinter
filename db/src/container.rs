@@ -107,7 +107,7 @@ impl<'a> Task for Container<'a> {
 
             // Catch any panics thrown from within the extension.
             let res = catch_unwind(AssertUnwindSafe(|| match self.gen.as_mut() {
-                Some(gen) => match gen.as_mut().resume() {
+                Some(gen) => match gen.as_mut().resume(()) {
                     GeneratorState::Yielded(_) => {
                         if let Some(db) = self.db.get_mut() {
                             self.db_time = db.db_credit();

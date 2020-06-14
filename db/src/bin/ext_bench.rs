@@ -66,7 +66,7 @@ fn main() {
             .get(0, p.to_string())
             .unwrap()
             .get(Rc::clone(&db) as Rc<DB>);
-        ext.as_mut().resume();
+        ext.as_mut().resume(());
     }
 
     db.assert_messages(expected.as_slice());
@@ -90,7 +90,7 @@ fn main() {
             load.push(r - l);
 
             let l = rdtsc();
-            ext.as_mut().resume();
+            ext.as_mut().resume(());
             let r = rdtsc();
             enter.push(r - l);
         }
@@ -106,7 +106,7 @@ fn main() {
         .unwrap()
         .get(Rc::clone(&db) as Rc<DB>);
 
-    while ext.as_mut().resume() != GeneratorState::Complete(0) {}
+    while ext.as_mut().resume(()) != GeneratorState::Complete(0) {}
 
     load.sort();
     enter.sort();

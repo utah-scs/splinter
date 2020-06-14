@@ -26,7 +26,7 @@ use db::table::Table;
 use rand::Rng;
 
 // The number of iterations to run per thread.
-const N_ITERS: u32 = (1u32 << 24);
+const N_ITERS: u32 = 1u32 << 24;
 
 // The maximum number of threads to run the benchmarks on.
 const N_THREADS: usize = 8;

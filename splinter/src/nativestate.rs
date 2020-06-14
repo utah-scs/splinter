@@ -119,7 +119,7 @@ impl PushbackState {
             yield 0;
         };
 
-        match Pin::new(&mut generator).resume() {
+        match Pin::new(&mut generator).resume(()) {
             GeneratorState::Yielded(val) => {
                 panic!("Pushback native execution is buggy");
             }

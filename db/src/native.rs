@@ -104,7 +104,7 @@ impl Task for Native {
         if self.state == INITIALIZED || self.state == YIELDED {
             self.state = RUNNING;
 
-            match self.gen.as_mut().resume() {
+            match self.gen.as_mut().resume(()) {
                 GeneratorState::Yielded(time) => {
                     self.db_time += time;
                     self.state = YIELDED;

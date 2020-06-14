@@ -137,7 +137,7 @@ impl YCSBT {
             yield 0;
         };
 
-        match Pin::new(&mut generator).resume() {
+        match Pin::new(&mut generator).resume(()) {
             GeneratorState::Yielded(val) => {
                 if val != 0 {
                     panic!("Pushback native execution is buggy");
