@@ -2,7 +2,7 @@
 
 # The PCI address of the NIC the client is going to transmit and receive
 # packets on.
-nic_pci = "0000:04:00.1"
+nic_pci = "0000:03:00.1"
 
 # The MAC address of the NIC the client is going to transmit and receive
 # packets on.

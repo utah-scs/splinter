@@ -28,7 +28,7 @@ use sandstorm::db::DB;
 use sandstorm::pack::pack;
 use sandstorm::rc::Rc;
 use sandstorm::size_of;
-use sandstorm::Generator;
+use sandstorm::{Generator, Pin};
 
 /// Status codes for the response to the tenant.
 const SUCCESSFUL: u8 = 0x01;
@@ -72,8 +72,8 @@ macro_rules! MULTIGET1 {
 #[no_mangle]
 #[allow(unreachable_code)]
 #[allow(unused_assignments)]
-pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
-    Box::new(move || {
+pub fn init(db: Rc<dyn DB>) -> Pin<Box<dyn Generator<Yield = u64, Return = u64>>> {
+    Box::pin(move || {
         // Error code and response defined upfront so that results are written only
         // at the end of this function.
         let mut err = INVALIDARG;
@@ -113,7 +113,7 @@ pub fn init(db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
         }
         match buf {
             Some(vals) => {
-                let mut i = 0;
+                let i = 0;
                 while vals.next() {
                     if i < num {
                         if optype == 1 {

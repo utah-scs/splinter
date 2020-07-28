@@ -15,13 +15,8 @@
 
 //! This crate is useful in writing a new client and handling pushback
 //! extension on the client side.
-#![feature(
-    generators,
-    generator_trait,
-    asm,
-    integer_atomics,
-    atomic_min_max
-)]
+#![feature(generators, generator_trait, llvm_asm, integer_atomics)]
+#![allow(bare_trait_objects)]
 #![warn(missing_docs)]
 
 extern crate libloading;

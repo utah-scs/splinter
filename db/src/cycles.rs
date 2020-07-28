@@ -13,11 +13,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::sync::Once;
 use time::PreciseTime;
-use std::sync::{Once, ONCE_INIT};
 
 static mut CYCLES_PER_SECOND: u64 = 0;
-static INIT: Once = ONCE_INIT;
+static INIT: Once = Once::new();
 
 /// Perform once-only overall initialization for the cycles module, such
 /// as calibrating the clock frequency.  This method is invoked automatically
@@ -46,7 +46,8 @@ fn init() -> u64 {
             }
         }
         let delta = cycles_per_second / 1000.0;
-        if (old_cycles > (cycles_per_second - delta)) && (old_cycles < (cycles_per_second + delta)) {
+        if (old_cycles > (cycles_per_second - delta)) && (old_cycles < (cycles_per_second + delta))
+        {
             return cycles_per_second as u64;
         }
         old_cycles = cycles_per_second;
@@ -73,8 +74,8 @@ pub fn rdtsc() -> u64 {
     unsafe {
         let lo: u32;
         let hi: u32;
-        asm!("rdtsc" : "={eax}"(lo), "={edx}"(hi) : : : "volatile");
-        (((hi as u64) << 32) | lo as u64)
+        llvm_asm!("rdtsc" : "={eax}"(lo), "={edx}"(hi) : : : "volatile");
+        ((hi as u64) << 32) | lo as u64
     }
 }
 

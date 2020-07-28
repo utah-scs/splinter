@@ -20,6 +20,7 @@ extern crate splinter;
 use std::mem;
 use std::mem::transmute;
 use std::ops::{Generator, GeneratorState};
+use std::pin::Pin;
 use std::slice;
 use std::sync::Arc;
 
@@ -39,7 +40,7 @@ use self::splinter::workload::Workload;
 
 pub struct YCSBT {
     put_pct: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,
@@ -136,17 +137,15 @@ impl YCSBT {
             yield 0;
         };
 
-        unsafe {
-            match generator.resume() {
-                GeneratorState::Yielded(val) => {
-                    if val != 0 {
-                        panic!("Pushback native execution is buggy");
-                    }
+        match Pin::new(&mut generator).resume(()) {
+            GeneratorState::Yielded(val) => {
+                if val != 0 {
+                    panic!("Pushback native execution is buggy");
                 }
-                GeneratorState::Complete(val) => {
-                    if val != 0 {
-                        panic!("Pushback native execution is buggy");
-                    }
+            }
+            GeneratorState::Complete(val) => {
+                if val != 0 {
+                    panic!("Pushback native execution is buggy");
                 }
             }
         }

@@ -25,32 +25,24 @@ pub struct SandstormAllocator;
 static mut MEM_LIMIT: usize = 10240;
 
 // This Constant only gets compiled if the architecture is any one of these
-#[cfg(
-    all(
-        any(
-            target_arch = "x86",
-            target_arch = "arm",
-            target_arch = "mips",
-            target_arch = "mipsel",
-            target_arch = "powerpc"
-        )
-    )
-)]
+#[cfg(all(any(
+    target_arch = "x86",
+    target_arch = "arm",
+    target_arch = "mips",
+    target_arch = "mipsel",
+    target_arch = "powerpc"
+)))]
 const MIN_ALIGN: usize = 8;
 
-#[cfg(
-    all(
-        any(
-            target_arch = "x86_64",
-            target_arch = "aarch64",
-            target_arch = "powerpc64",
-            target_arch = "powerpc64le",
-            target_arch = "mips64",
-            target_arch = "s390x",
-            target_arch = "sparc64"
-        )
-    )
-)]
+#[cfg(all(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "powerpc64le",
+    target_arch = "mips64",
+    target_arch = "s390x",
+    target_arch = "sparc64"
+)))]
 const MIN_ALIGN: usize = 16;
 
 unsafe impl GlobalAlloc for SandstormAllocator {
@@ -87,7 +79,7 @@ unsafe impl GlobalAlloc for SandstormAllocator {
             } else {
                 let ptr = libc::memalign(layout.align(), layout.size());
                 if !ptr.is_null() {
-                   ptr::write_bytes(ptr, 0, layout.size());
+                    ptr::write_bytes(ptr, 0, layout.size());
                 }
                 MEM_LIMIT -= layout.size();
                 ptr as *mut u8

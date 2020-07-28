@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
-
 extern crate db;
 extern crate rand;
 extern crate splinter;
@@ -54,7 +52,7 @@ use splinter::*;
 // The tests below give an example of how to use it and how to aggregate the results.
 pub struct Bad {
     bad_ptm: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,
@@ -538,7 +536,8 @@ fn main() {
                         setup_recv(port.clone(), sched, core, master)
                     },
                 ),
-            ).expect("Failed to initialize receive side.");
+            )
+            .expect("Failed to initialize receive side.");
 
         // Setup the send side.
         net_context
@@ -549,7 +548,8 @@ fn main() {
                         setup_send(&config::ClientConfig::load(), ports, sched, core)
                     },
                 ),
-            ).expect("Failed to initialize send side.");
+            )
+            .expect("Failed to initialize send side.");
     }
 
     // Allow the system to bootup fully.

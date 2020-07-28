@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::sync::Arc;
 use hashbrown::HashMap;
+use std::sync::Arc;
 
 use super::table::Table;
 
@@ -92,7 +92,8 @@ impl Tenant {
         let map = self.tables.read();
 
         // Lookup on table_id and return.
-        map.get(&table_id).and_then(| table | { Some(Arc::clone(&table)) })
+        map.get(&table_id)
+            .and_then(|table| Some(Arc::clone(&table)))
     }
 
     /// This method acquire a write lock on the tenant table.

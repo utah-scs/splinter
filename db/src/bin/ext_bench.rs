@@ -14,13 +14,14 @@
  */
 
 #![feature(generator_trait)]
+#![allow(bare_trait_objects)]
 
 extern crate db;
-extern crate time;
 extern crate sandstorm;
+extern crate time;
 
+use std::ops::GeneratorState;
 use std::rc::Rc;
-use std::ops::{Generator, GeneratorState};
 
 use db::cycles::*;
 
@@ -42,29 +43,30 @@ fn main() {
     let start = PreciseTime::now();
     for i in 0..n {
         let ret = ext_manager.load(
-                            &format!("../ext/test/target/release/libtest{}.so", i),
-                            0, &format!("test{}", i),
-                            );
+            &format!("../ext/test/target/release/libtest{}.so", i),
+            0,
+            &format!("test{}", i),
+        );
         if ret == false {
             panic!("Failed to load test extension!");
         }
     }
     let end: Duration = start.to(PreciseTime::now());
-    println!("Time taken to load {} tiny extensions: {} nano seconds",
-             n, end.num_nanoseconds().expect("ERROR: Duration overflow!"));
+    println!(
+        "Time taken to load {} tiny extensions: {} nano seconds",
+        n,
+        end.num_nanoseconds().expect("ERROR: Duration overflow!")
+    );
 
     // Next, call each extension once, and assert that it prints out something.
-    let expected : Vec<String> = (0..n)
-                                    .map(| _ | format!("TAO Initialized! 0"))
-                                    .collect();
-    let proc_names : Vec<String> = (0..n)
-                                        .map(| i | format!("test{}", i))
-                                        .collect();
+    let expected: Vec<String> = (0..n).map(|_| format!("TAO Initialized! 0")).collect();
+    let proc_names: Vec<String> = (0..n).map(|i| format!("test{}", i)).collect();
     for p in proc_names.iter() {
-        let mut ext = ext_manager.get(0, p.to_string())
-                                    .unwrap()
-                                    .get(Rc::clone(&db) as Rc<DB>);
-        unsafe { ext.resume() };
+        let mut ext = ext_manager
+            .get(0, p.to_string())
+            .unwrap()
+            .get(Rc::clone(&db) as Rc<DB>);
+        ext.as_mut().resume(());
     }
 
     db.assert_messages(expected.as_slice());
@@ -72,9 +74,7 @@ fn main() {
 
     // Then, benchmark the amount of time it takes to call into
     // these extensions.
-    let expected : Vec<String> = (0..n)
-                                    .map(| _ | format!("TAO Initialized! 1"))
-                                    .collect();
+    let expected: Vec<String> = (0..n).map(|_| format!("TAO Initialized! 1")).collect();
 
     let mut load = Vec::with_capacity(10000000);
     let mut enter = Vec::with_capacity(10000000);
@@ -82,30 +82,31 @@ fn main() {
     for _ in 0..1000000 {
         for p in proc_names.iter() {
             let l = rdtsc();
-            let mut ext = ext_manager.get(0, p.to_string())
-                                        .unwrap()
-                                        .get(Rc::clone(&db) as Rc<DB>);
+            let mut ext = ext_manager
+                .get(0, p.to_string())
+                .unwrap()
+                .get(Rc::clone(&db) as Rc<DB>);
             let r = rdtsc();
             load.push(r - l);
 
             let l = rdtsc();
-            unsafe { ext.resume() };
+            ext.as_mut().resume(());
             let r = rdtsc();
             enter.push(r - l);
         }
     }
 
-    let ret = ext_manager.load(
-                            "../ext/test/target/release/libtest.so",
-                            0, "test",
-                            );
+    let ret = ext_manager.load("../ext/test/target/release/libtest.so", 0, "test");
     if ret == false {
         panic!("Failed to load test extension!");
     }
 
-    let mut ext = ext_manager.get(0, String::from("test")).unwrap().get(Rc::clone(&db) as Rc<DB>);
+    let mut ext = ext_manager
+        .get(0, String::from("test"))
+        .unwrap()
+        .get(Rc::clone(&db) as Rc<DB>);
 
-    unsafe { while ext.resume() != GeneratorState::Complete(0) {} };
+    while ext.as_mut().resume(()) != GeneratorState::Complete(0) {}
 
     load.sort();
     enter.sort();
@@ -113,12 +114,13 @@ fn main() {
     let lm = load[load.len() / 2];
     let em = enter[enter.len() / 2];
 
-    println!("Load: {} cycles {} ns, Enter: {} cycles {} ns",
-             lm,
-             to_seconds(lm) * 1e9,
-             em,
-             to_seconds(em) * 1e9,
-             );
+    println!(
+        "Load: {} cycles {} ns, Enter: {} cycles {} ns",
+        lm,
+        to_seconds(lm) * 1e9,
+        em,
+        to_seconds(em) * 1e9,
+    );
 
     db.assert_messages(expected.as_slice());
 }

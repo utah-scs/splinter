@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
-
 extern crate bincode;
 extern crate db;
 extern crate rand;
@@ -76,7 +74,7 @@ static ML_MODEL: u8 = 1;
 // The tests below give an example of how to use it and how to aggregate the results.
 pub struct Analysis {
     put_pct: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     order_rng: Box<Normal>,
@@ -777,7 +775,8 @@ fn main() {
                         )
                     },
                 ),
-            ).expect("Failed to initialize receive/transmit side.");
+            )
+            .expect("Failed to initialize receive/transmit side.");
     }
 
     // Allow the system to bootup fully.
@@ -809,7 +808,7 @@ mod test {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn Analysis_abc_basic() {
+    fn analysis_abc_basic() {
         let n_threads = 1;
         let mut threads = Vec::with_capacity(n_threads);
         let done = Arc::new(AtomicBool::new(false));
@@ -870,7 +869,7 @@ mod test {
     }
 
     #[test]
-    fn Analysis_abc_histogram() {
+    fn analysis_abc_histogram() {
         let hist = Arc::new(Mutex::new(HashMap::new()));
 
         let n_keys = 20;

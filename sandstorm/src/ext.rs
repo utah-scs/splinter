@@ -15,6 +15,7 @@
 
 use hashbrown::HashMap;
 use std::ops::Generator;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -29,7 +30,7 @@ use spin::RwLock;
 const EXT_BUCKETS: usize = 32;
 
 // The type signature of the function that will be searched for inside an so.
-type Proc = unsafe extern "C" fn(Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>>;
+type Proc = unsafe extern "C" fn(Rc<DB>) -> Pin<Box<Generator<Yield = u64, Return = u64>>>;
 
 /// This type represents an extension that has been successfully loaded into
 /// the database. As long as this type is not dropped, the extension will exist
@@ -106,7 +107,7 @@ impl Extension {
     /// # Return
     ///
     /// A generator that can be scheduled by the database.
-    pub fn get(&self, db: Rc<DB>) -> Box<Generator<Yield = u64, Return = u64>> {
+    pub fn get(&self, db: Rc<DB>) -> Pin<Box<Generator<Yield = u64, Return = u64>>> {
         // Call into the procedure, and return the generator.
         unsafe { (self.procedure)(db) }
     }
@@ -184,16 +185,17 @@ impl ExtensionManager {
     pub fn load(&self, path: &str, tenant: TenantId, name: &str) -> bool {
         // Try to load the extension from the supplied path.
         Extension::load(path)
-                    // If the extension was loaded successfully, write it into
-                    // the extension manager. The bucket is determined by the
-                    // least significant byte of the tenant id.
-                    .and_then(| ext | {
-                        let bucket = (tenant & 0xff) as usize & (EXT_BUCKETS - 1);
-                        self.extensions[bucket].write()
-                                        .insert((tenant, String::from(name)),
-                                                Arc::new(ext));
-                        Some(()) })
-                    .is_some()
+            // If the extension was loaded successfully, write it into
+            // the extension manager. The bucket is determined by the
+            // least significant byte of the tenant id.
+            .and_then(|ext| {
+                let bucket = (tenant & 0xff) as usize & (EXT_BUCKETS - 1);
+                self.extensions[bucket]
+                    .write()
+                    .insert((tenant, String::from(name)), Arc::new(ext));
+                Some(())
+            })
+            .is_some()
     }
 
     /// This method retrieves an extension that was previously loaded into the
@@ -239,7 +241,8 @@ impl ExtensionManager {
                     .write()
                     .insert((share, String::from(name)), ext);
                 Some(())
-            }).is_some()
+            })
+            .is_some()
     }
 }
 
@@ -249,8 +252,8 @@ mod tests {
     use std::ops::GeneratorState;
     use std::rc::Rc;
 
-    use super::{Extension, ExtensionManager};
     use super::super::null::NullDB;
+    use super::{Extension, ExtensionManager};
 
     // This function attempts to load and run a test extension, and asserts
     // that both operations were successfull.
@@ -262,7 +265,7 @@ mod tests {
 
         // Assert that the test extension has one yield statement.
         // unsafe { assert_eq!(GeneratorState::Yielded(0), gen.resume()) };
-        unsafe { assert_eq!(GeneratorState::Complete(0), gen.resume()) };
+        assert_eq!(GeneratorState::Complete(0), gen.as_mut().resume(()));
     }
 
     // This function tests that an extension without the "init" symbol cannot
@@ -318,7 +321,7 @@ mod tests {
 
         // Assert that the test extension has one yield statement.
         // unsafe { assert_eq!(GeneratorState::Yielded(0), gen.resume()) };
-        unsafe { assert_eq!(GeneratorState::Complete(0), gen.resume()) };
+        assert_eq!(GeneratorState::Complete(0), gen.as_mut().resume(()));
     }
 
     // This function tests that a non-existent extension cannot be retrieved

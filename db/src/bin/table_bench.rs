@@ -14,35 +14,36 @@
  */
 
 extern crate db;
-extern crate time;
 extern crate rand;
+extern crate time;
 
-use std::thread;
 use std::sync::{Arc, Barrier};
+use std::thread;
 use std::time::{Duration, Instant};
 
-use rand::Rng;
+use db::bytes::{BufMut, BytesMut};
 use db::table::Table;
-use db::bytes::{BytesMut, BufMut};
+use rand::Rng;
 
 // The number of iterations to run per thread.
-const N_ITERS : u32 = (1u32 << 24);
+const N_ITERS: u32 = 1u32 << 24;
 
 // The maximum number of threads to run the benchmarks on.
-const N_THREADS : usize = 8;
+const N_THREADS: usize = 8;
 
 // If true, the database benchmark generates only get requests. If
 // false, it alternates between get and put requests.
-const READ_ONLY : bool = true;
+const READ_ONLY: bool = true;
 
 // Set to true to enable more verbose output like the average time
 // per iteration.
-const DEBUG_PRINT : bool = false;
+const DEBUG_PRINT: bool = false;
 
 // The 128 Byte value on every object in the database.
-const VALUE : &str =
-    concat!("1000000000000000000000000000000000000000000000000000000000000000",
-            "0000000000000000000000000000000000000000000000000000000000000000");
+const VALUE: &str = concat!(
+    "1000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000"
+);
 
 // Converts a Duration type to floating point in seconds.
 //
@@ -71,11 +72,11 @@ fn to_seconds(d: &Duration) -> f64 {
 // A tupule of the form (Duration, u32). The first member represents the
 // amount of time it took to complete the benchmark. The second member
 // represents the total number of iterations that were run.
-fn parallel_bench(n_threads: usize,
-                  setup: fn (&mut Table) -> (),
-                  run: fn (Arc<Barrier>, Arc<Table>) -> (Duration, u32))
-                   -> (Duration, u32)
-{
+fn parallel_bench(
+    n_threads: usize,
+    setup: fn(&mut Table) -> (),
+    run: fn(Arc<Barrier>, Arc<Table>) -> (Duration, u32),
+) -> (Duration, u32) {
     // Create and setup the table/database;
     let mut db = Table::default();
     setup(&mut db);
@@ -88,16 +89,19 @@ fn parallel_bench(n_threads: usize,
     for _ in 0..n_threads {
         let b = barrier.clone();
         let db = db.clone();
-        threads.push(thread::spawn(move || { run(b, db) }));
+        threads.push(thread::spawn(move || run(b, db)));
     }
 
     // Iterate across all threads. Return a tupule whose first member consists
     // of the highest execution time across all threads, and whose second member
     // is the sum of the number of iterations run on each benchmark thread.
     // Dividing the second member by the first, will yeild the throughput.
-    threads.into_iter().map(|t| t.join().expect("ERROR: Thread join failed."))
-        .fold((Duration::new(0, 0), 0),
-              |(ll, lr), (rl, rr)| (std::cmp::max(ll, rl), lr + rr))
+    threads
+        .into_iter()
+        .map(|t| t.join().expect("ERROR: Thread join failed."))
+        .fold((Duration::new(0, 0), 0), |(ll, lr), (rl, rr)| {
+            (std::cmp::max(ll, rl), lr + rr)
+        })
 }
 
 // This function benchmarks the performance of the psuedo random number
@@ -113,7 +117,8 @@ fn parallel_bench(n_threads: usize,
 // amount of time it took to run the benchmark, and the second represents
 // the total number of iterations that were run during the benchmark.
 fn parallel_bench_prng(n_threads: usize) -> (Duration, u32) {
-    parallel_bench(n_threads,
+    parallel_bench(
+        n_threads,
         // No setup required for this benchmark. This is because this
         // benchmark measures the performance of the rand crate, and
         // not that of the database.
@@ -130,12 +135,15 @@ fn parallel_bench_prng(n_threads: usize) -> (Duration, u32) {
             let gen_time = start.elapsed();
 
             if DEBUG_PRINT {
-                println!("Average time per random number generated: {:?}",
-                         gen_time/N_ITERS);
+                println!(
+                    "Average time per random number generated: {:?}",
+                    gen_time / N_ITERS
+                );
             }
 
             return (gen_time, N_ITERS);
-        })
+        },
+    )
 }
 
 // This function sets up a database and issues gets and puts against it.
@@ -150,7 +158,8 @@ fn parallel_bench_prng(n_threads: usize) -> (Duration, u32) {
 // amount of time it took to run the benchmark, and the second represents
 // the total number of iterations that were run during the benchmark.
 fn parallel_bench_db(n_threads: usize) -> (Duration, u32) {
-    parallel_bench(n_threads,
+    parallel_bench(
+        n_threads,
         // The setup function populates the database with a bunch of objects.
         |db| {
             if DEBUG_PRINT {
@@ -163,15 +172,16 @@ fn parallel_bench_db(n_threads: usize) -> (Duration, u32) {
             // Populate the table with N_ITERS number of objects.
             let start = Instant::now();
             for i in 0..N_ITERS {
-                let key : &[u8] = unsafe {
-                    std::slice::from_raw_parts(&i as *const u32 as *const _,
-                                               std::mem::size_of::<u32>())
+                let key: &[u8] = unsafe {
+                    std::slice::from_raw_parts(
+                        &i as *const u32 as *const _,
+                        std::mem::size_of::<u32>(),
+                    )
                 };
 
                 // Both, the key and the value are written to a contiguous
                 // piece of memory.
-                let mut object = BytesMut::with_capacity(key.len() +
-                                                         value.len());
+                let mut object = BytesMut::with_capacity(key.len() + value.len());
                 object.put_slice(key);
                 object.put_slice(value);
                 let mut object = object.freeze();
@@ -183,7 +193,7 @@ fn parallel_bench_db(n_threads: usize) -> (Duration, u32) {
 
             if DEBUG_PRINT {
                 println!("Took {:?} to populate database.", put_time);
-                println!("Time per Put: {:?}", put_time/N_ITERS);
+                println!("Time per Put: {:?}", put_time / N_ITERS);
             }
         },
         // The benchmark function. This function issues back to back gets/puts
@@ -198,16 +208,17 @@ fn parallel_bench_db(n_threads: usize) -> (Duration, u32) {
             let start = Instant::now();
             for i in 0..N_ITERS {
                 let v = rand::thread_rng().gen::<u32>() & (N_ITERS - 1);
-                let key : &[u8] = unsafe {
-                    std::slice::from_raw_parts(&v as *const u32 as *const _,
-                                               std::mem::size_of::<u32>())
+                let key: &[u8] = unsafe {
+                    std::slice::from_raw_parts(
+                        &v as *const u32 as *const _,
+                        std::mem::size_of::<u32>(),
+                    )
                 };
 
                 if READ_ONLY || (i & 1 == 0) {
                     let _s = db.get(key).unwrap().value[0] as u64;
                 } else {
-                    let mut object = BytesMut::with_capacity(key.len() +
-                                                             value.len());
+                    let mut object = BytesMut::with_capacity(key.len() + value.len());
                     object.put_slice(key);
                     object.put_slice(value);
                     let mut object = object.freeze();
@@ -219,11 +230,12 @@ fn parallel_bench_db(n_threads: usize) -> (Duration, u32) {
             let get_time = start.elapsed();
 
             if DEBUG_PRINT {
-                println!("Average time per operation: {:?}", get_time/N_ITERS);
+                println!("Average time per operation: {:?}", get_time / N_ITERS);
             }
 
             (get_time, N_ITERS)
-        })
+        },
+    )
 }
 
 // Baseline to gauge cost of thread-local PRNG. Gets about 100 millions u32s per
@@ -234,9 +246,7 @@ fn bench_prng_scale() {
 
     // Run the benchmark on an increasing number of threads.
     println!("Benchmarking Random number generation.");
-    for (n, (duration, n_ops)) in (1..N_THREADS+1)
-            .map(|n| (n, parallel_bench_prng(n)))
-    {
+    for (n, (duration, n_ops)) in (1..N_THREADS + 1).map(|n| (n, parallel_bench_prng(n))) {
         let tput = n_ops as f64 / to_seconds(&duration);
         println!("{} threads: {:.0} gens/s", n, tput);
     }
@@ -250,9 +260,7 @@ fn bench_db_scale() {
 
     // Run the benchmark on an increasing number of threads.
     println!("Benchmarking Database table.");
-    for (n, (duration, n_ops)) in (1..N_THREADS+1)
-            .map(|n| (n, parallel_bench_db(n)))
-    {
+    for (n, (duration, n_ops)) in (1..N_THREADS + 1).map(|n| (n, parallel_bench_db(n))) {
         let tput = n_ops as f64 / to_seconds(&duration);
         println!("{} threads: {:.0} gets/s", n, tput);
     }

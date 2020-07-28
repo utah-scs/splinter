@@ -20,6 +20,7 @@ use db::cycles;
 use proxy::KV;
 use sandstorm::buf::ReadBuf;
 use std::ops::{Generator, GeneratorState};
+use std::pin::Pin;
 
 /// Pushback client uses this state for native excution.
 pub struct PushbackState {
@@ -118,15 +119,13 @@ impl PushbackState {
             yield 0;
         };
 
-        unsafe {
-            match generator.resume() {
-                GeneratorState::Yielded(val) => {
+        match Pin::new(&mut generator).resume(()) {
+            GeneratorState::Yielded(val) => {
+                panic!("Pushback native execution is buggy");
+            }
+            GeneratorState::Complete(val) => {
+                if val != 0 {
                     panic!("Pushback native execution is buggy");
-                }
-                GeneratorState::Complete(val) => {
-                    if val != 0 {
-                        panic!("Pushback native execution is buggy");
-                    }
                 }
             }
         }

@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
-
 extern crate crypto;
 extern crate db;
 extern crate openssl;
@@ -72,7 +70,7 @@ const RECORD_SIZE: usize = 79;
 // The tests below give an example of how to use it and how to aggregate the results.
 pub struct Auth {
     put_pct: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,
@@ -464,13 +462,11 @@ where
                                 // free the packet.
                                 RpcStatus::StatusOk => {
                                     let timestamp = p.get_header().common_header.stamp;
-                                    let value = p.get_payload().split_at(self.key_len + 9).1;;
+                                    let value = p.get_payload().split_at(self.key_len + 9).1;
                                     if value.len() != 40 {
                                         info!("Something is wrong with the size of the response");
                                     } else {
-                                        let mut password: Vec<
-                                            u8,
-                                        > = vec![0; 72];
+                                        let mut password: Vec<u8> = vec![0; 72];
                                         if let Some(key) =
                                             self.native_state.borrow().get(&timestamp)
                                         {
@@ -682,7 +678,8 @@ fn main() {
                         )
                     },
                 ),
-            ).expect("Failed to initialize receive/transmit side.");
+            )
+            .expect("Failed to initialize receive/transmit side.");
     }
 
     // Allow the system to bootup fully.
@@ -702,162 +699,4 @@ fn main() {
 
     // Stop the client.
     net_context.stop();
-}
-
-#[cfg(test)]
-mod test {
-    use std;
-    use std::collections::HashMap;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
-    use std::thread;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn auth_abc_basic() {
-        let n_threads = 1;
-        let mut threads = Vec::with_capacity(n_threads);
-        let done = Arc::new(AtomicBool::new(false));
-
-        for _ in 0..n_threads {
-            let done = done.clone();
-            threads.push(thread::spawn(move || {
-                let mut b = super::Auth::new(10, 100, 1000000, 5, 0.99, 1024, 0.1);
-                let mut n_gets = 0u64;
-                let mut n_puts = 0u64;
-                let start = Instant::now();
-                while !done.load(Ordering::Relaxed) {
-                    b.abc(
-                        |_t, _key, _ord| n_gets += 1,
-                        |_t, _key, _value, _ord| n_puts += 1,
-                    );
-                }
-                (start.elapsed(), n_gets, n_puts)
-            }));
-        }
-
-        thread::sleep(Duration::from_secs(2));
-        done.store(true, Ordering::Relaxed);
-
-        // Iterate across all threads. Return a tupule whose first member consists
-        // of the highest execution time across all threads, and whose second member
-        // is the sum of the number of iterations run on each benchmark thread.
-        // Dividing the second member by the first, will yeild the throughput.
-        let (duration, n_gets, n_puts) = threads
-            .into_iter()
-            .map(|t| t.join().expect("ERROR: Thread join failed."))
-            .fold(
-                (Duration::new(0, 0), 0, 0),
-                |(ldur, lgets, lputs), (rdur, rgets, rputs)| {
-                    (std::cmp::max(ldur, rdur), lgets + rgets, lputs + rputs)
-                },
-            );
-
-        let secs = duration.as_secs() as f64 + (duration.subsec_nanos() as f64 / 1e9);
-        println!(
-            "{} threads: {:.0} gets/s {:.0} puts/s {:.0} ops/s",
-            n_threads,
-            n_gets as f64 / secs,
-            n_puts as f64 / secs,
-            (n_gets + n_puts) as f64 / secs
-        );
-    }
-
-    // Convert a key to u32 assuming little endian.
-    fn convert_key(key: &[u8]) -> u32 {
-        assert_eq!(4, key.len());
-        let k: u32 = 0
-            | key[0] as u32
-            | (key[1] as u32) << 8
-            | (key[2] as u32) << 16
-            | (key[3] as u32) << 24;
-        k
-    }
-
-    #[test]
-    fn auth_abc_histogram() {
-        let hist = Arc::new(Mutex::new(HashMap::new()));
-
-        let n_keys = 20;
-        let n_threads = 1;
-
-        let mut threads = Vec::with_capacity(n_threads);
-        let done = Arc::new(AtomicBool::new(false));
-        for _ in 0..n_threads {
-            let hist = hist.clone();
-            let done = done.clone();
-            threads.push(thread::spawn(move || {
-                let mut b = super::Auth::new(4, 100, n_keys, 5, 0.99, 1024, 0.1);
-                let mut n_gets = 0u64;
-                let mut n_puts = 0u64;
-                let start = Instant::now();
-                while !done.load(Ordering::Relaxed) {
-                    b.abc(
-                        |_t, key, _ord| {
-                            // get
-                            let k = convert_key(key);
-                            let mut ht = hist.lock().unwrap();
-                            ht.entry(k).or_insert((0, 0)).0 += 1;
-                            n_gets += 1
-                        },
-                        |_t, key, _value, _ord| {
-                            // put
-                            let k = convert_key(key);
-                            let mut ht = hist.lock().unwrap();
-                            ht.entry(k).or_insert((0, 0)).1 += 1;
-                            n_puts += 1
-                        },
-                    );
-                }
-                (start.elapsed(), n_gets, n_puts)
-            }));
-        }
-
-        thread::sleep(Duration::from_secs(2));
-        done.store(true, Ordering::Relaxed);
-
-        // Iterate across all threads. Return a tupule whose first member consists
-        // of the highest execution time across all threads, and whose second member
-        // is the sum of the number of iterations run on each benchmark thread.
-        // Dividing the second member by the first, will yeild the throughput.
-        let (duration, n_gets, n_puts) = threads
-            .into_iter()
-            .map(|t| t.join().expect("ERROR: Thread join failed."))
-            .fold(
-                (Duration::new(0, 0), 0, 0),
-                |(ldur, lgets, lputs), (rdur, rgets, rputs)| {
-                    (std::cmp::max(ldur, rdur), lgets + rgets, lputs + rputs)
-                },
-            );
-
-        let secs = duration.as_secs() as f64 + (duration.subsec_nanos() as f64 / 1e9);
-        println!(
-            "{} threads: {:.0} gets/s {:.0} puts/s {:.0} ops/s",
-            n_threads,
-            n_gets as f64 / secs,
-            n_puts as f64 / secs,
-            (n_gets + n_puts) as f64 / secs
-        );
-
-        let ht = hist.lock().unwrap();
-        let mut kvs: Vec<_> = ht.iter().collect();
-        kvs.sort();
-        let v: Vec<_> = kvs
-            .iter()
-            .map(|&(k, v)| println!("Key {:?}: {:?} gets/puts", k, v))
-            .collect();
-        println!("Unique key count: {}", v.len());
-        assert_eq!(n_keys, v.len());
-
-        let total: i64 = kvs.iter().map(|&(_, &(g, s))| (g + s) as i64).sum();
-
-        let mut sum = 0;
-        for &(k, v) in kvs.iter() {
-            let &(g, s) = v;
-            sum += g + s;
-            let percentile = sum as f64 / total as f64;
-            println!("Key {:?}: {:?} percentile", k, percentile);
-        }
-        // For 20 keys median key should be near 4th key, so this checks out.
-    }
 }

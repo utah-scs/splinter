@@ -282,23 +282,29 @@ impl<'a> DB for Context<'a> {
         // Lookup the database for the key value pair. If it exists, then update
         // the read set and return the value.
         let start = rdtsc();
-        self.tenant.get_table(table_id)
-                    .and_then(| table | { table.get(key) })
-                    // The object exists in the database. Get a handle to it's
-                    // key and value.
-                    .and_then(| entry | { Some((self.heap.resolve(entry.value), entry.version)) })
-                    // Return the value wrapped up inside a safe type.
-                    .and_then(| (opt, version) | {
-                        if let Some(opt) = opt {
-                            let (k, v) = opt;
-                            self.tx.borrow_mut().record_get(Record::new(OpType::SandstormRead, version, k, v.clone()));
-                            *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
-                            unsafe { Some(ReadBuf::new(v)) }
-                        } else{
-                            *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
-                            None
-                        }
-                    })
+        self.tenant
+            .get_table(table_id)
+            .and_then(|table| table.get(key))
+            // The object exists in the database. Get a handle to it's
+            // key and value.
+            .and_then(|entry| Some((self.heap.resolve(entry.value), entry.version)))
+            // Return the value wrapped up inside a safe type.
+            .and_then(|(opt, version)| {
+                if let Some(opt) = opt {
+                    let (k, v) = opt;
+                    self.tx.borrow_mut().record_get(Record::new(
+                        OpType::SandstormRead,
+                        version,
+                        k,
+                        v.clone(),
+                    ));
+                    *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
+                    unsafe { Some(ReadBuf::new(v)) }
+                } else {
+                    *self.db_credit.borrow_mut() += rdtsc() - start + GET_CREDIT;
+                    None
+                }
+            })
     }
 
     /// Lookup the `DB` trait for documentation on this method.

@@ -780,7 +780,8 @@ impl Master {
                 rpc_stamp,
                 OpCode::SandstormGetRpc,
                 tenant_id,
-            )).expect("Failed to setup GetResponse");
+            ))
+            .expect("Failed to setup GetResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < key_length as usize {
@@ -797,7 +798,7 @@ impl Master {
         let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
-        let gen = Box::new(move || {
+        let gen = Box::pin(move || {
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
             let optype: u8 = 0x1; // OpType::SandstormRead
 
@@ -925,7 +926,8 @@ impl Master {
                 rpc_stamp,
                 OpCode::SandstormGetRpc,
                 tenant_id,
-            )).expect("Failed to setup GetResponse");
+            ))
+            .expect("Failed to setup GetResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < key_length as usize {
@@ -1061,7 +1063,8 @@ impl Master {
                 rpc_stamp,
                 OpCode::SandstormPutRpc,
                 tenant_id,
-            )).expect("Failed to push PutResponse");
+            ))
+            .expect("Failed to push PutResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < key_length as usize {
@@ -1078,7 +1081,7 @@ impl Master {
         let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
-        let gen = Box::new(move || {
+        let gen = Box::pin(move || {
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
 
             // If the tenant exists, check if it has a table with the given id,
@@ -1099,15 +1102,16 @@ impl Master {
                 if val.len() > 0 {
                     status = RpcStatus::StatusInternalError;
                     let alloc: &Allocator = accessor(alloc);
-                    let _result = alloc.object(tenant_id, table_id, key, val)
-                                    // If the allocation succeeds, update the
-                                    // status of the rpc, and insert the object
-                                    // into the table.
-                                    .and_then(| (key, obj) | {
-                                        status = RpcStatus::StatusOk;
-                                        table.put(key, obj);
-                                        Some(())
-                                    });
+                    let _result = alloc
+                        .object(tenant_id, table_id, key, val)
+                        // If the allocation succeeds, update the
+                        // status of the rpc, and insert the object
+                        // into the table.
+                        .and_then(|(key, obj)| {
+                            status = RpcStatus::StatusOk;
+                            table.put(key, obj);
+                            Some(())
+                        });
                 }
             }
 
@@ -1169,7 +1173,8 @@ impl Master {
                 rpc_stamp,
                 OpCode::SandstormPutRpc,
                 tenant_id,
-            )).expect("Failed to push PutResponse");
+            ))
+            .expect("Failed to push PutResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < key_length as usize {
@@ -1204,15 +1209,17 @@ impl Master {
             // If there is a value, then write it in.
             if val.len() > 0 {
                 status = RpcStatus::StatusInternalError;
-                let _result = self.heap.object(tenant_id, table_id, key, val)
-                                    // If the allocation succeeds, update the
-                                    // status of the rpc, and insert the object
-                                    // into the table.
-                                    .and_then(| (key, obj) | {
-                                        status = RpcStatus::StatusOk;
-                                        table.put(key, obj);
-                                        Some(())
-                                    });
+                let _result = self
+                    .heap
+                    .object(tenant_id, table_id, key, val)
+                    // If the allocation succeeds, update the
+                    // status of the rpc, and insert the object
+                    // into the table.
+                    .and_then(|(key, obj)| {
+                        status = RpcStatus::StatusOk;
+                        table.put(key, obj);
+                        Some(())
+                    });
             }
         }
 
@@ -1278,7 +1285,8 @@ impl Master {
                 OpCode::SandstormMultiGetRpc,
                 tenant_id,
                 0,
-            )).expect("Failed to setup MultiGetResponse");
+            ))
+            .expect("Failed to setup MultiGetResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < ((key_length as u32) * num_keys) as usize {
@@ -1295,7 +1303,7 @@ impl Master {
         let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
-        let gen = Box::new(move || {
+        let gen = Box::pin(move || {
             let mut n_recs: u32 = 0;
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
             let optype: u8 = 0x1;
@@ -1334,7 +1342,8 @@ impl Master {
                                 res.add_to_payload_tail(1, pack(&optype)).ok();
                                 res.add_to_payload_tail(size_of::<Version>(), &unsafe {
                                     transmute::<Version, [u8; 8]>(version)
-                                }).ok();
+                                })
+                                .ok();
                                 res.add_to_payload_tail(k.len(), &k[..]).ok();
                                 res.add_to_payload_tail(value.len(), &value[..]).ok()
                             } else {
@@ -1423,7 +1432,8 @@ impl Master {
                 OpCode::SandstormMultiGetRpc,
                 tenant_id,
                 0,
-            )).expect("Failed to setup MultiGetResponse");
+            ))
+            .expect("Failed to setup MultiGetResponse");
 
         // If the payload size is less than the key length, return an error.
         if req.get_payload().len() < ((key_length as u32) * num_keys) as usize {
@@ -1547,7 +1557,8 @@ impl Master {
                 rpc_stamp,
                 OpCode::SandstormInvokeRpc,
                 tenant_id,
-            )).expect("Failed to push InvokeResponse");
+            ))
+            .expect("Failed to push InvokeResponse");
 
         // If the payload size is less than the sum of the name and args
         // length, return an error.
@@ -1663,7 +1674,8 @@ impl Master {
                 rpc_stamp,
                 OpCode::SandstormCommitRpc,
                 tenant_id,
-            )).expect("Failed to setup GetResponse");
+            ))
+            .expect("Failed to setup GetResponse");
 
         // Lookup the tenant, and get a handle to the allocator. Required to avoid capturing a
         // reference to Master in the generator below.
@@ -1671,7 +1683,7 @@ impl Master {
         let alloc: *const Allocator = &self.heap;
 
         // Create a generator for this request.
-        let gen = Box::new(move || {
+        let gen = Box::pin(move || {
             let mut status: RpcStatus = RpcStatus::StatusTenantDoesNotExist;
 
             let _outcome =

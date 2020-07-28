@@ -16,6 +16,7 @@
 use std::cell::Cell;
 use std::ops::{Generator, GeneratorState};
 use std::panic::*;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::thread;
 
@@ -54,7 +55,7 @@ pub struct Container<'a> {
 
     // The actual generator/coroutine containing the extension's code to be
     // executed inside the database.
-    gen: Option<Box<Generator<Yield = u64, Return = u64>>>,
+    gen: Option<Pin<Box<Generator<Yield = u64, Return = u64>>>>,
 }
 
 // Implementation of methods on Container.
@@ -77,7 +78,7 @@ impl<'a> Container<'a> {
     pub fn new(
         prio: TaskPriority,
         context: Rc<Context<'a>>,
-        gen: Box<Generator<Yield = u64, Return = u64>>,
+        gen: Pin<Box<Generator<Yield = u64, Return = u64>>>,
     ) -> Container {
         // The generator is initialized to a dummy. The first call to run() will
         // retrieve the actual generator from the extension.
@@ -104,40 +105,37 @@ impl<'a> Task for Container<'a> {
         if self.state == INITIALIZED || self.state == YIELDED {
             self.state = RUNNING;
 
-            // As of 04/02/2018, calling resume() on a generator requires an unsafe block.
-            unsafe {
-                // Catch any panics thrown from within the extension.
-                let res = catch_unwind(AssertUnwindSafe(|| match self.gen.as_mut() {
-                    Some(gen) => match gen.resume() {
-                        GeneratorState::Yielded(_) => {
-                            if let Some(db) = self.db.get_mut() {
-                                self.db_time = db.db_credit();
-                            }
-                            self.state = YIELDED;
+            // Catch any panics thrown from within the extension.
+            let res = catch_unwind(AssertUnwindSafe(|| match self.gen.as_mut() {
+                Some(gen) => match gen.as_mut().resume(()) {
+                    GeneratorState::Yielded(_) => {
+                        if let Some(db) = self.db.get_mut() {
+                            self.db_time = db.db_credit();
                         }
+                        self.state = YIELDED;
+                    }
 
-                        GeneratorState::Complete(_) => {
-                            if let Some(db) = self.db.get_mut() {
-                                self.db_time = db.db_credit();
-                            }
-                            self.state = COMPLETED;
+                    GeneratorState::Complete(_) => {
+                        if let Some(db) = self.db.get_mut() {
+                            self.db_time = db.db_credit();
                         }
-                    },
-
-                    None => {
-                        panic!("No generator available for extension execution");
+                        self.state = COMPLETED;
                     }
-                }));
+                },
 
-                // If there was a panic thrown, then mark the container as COMPLETED so that it
-                // does not get run again.
-                if let Err(_) = res {
-                    self.state = COMPLETED;
-                    if thread::panicking() {
-                        // Wait for 100 millisecond so that the thread is moved to the GHETTO core.
-                        let start = cycles::rdtsc();
-                        while cycles::rdtsc() - start < cycles::cycles_per_second() / 10 {}
-                    }
+                None => {
+                    panic!("No generator available for extension execution");
+                }
+            }));
+
+            // If there was a panic thrown, then mark the container as COMPLETED so that it
+            // does not get run again.
+            if let Err(_) = res {
+                self.state = COMPLETED;
+                if thread::panicking() {
+                    // Wait for 100 millisecond so that the thread is moved to the GHETTO core.
+                    let start = cycles::rdtsc();
+                    while cycles::rdtsc() - start < cycles::cycles_per_second() / 10 {}
                 }
             }
         }
@@ -190,14 +188,14 @@ impl<'a> Task for Container<'a> {
             Ok(db) => {
                 // If the task is stopped without completion, set the status as StatusPushback.
                 if self.state == STOPPED {
-                    let (req, mut res) = db.prepare_for_pushback();
+                    let (req, res) = db.prepare_for_pushback();
 
                     let req = req.deparse_header(PACKET_UDP_LEN as usize);
                     let res = res.deparse_header(PACKET_UDP_LEN as usize);
 
                     return Some((req, res));
                 } else {
-                    let (req, mut res) = db.commit();
+                    let (req, res) = db.commit();
 
                     let req = req.deparse_header(PACKET_UDP_LEN as usize);
                     let res = res.deparse_header(PACKET_UDP_LEN as usize);

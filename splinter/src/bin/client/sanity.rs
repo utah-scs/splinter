@@ -13,9 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
 #![feature(integer_atomics)]
-#![feature(duration_from_micros)]
 
 extern crate db;
 extern crate splinter;

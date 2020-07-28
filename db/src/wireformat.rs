@@ -1065,3 +1065,42 @@ impl Record {
         self.object.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::table::Table;
+    use super::*;
+
+    // This method tests the get_*() functions for the Record implementation.
+    #[test]
+    fn test_record_gets() {
+        let data = vec![1; 100];
+        let data = Bytes::from(data);
+        let version = Table::default().version();
+        let record = Record::new(OpType::SandstormRead, version, data.clone(), data);
+        assert_eq!(record.get_key().len(), 100);
+        assert_eq!(record.get_object().len(), 100);
+        assert_eq!(record.get_optype(), OpType::SandstormRead);
+    }
+
+    // This method tests the equality of OpType values.
+    #[test]
+    fn test_optype_equal() {
+        assert_eq!(OpType::SandstormRead, OpType::SandstormRead);
+        assert_eq!(OpType::SandstormWrite, OpType::SandstormWrite);
+        assert_eq!(OpType::InvalidRecord, OpType::InvalidRecord);
+    }
+
+    // This method tests the not equal value for OpType enum.
+    #[test]
+    fn test_optype_ntequal() {
+        assert_ne!(OpType::SandstormRead, OpType::SandstormWrite);
+        assert_ne!(OpType::SandstormRead, OpType::InvalidRecord);
+
+        assert_ne!(OpType::SandstormWrite, OpType::SandstormRead);
+        assert_ne!(OpType::SandstormWrite, OpType::InvalidRecord);
+
+        assert_ne!(OpType::InvalidRecord, OpType::SandstormRead);
+        assert_ne!(OpType::InvalidRecord, OpType::SandstormWrite);
+    }
+}

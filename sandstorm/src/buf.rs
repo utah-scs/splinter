@@ -363,7 +363,7 @@ impl MultiReadBuf {
 // This module implements simple unit tests for MultiReadBuf, ReadBuf, ReadWriteSetBuf and WriteBuf.
 #[cfg(test)]
 mod tests {
-    use super::{MultiReadBuf, OpType, ReadBuf, ReadWriteSetBuf, Record, WriteBuf};
+    use super::{MultiReadBuf, ReadBuf, WriteBuf};
     use buf::bytes::{BufMut, Bytes, BytesMut};
 
     // This method tests the "len()" method on ReadBuf.
@@ -791,50 +791,5 @@ mod tests {
             assert_eq!(multibuf.next(), false);
             multibuf.read();
         }
-    }
-
-    // This method checks the length of the readwrite set before and after
-    // adding the record into it.
-    #[test]
-    fn test_readwriteset_len() {
-        let mut buf = ReadWriteSetBuf::new();
-        let data = vec![1; 100];
-        let data = Bytes::from(data);
-        let record = Record::new(OpType::SandstormRead, data.clone(), data);
-        assert_eq!(buf.readwriteset.len(), 0);
-        buf.readwriteset.push(record);
-        assert_eq!(buf.readwriteset.len(), 1);
-    }
-
-    // This method tests the get_*() functions for the Record implementation.
-    #[test]
-    fn test_record_gets() {
-        let data = vec![1; 100];
-        let data = Bytes::from(data);
-        let record = Record::new(OpType::SandstormRead, data.clone(), data);
-        assert_eq!(record.get_key().len(), 100);
-        assert_eq!(record.get_object().len(), 100);
-        assert_eq!(record.get_optype(), OpType::SandstormRead);
-    }
-
-    // This method tests the equality of OpType values.
-    #[test]
-    fn test_optype_equal() {
-        assert_eq!(OpType::SandstormRead, OpType::SandstormRead);
-        assert_eq!(OpType::SandstormWrite, OpType::SandstormWrite);
-        assert_eq!(OpType::InvalidRecord, OpType::InvalidRecord);
-    }
-
-    // This method tests the not equal value for OpType enum.
-    #[test]
-    fn test_optype_ntequal() {
-        assert_ne!(OpType::SandstormRead, OpType::SandstormWrite);
-        assert_ne!(OpType::SandstormRead, OpType::InvalidRecord);
-
-        assert_ne!(OpType::SandstormWrite, OpType::SandstormRead);
-        assert_ne!(OpType::SandstormWrite, OpType::InvalidRecord);
-
-        assert_ne!(OpType::InvalidRecord, OpType::SandstormRead);
-        assert_ne!(OpType::InvalidRecord, OpType::SandstormWrite);
     }
 }

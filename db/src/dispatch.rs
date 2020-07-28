@@ -43,8 +43,8 @@ use sandstorm::common;
 /// Later, it will be set from the server.toml file probably.
 pub const FAST_PATH: bool = false;
 
-/// This is a thread local variable to count the number of occurrences
-/// of cycle counting to average for 1 M events.
+// This is a thread local variable to count the number of occurrences
+// of cycle counting to average for 1 M events.
 #[cfg(feature = "dispatch")]
 thread_local!(static COUNTER: RefCell<u64> = RefCell::new(0));
 
@@ -645,7 +645,7 @@ where
             let request = mac.parse_header::<IpHeader>().parse_header::<UdpHeader>();
 
             // Allocate a packet for the response upfront, and add in MAC, IP, and UDP headers.
-            if let Some(mut response) = new_packet() {
+            if let Some(response) = new_packet() {
                 let mut response = response
                     .push_header(&self.resp_mac_header)
                     .expect("ERROR: Failed to add response MAC header")
@@ -771,9 +771,9 @@ where
             // Perform basic network processing on the received packets.
             #[cfg(feature = "dispatch")]
             self.cycle_counter.parse.start();
-            let mut packets = self.parse_mac_headers(packets);
-            let mut packets = self.parse_ip_headers(packets);
-            let mut packets = self.parse_udp_headers(packets);
+            let packets = self.parse_mac_headers(packets);
+            let packets = self.parse_ip_headers(packets);
+            let packets = self.parse_udp_headers(packets);
             let count = packets.len();
             #[cfg(feature = "dispatch")]
             self.cycle_counter.parse.stop(count as u64);
@@ -790,9 +790,9 @@ where
             // There were no packets at the receive queue. Try to steal some from the sibling.
             if let Some(stolen) = self.try_steal_packets() {
                 // Perform basic network processing on the stolen packets.
-                let mut stolen = self.parse_mac_headers(stolen);
-                let mut stolen = self.parse_ip_headers(stolen);
-                let mut stolen = self.parse_udp_headers(stolen);
+                let stolen = self.parse_mac_headers(stolen);
+                let stolen = self.parse_ip_headers(stolen);
+                let stolen = self.parse_udp_headers(stolen);
 
                 // Dispatch these packets to the appropriate service.
                 count = stolen.len();

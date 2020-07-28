@@ -14,7 +14,7 @@
  */
 
 //! This crate contains common utility code which is used on both client and server.
-#![feature(asm)]
+#![feature(llvm_asm)]
 #![warn(missing_docs)]
 #![allow(non_snake_case)]
 extern crate bincode;

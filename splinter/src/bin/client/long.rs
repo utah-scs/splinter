@@ -13,8 +13,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#![feature(use_extern_macros)]
-
 extern crate db;
 extern crate rand;
 extern crate splinter;
@@ -54,7 +52,7 @@ use splinter::*;
 // The tests below give an example of how to use it and how to aggregate the results.
 pub struct Long {
     long_pct: usize,
-    rng: Box<Rng>,
+    rng: Box<dyn Rng>,
     key_rng: Box<ZipfDistribution>,
     tenant_rng: Box<ZipfDistribution>,
     key_buf: Vec<u8>,
@@ -202,7 +200,8 @@ impl LongSend {
         let mut payload_long = Vec::with_capacity(payload_len);
         payload_long.extend_from_slice("long".as_bytes());
         payload_long.extend_from_slice(&unsafe { transmute::<u64, [u8; 8]>(1u64.to_le()) });
-        payload_long.extend_from_slice(&unsafe { transmute::<u8, [u8; 1]>(config.yield_f.to_le()) });
+        payload_long
+            .extend_from_slice(&unsafe { transmute::<u8, [u8; 1]>(config.yield_f.to_le()) });
         payload_long.resize(payload_len, 0);
 
         LongSend {
@@ -539,7 +538,8 @@ fn main() {
                         setup_recv(port.clone(), sched, core, master)
                     },
                 ),
-            ).expect("Failed to initialize receive side.");
+            )
+            .expect("Failed to initialize receive side.");
 
         // Setup the send side.
         net_context
@@ -550,7 +550,8 @@ fn main() {
                         setup_send(&config::ClientConfig::load(), ports, sched, core)
                     },
                 ),
-            ).expect("Failed to initialize send side.");
+            )
+            .expect("Failed to initialize send side.");
     }
 
     // Allow the system to bootup fully.

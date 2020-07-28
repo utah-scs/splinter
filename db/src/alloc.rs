@@ -63,9 +63,7 @@ impl Allocator {
     /// # Return
     /// A `BytesMut` to the underlying allocation. Any writes to this handle
     /// will be added to the object's value.
-    pub fn raw(&self, tenant: u32, table: u64, key: &[u8], val_len: u64)
-               -> Option<BytesMut>
-    {
+    pub fn raw(&self, tenant: u32, table: u64, key: &[u8], val_len: u64) -> Option<BytesMut> {
         // Allocate space for the object.
         match self.alloc(tenant, table, key.len() as u16, val_len) {
             // The allocation was successfull.
@@ -103,9 +101,13 @@ impl Allocator {
     /// `Bytes` handle over the underlying object's key. The second, is again a
     /// `Bytes` handle to the entire object. Returning both these handles allows
     /// for easy insertion into the tenant's table.
-    pub fn object(&self, tenant: u32, table: u64, key: &[u8], val: &[u8])
-                  -> Option<(Bytes, Bytes)>
-    {
+    pub fn object(
+        &self,
+        tenant: u32,
+        table: u64,
+        key: &[u8],
+        val: &[u8],
+    ) -> Option<(Bytes, Bytes)> {
         // Allocate space for the object.
         match self.alloc(tenant, table, key.len() as u16, val.len() as u64) {
             // The allocation was successfull.
@@ -140,16 +142,14 @@ impl Allocator {
     // - `val_len`: The amount of space to be allocated for the object's value.
     //
     // - `return`: A `BytesMut` handle to the underlying region of memory.
-    fn alloc(&self, tenant: u32, table: u64, key_len: u16, val_len: u64)
-             -> Option<BytesMut>
-    {
+    fn alloc(&self, tenant: u32, table: u64, key_len: u16, val_len: u64) -> Option<BytesMut> {
         // Calculate the amount of memory to be allocated for metadata.
         let meta = self.meta_size();
 
         // Calculate the total amount of memory to be allocated for the object.
         let size = meta +
                     key_len as usize + // To store the key.
-                    val_len as usize;  // To store the value.
+                    val_len as usize; // To store the value.
 
         // Allocate space for the object.
         // XXX This could actually allocate more than size bytes.
@@ -185,8 +185,10 @@ impl Allocator {
             (Some(lb), Some(rb)) => {
                 let key_len = (*lb as u16) + (*rb as u16) * 256;
 
-                Some((object.slice(meta, meta + key_len as usize),
-                    object.slice_from(meta + key_len as usize)))
+                Some((
+                    object.slice(meta, meta + key_len as usize),
+                    object.slice_from(meta + key_len as usize),
+                ))
             }
 
             // The key length could not be read from the passed in object.
@@ -201,7 +203,7 @@ impl Allocator {
     fn meta_size(&self) -> usize {
         let meta = size_of::<u32>() +  // To store tenant id.
                     size_of::<u64>() + // To store table id.
-                    size_of::<u16>();  // To store key length.
+                    size_of::<u16>(); // To store key length.
         return meta;
     }
 }
@@ -231,10 +233,10 @@ mod tests {
 
         // Allocate an object, and resolve the allocation into it's key
         // and value.
-        let (_, obj) = heap.object(0, 0, key, val)
-                            .expect("Failed to allocate object.");
-        let (k, v) = heap.resolve(obj)
-                            .expect("Failed to resolve object.");
+        let (_, obj) = heap
+            .object(0, 0, key, val)
+            .expect("Failed to allocate object.");
+        let (k, v) = heap.resolve(obj).expect("Failed to resolve object.");
 
         // Check the contents of the resolved key and value against their
         // expected values.
