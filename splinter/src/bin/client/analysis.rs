@@ -808,7 +808,7 @@ mod test {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn Analysis_abc_basic() {
+    fn analysis_abc_basic() {
         let n_threads = 1;
         let mut threads = Vec::with_capacity(n_threads);
         let done = Arc::new(AtomicBool::new(false));
@@ -869,7 +869,7 @@ mod test {
     }
 
     #[test]
-    fn Analysis_abc_histogram() {
+    fn analysis_abc_histogram() {
         let hist = Arc::new(Mutex::new(HashMap::new()));
 
         let n_keys = 20;

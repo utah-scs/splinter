@@ -265,7 +265,7 @@ mod tests {
 
         // Assert that the test extension has one yield statement.
         // unsafe { assert_eq!(GeneratorState::Yielded(0), gen.resume()) };
-        unsafe { assert_eq!(GeneratorState::Complete(0), gen.resume()) };
+        assert_eq!(GeneratorState::Complete(0), gen.as_mut().resume(()));
     }
 
     // This function tests that an extension without the "init" symbol cannot
@@ -321,7 +321,7 @@ mod tests {
 
         // Assert that the test extension has one yield statement.
         // unsafe { assert_eq!(GeneratorState::Yielded(0), gen.resume()) };
-        unsafe { assert_eq!(GeneratorState::Complete(0), gen.resume()) };
+        assert_eq!(GeneratorState::Complete(0), gen.as_mut().resume(()));
     }
 
     // This function tests that a non-existent extension cannot be retrieved
