@@ -1,9 +1,9 @@
 #[inline]
 pub fn cpuid() {
     unsafe {
-        asm!("movl $$0x2, %eax":::"eax");
-        asm!("movl $$0x0, %ecx":::"ecx");
-        asm!("cpuid"
+        llvm_asm!("movl $$0x2, %eax":::"eax");
+        llvm_asm!("movl $$0x0, %ecx":::"ecx");
+        llvm_asm!("cpuid"
              :
              :
              : "rax rbx rcx rdx");
@@ -15,7 +15,7 @@ pub fn rdtsc_unsafe() -> u64 {
     unsafe {
         let low: u32;
         let high: u32;
-        asm!("rdtsc"
+        llvm_asm!("rdtsc"
              : "={eax}" (low), "={edx}" (high)
              :
              : "rdx rax"
@@ -29,7 +29,7 @@ pub fn rdtscp_unsafe() -> u64 {
     let high: u32;
     let low: u32;
     unsafe {
-        asm!("rdtscp"
+        llvm_asm!("rdtscp"
              : "={eax}" (low), "={edx}" (high)
              :
              : "ecx"
@@ -41,6 +41,6 @@ pub fn rdtscp_unsafe() -> u64 {
 #[inline]
 pub fn pause() {
     unsafe {
-        asm!("pause"::::"volatile");
+        llvm_asm!("pause"::::"volatile");
     }
 }

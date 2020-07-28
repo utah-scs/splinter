@@ -15,7 +15,7 @@
 
 #![crate_type = "dylib"]
 //#![forbid(unsafe_code)]
-#![feature(generators, generator_trait, asm)]
+#![feature(generators, generator_trait, llvm_asm)]
 
 extern crate sandstorm;
 
@@ -31,7 +31,7 @@ pub fn rdtsc() -> u64 {
     unsafe {
         let lo: u32;
         let hi: u32;
-        asm!("rdtsc" : "={eax}"(lo), "={edx}"(hi) : : : "volatile");
+        llvm_asm!("rdtsc" : "={eax}"(lo), "={edx}"(hi) : : : "volatile");
         ((hi as u64) << 32) | lo as u64
     }
 }
